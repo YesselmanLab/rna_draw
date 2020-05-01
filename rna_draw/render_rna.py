@@ -54,7 +54,7 @@ def get_pairmap_from_secstruct(secstruct):
             pairs_array[pair_stack[ii]] = end_stack[-ii]
             pairs_array[end_stack[-ii]] = pair_stack[ii]
     else:
-         print "ERROR: pairing incorrect %s" % secstruct
+         print("ERROR: pairing incorrect %s" % secstruct)
 
     return pairs_array
         
@@ -90,6 +90,7 @@ def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
                 jj += 1
                     
     rootnode.children_.append(newnode)
+
 
 def setup_coords_recursive(rootnode, parentnode, start_x, start_y, go_x, go_y, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
                 
@@ -154,6 +155,7 @@ def setup_coords_recursive(rootnode, parentnode, start_x, start_y, go_x, go_y, N
         rootnode.x_ = start_x
         rootnode.y_ = start_y
 
+
 def get_coords_recursive(rootnode, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
     if(rootnode.is_pair_) :
         cross_x = -rootnode.go_y_
@@ -180,7 +182,8 @@ class RNARenderer:
         self.xarray_ = None
         self.yarray_ = None
         self.size_ = None
-        
+
+
     def setup_tree(self, secstruct, NODE_R,PRIMARY_SPACE, PAIR_SPACE):
         
         dangling_start = 0
@@ -250,10 +253,12 @@ class RNARenderer:
         self.size_ = [max_x - min_x, max_y - min_y]
         self.xarray_ = xarray
         self.yarray_ = yarray
-    
+
+
     def get_size(self):
         return self.size_
-    
+
+
     def draw(self,svgobj,offset_x,offset_y,colors, pairs, sequence, render_in_letter, line=False):
         if self.xarray_ != None:
             
@@ -267,9 +272,9 @@ class RNARenderer:
                                     colors[ii])
             else:
             
-                if pairs:
-                    for pair in pairs:
-                        svgobj.line(offset_x + self.xarray_[pair['from']], offset_y + self.yarray_[pair['from']], offset_x + self.xarray_[pair['to']], offset_y + self.yarray_[pair['to']], pair['color'], self.NODE_R)
+                #if pairs:
+                    #for pair in pairs:
+                    #    svgobj.line(offset_x + self.xarray_[pair['from']], offset_y + self.yarray_[pair['from']], offset_x + self.xarray_[pair['to']], offset_y + self.yarray_[pair['to']], pair['color'], self.NODE_R)
                 
                 if not render_in_letter:
                     for ii in range(0,len(self.xarray_)):
@@ -298,7 +303,8 @@ class RNARenderer:
                             text_offset_x = -2
                             text_offset_y = (text_size)/2.0
                         svgobj.text(self.xarray_[ii] + offset_x + text_offset_x, self.yarray_[ii] + offset_y + text_offset_y, text_size, color, "center", sequence[ii])
-                
+
+
     def get_coords(self, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
             
         if(self.root_ != None) :
@@ -307,7 +313,8 @@ class RNARenderer:
             for ii in range(0,len(xarray)):
                 xarray[ii] = 0
                 yarray[ii] = ii * PRIMARY_SPACE
-        
+
+
     def setup_coords(self, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
         if self.root_ != None:              
             setup_coords_recursive(self.root_, None, 0, 0, 0, 1, NODE_R, PRIMARY_SPACE, PAIR_SPACE)
