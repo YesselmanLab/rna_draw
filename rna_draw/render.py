@@ -95,7 +95,7 @@ def main():
 
     draw_rna(args.seq, args.ss, colors)
     os.system(
-        '/Applications/Inkscape.app/Contents/Resources/bin/inkscape --export-dpi 600 --export-png $(pwd)/%s.png $(pwd)/%s.svg' % (
+        '/Applications/Inkscape.app/Contents/Resources/bin/inkscape --export-dpi 300 --export-png $(pwd)/%s.png $(pwd)/%s.svg' % (
         "secstruct", "secstruct"))
 
 

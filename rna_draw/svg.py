@@ -10,7 +10,7 @@ def convert_color(color):
 class svg(object):
 	def __init__(self, filename, w, h):
 		# create the file
-		self.__out = file(filename, 'w')
+		self.__out = open(filename, 'w')
 		
 		# write the header
 		self.__out.write("""
@@ -28,14 +28,16 @@ class svg(object):
 		self.__out.write('</svg>\n')
 		self.__out.close()
 		del self.__out
-	
+
+
 	def line(self, x1, y1, x2, y2, stroke, width=2):
 		""""""
 		# print 'Line (%s %s %s %s %s)' % (x1, y1, x2, y2, color)
 		stroke = convert_color(stroke)
 		self.__out.write('<line fill="none" stroke="%s" stroke-width="%dpx" x1="%s" y1="%s" x2="%s" y2="%s" x3="0.0" y3="0.0"/>\n' %
 			(stroke, width,x1, y1, x2, y2))
-      
+
+
 	def polygon(self, points, fill, stroke, opacity = 1.0):
 		fill = convert_color(fill)
 		stroke = convert_color(stroke)
@@ -43,14 +45,16 @@ class svg(object):
 		self.__out.write('<polygon fill="%s" stroke="%s" points="%s" opacity="%f"/>\n' %
 			(fill, stroke, points,opacity))
 
+
 	def circle(self, x, y, radius, fill, stroke):
 		fill = convert_color(fill)
 		self.__out.write('<circle cx="%s" cy="%s" r="%s" fill="%s" stroke="%s"/>\n' %
 			(x, y, radius, fill,stroke))
-	
+
+
 	def text(self,x,y,size,fill,align,str):
 		fill = convert_color(fill)
-		self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s">%s</text>' % (x,y,size,fill,align,str))
-        ## rotated 
+		self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s">%s</text>' % (x-1.10,y,size,fill,align,str))
+		## rotated
 		#self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s" transform="rotate(180 %d,%d)">%s</text>' % (x-10,y+10,size,fill,align,x,y,str))
 		
