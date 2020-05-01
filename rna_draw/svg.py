@@ -50,7 +50,7 @@ class svg(object):
 	
 	def text(self,x,y,size,fill,align,str):
 		fill = convert_color(fill)
-		self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s">%s</text>' % (x,y,size,fill,align,str))
+		self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s">%s</text>' % (x-1.10,y,size,fill,align,str))
         ## rotated 
 		#self.__out.write(' <text x="%d" y="%d" font-family="sans_serif" font-size="%d" fill="%s" text-anchor="%s" transform="rotate(180 %d,%d)">%s</text>' % (x-10,y+10,size,fill,align,x,y,str))
 		
