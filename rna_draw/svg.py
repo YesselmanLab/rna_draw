@@ -10,7 +10,7 @@ def convert_color(color):
 class svg(object):
 	def __init__(self, filename, w, h):
 		# create the file
-		self.__out = file(filename, 'w')
+		self.__out = open(filename, 'w')
 		
 		# write the header
 		self.__out.write("""

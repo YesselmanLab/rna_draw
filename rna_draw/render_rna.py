@@ -1,9 +1,8 @@
 import sys
-import svg
 import re
 import random
 import math
-
+from rna_draw import svg
     
 class RNATreeNode:
     
@@ -272,9 +271,9 @@ class RNARenderer:
                                     colors[ii])
             else:
             
-                #if pairs:
-                    #for pair in pairs:
-                    #    svgobj.line(offset_x + self.xarray_[pair['from']], offset_y + self.yarray_[pair['from']], offset_x + self.xarray_[pair['to']], offset_y + self.yarray_[pair['to']], pair['color'], self.NODE_R)
+                if pairs:
+                    for pair in pairs:
+                        svgobj.line(offset_x + self.xarray_[pair['from']], offset_y + self.yarray_[pair['from']], offset_x + self.xarray_[pair['to']], offset_y + self.yarray_[pair['to']], pair['color'], self.NODE_R)
                 
                 if not render_in_letter:
                     for ii in range(0,len(self.xarray_)):

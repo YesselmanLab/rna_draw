@@ -1,5 +1,7 @@
 import unittest
 
+from rna_draw import render
+
 class Unittest(unittest.TestCase):
 
     def test(self):

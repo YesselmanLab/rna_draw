@@ -1,4 +1,4 @@
-import render_rna_flip as render_rna
+import render_rna
 import svg
 import inv_utils
 import argparse
@@ -81,30 +81,4 @@ def reorder_strands(order, seq, colors):
         colors += color_segments[strand-1] + ["w"]
     return [seq[:-1], colors[:-1]]
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("filename", help="filename specifying sequences to fold", type=str)
-    parser.add_argument("-f", "--fold", help="automatic folding", type=str)
-    args = parser.parse_args()
 
-    with open(args.filename) as f:
-        n = int(f.readline())
-        for i in range(n):
-            seq = f.readline().strip()
-            if args.fold == "nupack":
-                result = inv_utils.nupack_fold(seq, 1e-7)
-                secstruct = result[0]
-                colors = parse_colors(f.readline())
-                seq, colors = reorder_strands(result[2], seq, colors)
-            elif args.fold == "vienna":
-                secstruct = inv_utils.vienna_fold(seq)[0]
-                colors = parse_colors(f.readline())
-            else:
-                secstruct = f.readline().strip()
-                colors = parse_colors(f.readline())
-            seq.replace("&", "")
-            secstruct.replace("&", "")
-            draw_rna(seq, secstruct, colors, "%s_%d" % (args.filename, i))
-
-if __name__ == "__main__":
-    main()
