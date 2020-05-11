@@ -110,17 +110,26 @@ class ColorerUnittest(unittest.TestCase):
                                        color_str="1:e") == expected)
 
         with self.subTest("test coloring by pairing"):
-            pass
+            expected = colorer.parse_color_single_letter_codes("byyb")
+            self.assertTrue(
+                    col.get_rgb_colors(seq, ss,
+                                       render_type=colorer.RenderType.PAIRED) == expected)
 
 
+    def test_data_color(self):
+        col = colorer.Colorer()
+        seq, ss = 'ACGU', '(..)'
+        data = [0, 1, 2, 3]
+        colors = colorer.color_by_data(data)
 
+        with self.subTest("test coloring by data"):
+            self.assertTrue(
+                    col.get_rgb_colors(seq, ss, data=data) == colors)
 
-
-
-
-
-
-
+        with self.subTest("cannot set both render_type and data for the same res"):
+            with self.assertRaises(ValueError):
+                col.get_rgb_colors(seq, ss, render_type=colorer.RenderType.RES_TYPE,
+                                   data=data)
 
 def main():
     unittest.main()

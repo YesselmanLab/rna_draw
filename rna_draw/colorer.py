@@ -22,6 +22,7 @@ class RenderType:
     PAIRED = 1
     MOTIF = 2
 
+
 class Colorer(object):
     def __init__(self):
         self.seq = None
@@ -31,8 +32,19 @@ class Colorer(object):
         self.render_type = None
 
 
-    def get_rgb_colors(self, seq, ss, color_str=None, data=None, render_type=None,
-                       default_color=COLORS["e"]):
+    def get_rgb_colors(self, seq, ss, color_str=None, data=None, data_palette=None,
+                       render_type=None, default_color=COLORS["e"]):
+        """
+        :param seq: sequence of the RNA
+        :param ss:  dot bracket notation for sec
+        :param color_str: string to store color names, or color ranges
+        :param data: data
+        :param data_palette:
+        :param render_type:
+        :param default_color:
+        :return:
+        """
+
         self.seq = seq
         self.ss = ss
         self.color_str = color_str
@@ -53,6 +65,10 @@ class Colorer(object):
                 rgb_colors = self.__color_by_paired()
             self.__add_rgb_colors(rgb_colors, set_colors)
 
+        if data is not None:
+            rgb_colors = color_by_data(data, data_palette)
+            set_colors = np.ones(len(seq))
+            self.__add_rgb_colors(rgb_colors, set_colors)
 
         if color_str is not None:
             rgb_colors, set_colors = self.__parse_color_str(color_str)
@@ -147,6 +163,7 @@ class Colorer(object):
                 rgb_colors.append(COLORS["m"])
         return rgb_colors
 
+
     def __color_by_paired(self):
         rgb_colors = []
         for e in self.ss:
@@ -180,9 +197,12 @@ def color_by_res_type(seq, ss):
     return colors
 
 
-def color_by_data(data, palette_name='Reds'):
+def color_by_data(data, palette=None):
+    if palette is None:
+        palette = matplotlib.cm.get_cmap("Reds")
+
     norm = matplotlib.colors.Normalize(vmin=min(data), vmax=max(data))
-    cmap = matplotlib.cm.get_cmap(palette_name)
+    cmap = palette
 
     colors = []
     for d in data:
