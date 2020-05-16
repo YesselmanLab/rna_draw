@@ -1,6 +1,7 @@
 import os
 import time
 import argparse
+import cairosvg
 
 from rna_draw import render_rna, svg, inv_utils, parameters
 from rna_draw.colorer import *
@@ -59,19 +60,25 @@ class RNARender(object):
             print(colors)
             raise ValueError("unknown color type")
 
-        p = Parameters()
+        p = parameters.Parameters(seq, ss)
         draw_rna(seq, ss, final_color_rbgs, filename, p)
 
         if png:
-            os.system(
-                '/Applications/Inkscape.app/Contents/Resources/bin/inkscape --export-area-drawing --export-dpi 150 --export-png $(pwd)/%s.png $(pwd)/%s.svg > /dev/null' % (
-                    filename, filename))
-            os.remove(filename+".svg")
+            cairosvg.svg2png(url=filename+".svg", write_to=filename+".png")
+        
+        #if png:
+         #   os.system(
+          #      '/Applications/Inkscape.app/Contents/Resources/bin/inkscape --export-area-drawing --export-dpi 150 --export-png $(pwd)/%s.png $(pwd)/%s.svg > /dev/null' % (
+           #         filename, filename))
+           # os.remove(filename+".svg")
 
 
 
 
 def main():
+    rr = RNARender()
+    rr.render("((((....))))","GGGGAAAACCCC")
+    exit()
     args = parse_args()
 
     if not args.seq:
