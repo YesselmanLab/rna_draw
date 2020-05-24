@@ -29,19 +29,3 @@ optional arguments:
 
 ## How to: 
 
-- [basic usage](#basic-usage)
-	- [just secondary structure](#just-secondary-structure)
-	- [supplying a sequence](#supplying-a-sequence)
-### basic usage
-#### just secondary structure
-all that is needed is to supply a secondary structure
-```shell
-rna_draw -ss "((((.....))))" 
-```
-![](resources/imgs/test_0.png)
-#### supplying a sequence
-sequence identity can be supplied through -seq option. Any letter can be supplied.
-```shell
-rna_draw -ss "((((.....))))" -seq GUGNNNNNNUCAC 
-```
-![](resources/imgs/test_1.png)

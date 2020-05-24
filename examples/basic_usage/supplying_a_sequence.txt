@@ -1,0 +1,3 @@
+ss=((((.....))))
+seq=GUGNNNNNNUCAC
+comment=sequence identity can be supplied through -seq option. Any letter can be supplied.

@@ -30,6 +30,8 @@ class Colorer(object):
         self.color_str = None
         self.data = None
         self.render_type = None
+        self.valid_args = \
+            "color_str,data,data_palette,render_type,default_color".split(",")
 
 
     def get_rgb_colors(self, seq, ss, color_str=None, data=None, data_palette=None,
