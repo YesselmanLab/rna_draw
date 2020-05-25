@@ -10,3 +10,9 @@ class DrawParameters:
         self.RENDER_IN_LETTERS = False
         self.output_width = 1280
         self.output_height = 960
+
+
+class RenderType:
+    RES_TYPE = 0
+    PAIRED = 1
+    MOTIF = 2

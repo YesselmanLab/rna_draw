@@ -105,6 +105,9 @@ def rna_draw(ss, seq=None, filename='secstruct', color_str=None, render_type=Non
     if data_palette is not None:
         data_palette = matplotlib.cm.get_cmap(data_palette)
 
+    if default_color is not None:
+        default_color = colorer.parse_color_code(default_color)
+
     rd.draw(ss, seq, filename, color_str, render_type, data, data_palette,
             default_color)
 

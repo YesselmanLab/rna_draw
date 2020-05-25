@@ -1,0 +1,4 @@
+ss=.(((.....))).
+seq=AUGANNNNNUCAA
+render_type=res_type
+comment=can supply a render type to color with a specific style. res_type, colors by residue color.

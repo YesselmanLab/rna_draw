@@ -30,7 +30,10 @@ def get_args_from_file(fname):
 
     args = {
         'ss'  : None,
-        'seq' : None
+        'seq' : None,
+        'color_str' : None,
+        'render_type' : None,
+        'default_color' : None
     }
     for l in lines:
         spl = l.split("=")
@@ -76,10 +79,10 @@ def main():
     example_type = ""
     for i, row in df.iterrows():
         if row["example_type"] != example_type:
-            writer.write_heading(underscore_to_spaces(row["example_type"]), 3)
+            writer.write_heading(underscore_to_spaces(row["example_type"]), 2)
             example_type = row["example_type"]
 
-        writer.write_heading(underscore_to_spaces(row["name"]), 4)
+        writer.write_heading(underscore_to_spaces(row["name"]), 3)
         dict_vals = get_args_from_file(
                 "examples/" + row["example_type"] + "/" + row["name"] + ".txt")
         comment = dict_vals["comment"]
@@ -90,8 +93,8 @@ def main():
         cmd_args = get_args_from_dict(dict_vals)
         code.append(get_draw_rna_cmd(cmd_args))
         writer.write(code)
-        rd.rna_draw(dict_vals["ss"], dict_vals["seq"],
-                    filename="resources/imgs/test_{}".format(i))
+        rd.rna_draw(dict_vals["ss"], dict_vals["seq"],"resources/imgs/test_{}".format(i),
+                    dict_vals["color_str"], dict_vals["render_type"], default_color=dict_vals["default_color"])
         img = mg.Image(("resources/imgs/test_{}.png".format(i)), "")
         writer.writeline(img)
     #writer.writeline("[TOP](#how-to)")

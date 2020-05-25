@@ -1,0 +1,8 @@
+example_type,name
+basic_usage,just_secondary_structure
+basic_usage,supplying_a_sequence
+basic_usage,adding_render_type
+basic_usage,second_render_type_example
+basic_usage,supplying_custom_colors
+coloring_examples,using_single_color_codes
+coloring_examples,changing_default_color

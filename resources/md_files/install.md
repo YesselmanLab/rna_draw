@@ -1,10 +1,33 @@
 # rna_draw
 
-This script generates secondary structure diagrams for nucleic acids.
+A minimial python package for drawing nucleic acid secondary structures. 
 
 ## Dependencies
 
-The default behavior is to output the secondary structure visualization to both svg and png. 
+
+
+## Install
+
+Currently rna_draw requires cairosvg (https://cairosvg.org/) which requires cairo graphics (https://www.cairographics.org/download/) to be installed
+
+```shell
+#Mac 
+brew install cairo
+
+#ubuntu 
+sudo apt-get install libcairo2-dev
+
+#fedora 
+sudo yum install cairo-devel
+
+```
+
+
+
+## TODO
+
+(1) Large structures still generate collisions. 
+(2) draw tertiary contacts 
 
 ## Usage
 
@@ -25,6 +48,16 @@ optional arguments:
   -data DATA            data values by res seperated by ;
   -render_type RENDER_TYPE
                         scheme to color by options: res_type,paired,motif,none
+```
+
+Second import the package and call rna_draw function 
+
+```python
+import rna_draw as rd 
+rd.rna_draw(ss, seq=None, filename='secstruct', color_str=None,
+            render_type=None, data=None, data_palette=None, data_file=None, 
+            default_color=None)
+
 ```
 
 ## How to: 

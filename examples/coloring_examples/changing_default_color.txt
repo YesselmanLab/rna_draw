@@ -1,0 +1,4 @@
+ss=.(((.....))).
+color_str=1-5:r
+default_color=y
+comment=if the color string does not cover all residues the default color will be used for the rest. You can change this color.

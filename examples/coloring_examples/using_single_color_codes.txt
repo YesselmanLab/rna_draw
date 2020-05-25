@@ -1,0 +1,3 @@
+ss=.(((.....))).
+color_str=rrrrbbbbbgggg
+comment=using the single color codes its one can specify a color string with the same length as the secondary structure. The available codes are red (r), greeen (g), blue (b), yellow (y), cyan (c), magenta (m), white (w), gray (e), orange(o).

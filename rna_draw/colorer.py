@@ -4,23 +4,17 @@ import matplotlib.cm
 import numpy as np
 import seaborn as sns
 
+from rna_draw.parameters import RenderType
+
 COLORS = {"r": [255, 102, 102],
           "g": [113, 188, 120],
           "b": [51, 153, 255],
-          "k": [1, 0, 0],
           "y": [255, 211, 0],
           "c": [0, 255, 255],
           "m": [255, 0, 255],
           "w": [255, 255, 255],
           "e": [150, 150, 150],
-          "o": [231, 115, 0],
-          "i": [51, 204, 204],
-          "h": [51, 153, 255]}
-
-class RenderType:
-    RES_TYPE = 0
-    PAIRED = 1
-    MOTIF = 2
+          "o": [231, 115, 0]}
 
 
 class Colorer(object):
@@ -99,7 +93,7 @@ class Colorer(object):
 
         if len(spl) == len(self.seq):
             for i, color_code in enumerate(spl):
-                rgb_colors[i] = self.__parse_color_code(color_code)
+                rgb_colors[i] = parse_color_code(color_code)
                 set_colors[i] = 1
             return rgb_colors, set_colors
 
@@ -107,7 +101,7 @@ class Colorer(object):
             if len(color_code_range) < 2:
                 continue
             num_range, color_code = color_code_range.split(":")
-            rgb_color = self.__parse_color_code(color_code)
+            rgb_color = parse_color_code(color_code)
             if len(num_range.split("-")) > 1:
                 min_num, max_num = [int(x) for x in num_range.split("-")]
                 if min_num > max_num:
@@ -124,17 +118,6 @@ class Colorer(object):
                 set_colors[i] = 1
 
         return rgb_colors, set_colors
-
-
-    def __parse_color_code(self, color_code):
-        if len(color_code) == 1:
-            return COLORS[color_code]
-
-        elif color_code in sns.xkcd_rgb:
-            return xkcd_color_name_to_rgb(color_code)
-
-        else:
-            raise ValueError("color_code: " + color_code + " is unknown")
 
 
     def __add_rgb_colors(self, rgb_colors, set_colors, override=False):
@@ -183,20 +166,15 @@ def parse_color_single_letter_codes(color_string):
     return colors
 
 
-def color_by_res_type(seq, ss):
-    colors = []
-    for e in seq:
-        if e == "A":
-            colors.append(COLORS["y"])
-        elif e == "C":
-            colors.append(COLORS["g"])
-        elif e == "G":
-            colors.append(COLORS["r"])
-        elif e == "U" or e == "T":
-            colors.append(COLORS["b"])
-        else:
-            colors.append(COLORS["e"])
-    return colors
+def parse_color_code(color_code):
+    if len(color_code) == 1:
+        return COLORS[color_code]
+
+    elif color_code in sns.xkcd_rgb:
+        return xkcd_color_name_to_rgb(color_code)
+
+    else:
+        raise ValueError("color_code: " + color_code + " is unknown")
 
 
 def color_by_data(data, palette=None):
