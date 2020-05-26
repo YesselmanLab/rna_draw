@@ -23,7 +23,8 @@ def get_parser():
     parser.add_argument('-color_str', help='description of coloring, see docs for options',
                         required=False)
     parser.add_argument('-render_type', help='scheme to color by: res_type,paired,motif,none',
-                        required=False, default="res_type")
+                        required=False)
+    parser.add_argument('-default_color', help='the color used when no other color is supplied')
 
     parser.add_argument('-data_str', help='data values by res seperated by ;', required=False)
     parser.add_argument('-data_file', help='path to data to color by', required=False)
@@ -100,7 +101,6 @@ def __get_data_from_args(args):
 def __get_render_type(render_type_name):
     if render_type_name is None:
         return None
-
     render_type_name = render_type_name.lower()
     if   render_type_name == "res_type":
         return colorer.RenderType.RES_TYPE
@@ -120,8 +120,8 @@ def __rna_draw_from_args(args):
         default_color = colorer.parse_color_code(args.default_color)
 
     rd = RNADrawer()
-    rd.draw(args.ss, args.seq, args.filename, args.color_str, render_type,
-            data, default_color)
+    rd.draw(args.ss, args.seq, args.out, args.color_str, render_type, default_color,
+            data)
 
 
 def rna_draw(**kwargs):

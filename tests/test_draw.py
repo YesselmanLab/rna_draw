@@ -19,22 +19,21 @@ class Unittest(unittest.TestCase):
         rd.rna_draw(ss="(....)", seq="CUUCGG", out="test_renders/test_4",
                     default_color="g")
 
-    def _test_w_data(self):
+    def test_w_data(self):
         ss  = ".(((.....)))."
         seq = "AUGAAAAAAUCAA"
+        data_str ="0;1;2;3;4;5;6;7;8;9;10;11;12"
+
 
         with self.subTest("simplest data use"):
-            rd.rna_draw(ss, seq, "test_renders/test_5",
-                        data="0;1;2;3;4;5;6;7;8;9;10;11;12")
+            rd.rna_draw(ss=ss, seq=seq, out="test_renders/test_5", data_str=data_str)
 
         with self.subTest("ignore restypes"):
-            rd.rna_draw(ss, seq, "test_renders/test_6",
-                        data="0;1;2;3;4;5;6;7;8;9;10;11;12",
+            rd.rna_draw(ss=ss, seq=seq, out="test_renders/test_6", data_str=data_str,
                         data_ignore_restype="A")
 
         with self.subTest("ignore restypes multiple"):
-            rd.rna_draw(ss, seq, "test_renders/test_7",
-                        data="0;1;2;3;4;5;6;7;8;9;10;11;12",
+            rd.rna_draw(ss=ss, seq=seq, out="test_renders/test_7", data_str=data_str,
                         data_ignore_restype="GCU")
 
 

@@ -12,6 +12,15 @@ def get_draw_rna_cmd(args):
     return s
 
 
+def get_draw_rna_py_cmd(args):
+    s = "rd.rna_draw("
+    for i, a in enumerate(args):
+        s += "{}={}".format(a[0], a[1])
+        if i != len(args)-1:
+            s += ", "
+    s += ")"
+    return s
+
 def get_args_from_dict(d):
     data = []
     for k, v in d.items():
@@ -19,6 +28,19 @@ def get_args_from_dict(d):
             continue
         if k == "ss":
             v = '"'+v+'"'
+        data.append([k, v])
+    return data
+
+def get_args_from_dict_py(d):
+    data = []
+    for k, v in d.items():
+        if v is None:
+            continue
+        if k == "data_vmin" or k == "data_vmax":
+            pass
+        else:
+            v = "'"+v+"'"
+
         data.append([k, v])
     return data
 
@@ -33,7 +55,13 @@ def get_args_from_file(fname):
         'seq' : None,
         'color_str' : None,
         'render_type' : None,
-        'default_color' : None
+        'default_color' : None,
+        'data_str' : None,
+        'data_file' : None,
+        'data_palette' : None,
+        'data_vmin' : None,
+        'data_vmax' : None,
+        'data_ignore_restype' : None
     }
     for l in lines:
         spl = l.split("=")
@@ -93,8 +121,12 @@ def main():
         cmd_args = get_args_from_dict(dict_vals)
         code.append(get_draw_rna_cmd(cmd_args))
         writer.write(code)
-        rd.rna_draw(dict_vals["ss"], dict_vals["seq"],"resources/imgs/test_{}".format(i),
-                    dict_vals["color_str"], dict_vals["render_type"], default_color=dict_vals["default_color"])
+        code_py = mg.Code("python")
+        code_py.append(get_draw_rna_py_cmd(get_args_from_dict_py(dict_vals)))
+        writer.write(code_py)
+        rd.rna_draw(
+                    out="resources/imgs/test_{}".format(i),
+                    **dict_vals)
         img = mg.Image(("resources/imgs/test_{}.png".format(i)), "")
         writer.writeline(img)
     #writer.writeline("[TOP](#how-to)")

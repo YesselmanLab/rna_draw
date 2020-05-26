@@ -62,7 +62,7 @@ class Colorer(object):
                 if e in data.ignore_restype:
                     rgb_colors[i] = self.default_color
 
-            self.__add_rgb_colors(rgb_colors, set_colors)
+            self.__add_rgb_colors(rgb_colors, set_colors, override=True)
 
         if color_str is not None:
             rgb_colors, set_colors = self.__parse_color_str(color_str)
