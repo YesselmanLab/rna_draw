@@ -4,6 +4,7 @@ import matplotlib.colors
 
 
 from rna_draw import colorer, parameters
+from rna_draw.data import Data
 
 class ColorerUnittest(unittest.TestCase):
 
@@ -119,7 +120,7 @@ class ColorerUnittest(unittest.TestCase):
     def test_data_color(self):
         col = colorer.Colorer()
         seq, ss = 'ACGU', '(..)'
-        data = [0, 1, 2, 3]
+        data = Data("1;2;3;4")
         colors = colorer.color_by_data(data)
 
         with self.subTest("test coloring by data"):

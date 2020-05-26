@@ -6,3 +6,6 @@ basic_usage,second_render_type_example
 basic_usage,supplying_custom_colors
 coloring_examples,using_single_color_codes
 coloring_examples,changing_default_color
+coloring_examples,using_xkcd_colors
+coloring_examples,overwriting_render_type_colors
+using_experimental_data,basic_coloring_with_data

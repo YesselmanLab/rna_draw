@@ -5,6 +5,7 @@ import numpy as np
 import seaborn as sns
 
 from rna_draw.parameters import RenderType
+from rna_draw.data import Data
 
 COLORS = {"r": [255, 102, 102],
           "g": [113, 188, 120],
@@ -24,22 +25,15 @@ class Colorer(object):
         self.color_str = None
         self.data = None
         self.render_type = None
-        self.valid_args = \
-            "color_str,data,data_palette,render_type,default_color".split(",")
 
+    def get_rgb_colors(self, seq, ss, color_str=None, data=None, render_type=None,
+                       default_color=None):
 
-    def get_rgb_colors(self, seq, ss, color_str=None, data=None, data_palette=None,
-                       render_type=None, default_color=COLORS["e"]):
-        """
-        :param seq: sequence of the RNA
-        :param ss:  dot bracket notation for sec
-        :param color_str: string to store color names, or color ranges
-        :param data: data
-        :param data_palette:
-        :param render_type:
-        :param default_color:
-        :return:
-        """
+        if default_color is None:
+            default_color = COLORS["e"]
+
+        if len(seq) != len(ss):
+            raise ValueError("sequence and structure must be the same length")
 
         self.seq = seq
         self.ss = ss
@@ -48,13 +42,12 @@ class Colorer(object):
         self.render_type = render_type
         self.set_colors = np.zeros(len(seq))
         self.rgb_colors = [default_color for i in range(len(seq))]
+        self.default_color = default_color
 
-        if len(seq) != len(ss):
-            raise ValueError("sequence and structure must be the same length")
 
         if render_type is not None:
             rgb_colors = []
-            set_colors = np.ones(len(seq))
+            set_colors = np.ones(len(ss))
             if   render_type == RenderType.RES_TYPE:
                 rgb_colors = self.__color_by_restype()
             elif render_type == RenderType.PAIRED:
@@ -62,8 +55,13 @@ class Colorer(object):
             self.__add_rgb_colors(rgb_colors, set_colors)
 
         if data is not None:
-            rgb_colors = color_by_data(data, data_palette)
-            set_colors = np.ones(len(seq))
+            rgb_colors = color_by_data(data)
+            set_colors = np.ones(len(ss))
+
+            for i, e in enumerate(self.seq):
+                if e in data.ignore_restype:
+                    rgb_colors[i] = self.default_color
+
             self.__add_rgb_colors(rgb_colors, set_colors)
 
         if color_str is not None:
@@ -82,16 +80,17 @@ class Colorer(object):
         if len(spl) == 1 and not contains_digit:
             if len(color_str) != len(self.seq):
                 raise ValueError(
-                        "there are no ; in color str thus it must match the seq length")
-            return parse_color_single_letter_codes(color_str), np.ones(len(self.seq))
+                        "there are no ; in color str thus it must match the secondary structure length")
+            return parse_color_single_letter_codes(color_str), np.ones(len(self.ss))
 
         elif not contains_digit:
-            if len(spl) != len(self.seq):
+            if len(spl) != len(self.ss):
                 raise ValueError(
-                        "no residue numbers are specified in color str, must match sequence length")
-        set_colors = np.zeros(len(self.seq))
+                        "no residue numbers are specified in color str, must match secondary structure length")
+        set_colors = np.zeros(len(self.ss))
 
-        if len(spl) == len(self.seq):
+        #there is only one color per residue
+        if len(spl) == len(self.ss):
             for i, color_code in enumerate(spl):
                 rgb_colors[i] = parse_color_code(color_code)
                 set_colors[i] = 1
@@ -177,19 +176,12 @@ def parse_color_code(color_code):
         raise ValueError("color_code: " + color_code + " is unknown")
 
 
-def color_by_data(data, palette=None):
-    if palette is None:
-        palette = matplotlib.cm.get_cmap("Reds")
-
-    norm = matplotlib.colors.Normalize(vmin=min(data), vmax=max(data))
-    cmap = palette
-
+def color_by_data(data):
+    norm = matplotlib.colors.Normalize(vmin=data.min, vmax=data.max)
     colors = []
-    for d in data:
-        rgb = [int(255*x) for x in cmap(norm(d))[0:3]]
-
+    for i, d in enumerate(data.vals):
+        rgb = [int(255*x) for x in data.palette(norm(d))[0:3]]
         colors.append(rgb)
-        #colors.append(matplotlib.colors.to_rgb(cmap(norm(d))))
     return colors
 
 

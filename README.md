@@ -22,12 +22,11 @@ sudo yum install cairo-devel
 
 ```
 
-
-
 ## TODO
 
 (1) Large structures still generate collisions. 
 (2) draw tertiary contacts 
+(3) changing draw parameters (such as circle borders, size, basepair color, etc)
 
 ## Usage
 
@@ -50,14 +49,11 @@ optional arguments:
                         scheme to color by options: res_type,paired,motif,none
 ```
 
-Second import the package and call rna_draw function 
+Second import the package and call rna_draw function. All the same arguments can be used as at commandline.
 
 ```python
 import rna_draw as rd 
-rd.rna_draw(ss, seq=None, filename='secstruct', color_str=None,
-            render_type=None, data=None, data_palette=None, data_file=None, 
-            default_color=None)
-
+rd.rna_draw(ss=SS, seq=SEQ, out=OUT, color_str=COLOR_STR)
 ```
 
 ## How to: 
@@ -71,11 +67,15 @@ rd.rna_draw(ss, seq=None, filename='secstruct', color_str=None,
 - [coloring examples](#coloring-examples)
 	- [using single color codes](#using-single-color-codes)
 	- [changing default color](#changing-default-color)
+	- [using xkcd colors](#using-xkcd-colors)
+	- [overwriting render type colors](#overwriting-render-type-colors)
+- [using experimental data](#using-experimental-data)
+	- [basic coloring with data](#basic-coloring-with-data)
 ## basic usage
 ### just secondary structure
 all that is needed is to supply a secondary structure
 ```shell
-rna_draw -ss "((((.....))))" 
+rna_draw -ss ".(((.....)))." 
 ```
 ![](resources/imgs/test_0.png)
 ### supplying a sequence
@@ -115,3 +115,22 @@ if the color string does not cover all residues the default color will be used f
 rna_draw -ss ".(((.....)))." -color_str 1-5:r -default_color y 
 ```
 ![](resources/imgs/test_6.png)
+### using xkcd colors
+colors can be a mixture of single character codes and xkcd colors (https://xkcd.com/color/rgb/)
+```shell
+rna_draw -ss ".(((.....)))." -color_str purple;green;blue;pink;brown;red;fuchsia;hunter green;mustard yellow;eggplant;off white;r;r 
+```
+![](resources/imgs/test_7.png)
+### overwriting render type colors
+color_str always overrides render type colors, to allow for more flexibility in coloring.d xkcd colors (https://xkcd.com/color/rgb/). Here we changed the color of residue 5 to 9 which would of been gray but instead is aqua blue.
+```shell
+rna_draw -ss ".(((.....)))." -seq AUGANNNNNUCAA -color_str 5-9:aqua blue -render_type res_type 
+```
+![](resources/imgs/test_8.png)
+## using experimental data
+### basic coloring with data
+data can be supplied directly using ; to seperate each data point
+```shell
+rna_draw -ss ".(((.....)))." -seq AUGAAAAAAUCAA -data 0;1;2;3;4;5;6;7;8;9;10;11;12;13 
+```
+![](resources/imgs/test_9.png)

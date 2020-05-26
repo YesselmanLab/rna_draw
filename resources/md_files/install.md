@@ -31,7 +31,7 @@ sudo yum install cairo-devel
 
 ## Usage
 
-There are two ways to call rna_draw. First is the command line exe that was installed with the package 
+There are two ways to call rna_draw. First is the command line exe that was installed with the package There are two ways to call rna_draw. First is the command line exe that was installed with the package 
 
 ```shell
 usage: draw_rna.py [-h] -ss SS [-seq SEQ] [-out OUT] [-color_str COLOR_STR]
@@ -50,14 +50,11 @@ optional arguments:
                         scheme to color by options: res_type,paired,motif,none
 ```
 
-Second import the package and call rna_draw function 
+Second import the package and call rna_draw function. All the same arguments can be used as at commandline.
 
 ```python
 import rna_draw as rd 
-rd.rna_draw(ss, seq=None, filename='secstruct', color_str=None,
-            render_type=None, data=None, data_palette=None, data_file=None, 
-            default_color=None)
-
+rd.rna_draw(ss=SS, seq=SEQ, out=OUT, color_str=COLOR_STR)
 ```
 
 ## How to: 
