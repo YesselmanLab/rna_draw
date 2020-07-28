@@ -1,0 +1,6 @@
+ss=.(((.....))).
+seq=AUGAAAAAAUCAA
+data_str=0;1;2;3;4;5;6;7;8;9;10;11;12
+data_vmin=3
+data_vmax=9
+comment=Can set the min and max value for coloring. Anything below or equal to vmin will be colored as the min value with the palette.

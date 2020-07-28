@@ -1,0 +1,3 @@
+ss=.(((.....))).
+color_str=purple;green;blue;pink;brown;red;fuchsia;hunter green;mustard yellow;eggplant;off white;r;r
+comment=colors can be a mixture of single character codes and xkcd colors (https://xkcd.com/color/rgb/)

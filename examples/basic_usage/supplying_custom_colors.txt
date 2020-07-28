@@ -1,0 +1,4 @@
+ss=.(((.....))).
+seq=AUGANNNNNUCAA
+color_str=1-5:r;6-13:b
+comment=The user can supply any set of colors as long as they are not overlapping. The format is resnum_min-resnum_max:color. You also do a single resnum in the format resnum:color. In this case we are using single letter codes. The available codes are red (r), greeen (g), blue (b), yellow (y), cyan (c), magenta (m), white (w), gray (e), orange(o)
