@@ -4,12 +4,13 @@ import re
 from subprocess import Popen, PIPE, STDOUT, check_call
 
 DEFAULT_TEMPERATURE = 37.0
-DEFAULT_PARAMS = 'rna'
-BASES = ['A','U','G','C']
+DEFAULT_PARAMS = "rna"
+BASES = ["A", "U", "G", "C"]
 BIN_DIR = "bin"
-#fold a sequence
-#@param seq:sequence
-#@return: [parenthesis notation, energy]
+# fold a sequence
+# @param seq:sequence
+# @return: [parenthesis notation, energy]
+
 
 def vienna_fold(seq, cotransc=False, constraint=False):
     """
@@ -27,29 +28,53 @@ def vienna_fold(seq, cotransc=False, constraint=False):
         input = seq + "\n" + constraint
     else:
         options = ""
-        input = ''.join(seq)
+        input = "".join(seq)
     if cotransc:
-        p = Popen([os.path.join(BIN_DIR,'CoFold'), '--distAlpha', '0.5', '--distTau', '640', '--noPS', options], stdout=PIPE, stdin=PIPE, stderr=STDOUT)
-    elif '&' in seq:
-        p = Popen([os.path.join(BIN_DIR,'RNAcofold'), '-T','37.0', '-noPS', options], stdout=PIPE, stdin=PIPE, stderr=STDOUT)
+        p = Popen(
+            [
+                os.path.join(BIN_DIR, "CoFold"),
+                "--distAlpha",
+                "0.5",
+                "--distTau",
+                "640",
+                "--noPS",
+                options,
+            ],
+            stdout=PIPE,
+            stdin=PIPE,
+            stderr=STDOUT,
+        )
+    elif "&" in seq:
+        p = Popen(
+            [os.path.join(BIN_DIR, "RNAcofold"), "-T", "37.0", "-noPS", options],
+            stdout=PIPE,
+            stdin=PIPE,
+            stderr=STDOUT,
+        )
     else:
-        p = Popen([os.path.join(BIN_DIR,'RNAfold'), '-T','37.0', '-noPS', options], stdout=PIPE, stdin=PIPE, stderr=STDOUT)
-    pair= p.communicate(input=input)[0]
+        p = Popen(
+            [os.path.join(BIN_DIR, "RNAfold"), "-T", "37.0", "-noPS", options],
+            stdout=PIPE,
+            stdin=PIPE,
+            stderr=STDOUT,
+        )
+    pair = p.communicate(input=input)[0]
     p.wait()
 
     # split result by whitespace
-    toks = re.split('\s+| \(?\s?',pair)
-    ret= []
+    toks = re.split("\s+| \(?\s?", pair)
+    ret = []
     ret.append(toks[1])
     ret.append(toks[2][1:-1])
     return ret
 
-def nupack_fold(seq, oligo_conc, bpp = False):
+
+def nupack_fold(seq, oligo_conc, bpp=False):
     """
     folds sequence using nupack
     """
     os.system("source ~/.bashrc")
-    rand_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(5))
+    rand_string = "".join(random.choice(string.ascii_lowercase) for _ in range(5))
     split = seq.split("&")
     with open("%s.in" % rand_string, "w") as f:
         f.write("%s\n" % len(split))
@@ -58,14 +83,24 @@ def nupack_fold(seq, oligo_conc, bpp = False):
         f.write("1\n")
     os.system("cp %s/%s.list %s.list" % (BIN_DIR, len(split), rand_string))
     with open("%s.con" % rand_string, "w") as f:
-        f.write("%s\n" % oligo_conc * (len(split)-1))
+        f.write("%s\n" % oligo_conc * (len(split) - 1))
         f.write("1e-9\n")
-    options = ['-material', DEFAULT_PARAMS, '-ordered', '-mfe']#, '-quiet']
+    options = ["-material", DEFAULT_PARAMS, "-ordered", "-mfe"]  # , '-quiet']
     if bpp:
-        options.append('-pairs')
-    p = Popen([os.path.join(BIN_DIR,'complexes')] + options + [rand_string], stdout=PIPE, stdin=PIPE, stderr=STDOUT)
+        options.append("-pairs")
+    p = Popen(
+        [os.path.join(BIN_DIR, "complexes")] + options + [rand_string],
+        stdout=PIPE,
+        stdin=PIPE,
+        stderr=STDOUT,
+    )
     p.wait()
-    p = Popen([os.path.join(BIN_DIR,'concentrations'), '-ordered', rand_string], stdout=PIPE, stdin=PIPE, stderr=STDOUT)
+    p = Popen(
+        [os.path.join(BIN_DIR, "concentrations"), "-ordered", rand_string],
+        stdout=PIPE,
+        stdin=PIPE,
+        stderr=STDOUT,
+    )
     p.wait()
     # get mfe
     with open("%s.eq" % rand_string) as f_eq:
@@ -107,9 +142,8 @@ def nupack_fold(seq, oligo_conc, bpp = False):
 
     # get full secondary structure
     for i in range(len(split)):
-        if i+1 not in strands:
-            secstruct += "&" + "."*len(split[i])
-            strands.append(i+1)
+        if i + 1 not in strands:
+            secstruct += "&" + "." * len(split[i])
+            strands.append(i + 1)
     os.system("rm %s*" % rand_string)
     return [secstruct.replace("+", "&"), energy, strands]
-

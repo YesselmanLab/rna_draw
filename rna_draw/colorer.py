@@ -7,15 +7,17 @@ import seaborn as sns
 from rna_draw.parameters import RenderType
 from rna_draw.data import Data
 
-COLORS = {"r": [255/255, 102/255, 102/255],
-          "g": [113/255, 188/255, 120/255],
-          "b": [51/255, 153/255, 255/255],
-          "y": [255/255, 211/255, 0/255],
-          "c": [0/255, 255/255, 255/255],
-          "m": [255/255, 0/255, 255/255],
-          "w": [255/255, 255/255, 255/255],
-          "e": [150/255, 150/255, 150/255],
-          "o": [231/255, 115/255, 0/255]}
+COLORS = {
+    "r": [255 / 255, 102 / 255, 102 / 255],
+    "g": [113 / 255, 188 / 255, 120 / 255],
+    "b": [51 / 255, 153 / 255, 255 / 255],
+    "y": [255 / 255, 211 / 255, 0 / 255],
+    "c": [0 / 255, 255 / 255, 255 / 255],
+    "m": [255 / 255, 0 / 255, 255 / 255],
+    "w": [255 / 255, 255 / 255, 255 / 255],
+    "e": [150 / 255, 150 / 255, 150 / 255],
+    "o": [231 / 255, 115 / 255, 0 / 255],
+}
 
 
 class Colorer(object):
@@ -26,8 +28,9 @@ class Colorer(object):
         self.data = None
         self.render_type = None
 
-    def get_rgb_colors(self, seq, ss, color_str=None, data=None, render_type=None,
-                       default_color=None):
+    def get_rgb_colors(
+        self, seq, ss, color_str=None, data=None, render_type=None, default_color=None
+    ):
 
         if default_color is None:
             default_color = COLORS["e"]
@@ -43,14 +46,14 @@ class Colorer(object):
         self.set_colors = np.zeros(len(seq))
         self.rgb_colors = [default_color for i in range(len(seq))]
         self.default_color = default_color
-        
+
         if render_type is not None and data is not None:
             raise ValueError("cannot set both render_type and data for the same res")
 
         if render_type is not None:
             rgb_colors = []
             set_colors = np.ones(len(ss))
-            if   render_type == RenderType.RES_TYPE:
+            if render_type == RenderType.RES_TYPE:
                 rgb_colors = self.__color_by_restype()
             elif render_type == RenderType.PAIRED:
                 rgb_colors = self.__color_by_paired()
@@ -72,7 +75,6 @@ class Colorer(object):
 
         return self.rgb_colors
 
-
     def __parse_color_str(self, color_str):
         rgb_colors = [COLORS["e"] for i in range(len(self.seq))]
 
@@ -82,16 +84,18 @@ class Colorer(object):
         if len(spl) == 1 and not contains_digit:
             if len(color_str) != len(self.seq):
                 raise ValueError(
-                        "there are no ; in color str thus it must match the secondary structure length")
+                    "there are no ; in color str thus it must match the secondary structure length"
+                )
             return parse_color_single_letter_codes(color_str), np.ones(len(self.ss))
 
         elif not contains_digit:
             if len(spl) != len(self.ss):
                 raise ValueError(
-                        "no residue numbers are specified in color str, must match secondary structure length")
+                    "no residue numbers are specified in color str, must match secondary structure length"
+                )
         set_colors = np.zeros(len(self.ss))
 
-        #there is only one color per residue
+        # there is only one color per residue
         if len(spl) == len(self.ss):
             for i, color_code in enumerate(spl):
                 rgb_colors[i] = parse_color_code(color_code)
@@ -107,19 +111,21 @@ class Colorer(object):
                 min_num, max_num = [int(x) for x in num_range.split("-")]
                 if min_num > max_num:
                     raise ValueError(
-                            "when supplying a range of res nums for colors smaller number "+
-                            "must come first")
+                        "when supplying a range of res nums for colors smaller number "
+                        + "must come first"
+                    )
             else:
                 min_num, max_num = int(num_range), int(num_range)
 
-            for i in range(min_num-1, max_num):
+            for i in range(min_num - 1, max_num):
                 if set_colors[i]:
-                    raise ValueError("position {} has two colors assigned to it".format(i))
+                    raise ValueError(
+                        "position {} has two colors assigned to it".format(i)
+                    )
                 rgb_colors[i] = rgb_color
                 set_colors[i] = 1
 
         return rgb_colors, set_colors
-
 
     def __add_rgb_colors(self, rgb_colors, set_colors, override=False):
         for i, rgb_color in enumerate(rgb_colors):
@@ -131,11 +137,10 @@ class Colorer(object):
                 self.rgb_colors[i] = rgb_color
                 self.set_colors[i] = 1
 
-
     def __color_by_restype(self):
         rgb_colors = []
         for e in self.seq:
-            if   e == "A":
+            if e == "A":
                 rgb_colors.append(COLORS["y"])
             elif e == "C":
                 rgb_colors.append(COLORS["g"])
@@ -149,11 +154,10 @@ class Colorer(object):
                 rgb_colors.append(COLORS["m"])
         return rgb_colors
 
-
     def __color_by_paired(self):
         rgb_colors = []
         for e in self.ss:
-            if e == '.':
+            if e == ".":
                 rgb_colors.append(COLORS["y"])
             else:
                 rgb_colors.append(COLORS["b"])
@@ -190,4 +194,3 @@ def color_by_data(data):
 def xkcd_color_name_to_rgb(name):
     raw_rgb = matplotlib.colors.hex2color(sns.xkcd_rgb[name])
     return raw_rgb
-

@@ -1,1 +1,5 @@
-resources/
+resources/include versioneer.py
+include rna_draw/_version.py
+include reqirements.txt
+recursive-exclude * *.py[co]
+

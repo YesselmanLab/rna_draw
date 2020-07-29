@@ -1,8 +1,16 @@
 import matplotlib.cm
 
+
 class Data(object):
-    def __init__(self, data_str=None, data_file=None, palette=None,
-                 vmin=None, vmax=None, ignore_restype=None):
+    def __init__(
+        self,
+        data_str=None,
+        data_file=None,
+        palette=None,
+        vmin=None,
+        vmax=None,
+        ignore_restype=None,
+    ):
         self.vals = self.__parse_vals(data_str, data_file)
         self.min = min(self.vals)
         self.max = max(self.vals)
@@ -30,6 +38,3 @@ class Data(object):
             f.close()
 
             return [float(x.rstrip()) for x in lines]
-
-
-

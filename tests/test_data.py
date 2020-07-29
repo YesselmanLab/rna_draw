@@ -2,8 +2,8 @@ import unittest
 
 from rna_draw import data
 
-class DataUnittest(unittest.TestCase):
 
+class DataUnittest(unittest.TestCase):
     def test_load_values(self):
         vals = [float(x) for x in range(1, 6)]
         with self.subTest("load data from str"):
@@ -17,8 +17,10 @@ class DataUnittest(unittest.TestCase):
     def test_min_max(self):
         d = data.Data("1;2;3;4;5", vmin=0, vmax=10)
 
+
 def main():
     unittest.main()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

@@ -1,5 +1,3 @@
-
-
 class DrawParameters:
     def __init__(self):
         self.NODE_R = 10
