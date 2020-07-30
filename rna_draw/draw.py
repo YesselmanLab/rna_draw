@@ -119,35 +119,8 @@ class RNADrawer(object):
         r.ax.axis("off")
         r.ax.set_xlim([min(r.xarray_) + 40 - 15, max(r.xarray_) + 40 + 15])
         r.ax.set_ylim([min(r.yarray_) + 40 - 15, max(r.yarray_) + 40 + 15])
+        r.setupfiguresize()
 
-        # Print "area = (max(r.xarray_) - min(r.xarray_)) * (max(r.yarray_) - min(r.yarray_))" to get rna_area.
-        # Adjust the r.fig.set_size_inches until the text size looks good and name it rna_figsize_variable for some
-        # example RNA structures.
-        # Plot rna_area vs rna_figsize_variable.
-        # Fit the curve using scipy to get a good figure size for any size of RNA structure.
-        data = {
-            "rna_identity": ["hairpin", "t-RNA", "CO-VID19 5' UTR", "50S Ribosome"],
-            "rna_area": [3781, 126207, 1150472, 4286761],
-            "rna_figsize_variable": [25, 30, 35, 40],
-        }
-        df = pd.DataFrame(data)
-
-        x = df["rna_area"]
-        y = df["rna_figsize_variable"]
-
-        def test(x, a, b, c):
-            return a * (x - b) ** c
-
-        param, param_cov = curve_fit(test, x, y)
-
-        if min(r.xarray_) != max(r.yarray_):
-            area = (max(r.xarray_) - min(r.xarray_)) * (max(r.yarray_) - min(r.yarray_))
-            r.fig.set_size_inches(
-                (max(r.xarray_) - min(r.xarray_))
-                / ((param[0]) * (area - param[1]) ** (param[2])),
-                (max(r.yarray_) - min(r.yarray_))
-                / ((param[0]) * (area - param[1]) ** (param[2])),
-            )
         r.draw(
             params.CELL_PADDING,
             params.CELL_PADDING,
