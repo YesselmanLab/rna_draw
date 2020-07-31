@@ -4,5 +4,7 @@ python:
 cache: pip
 install:
   - pip install -r requirements.txt
+  - pip install -U pytest
+  - pip install -U git+https://github.com/YesselmanLab/rna_draw.git
 script:
   - pytest
