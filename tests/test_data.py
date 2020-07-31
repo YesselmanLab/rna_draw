@@ -1,6 +1,6 @@
 import unittest
 
-from rna_draw import data, 
+from rna_draw import settings, data
 
 
 class DataUnittest(unittest.TestCase):
@@ -11,7 +11,8 @@ class DataUnittest(unittest.TestCase):
             self.assertTrue(d.vals == vals)
 
         with self.subTest("load data from file"):
-            d = data.Data(data_file="resources/test_data_file.dat")
+            path = settings.Paths.UNITTEST_PATH + "/"
+            d = data.Data(data_file=path+"resources/test_data_file.dat")
             self.assertTrue(d.vals == vals)
 
     def test_min_max(self):
