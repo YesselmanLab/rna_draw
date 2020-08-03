@@ -77,7 +77,7 @@ class RNADrawer(object):
         self,
         ss,
         seq=None,
-        filename="secstruct",
+        out=None,
         color_str=None,
         render_type=None,
         default_color=None,
@@ -94,13 +94,13 @@ class RNADrawer(object):
             seq, ss, color_str, data, render_type, default_color
         )
 
-        return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params)
+        return self.__render(seq, ss, out, final_color_rbgs, self.__draw_params)
 
     def __setup(self, draw_params):
         if draw_params is not None:
             self.__draw_params = draw_params
 
-    def __render(self, seq, ss, colors, filename, params):
+    def __render(self, seq, ss, out, colors, params):
         r = render_rna.RNARenderer()
 
         pairmap = render_rna.get_pairmap_from_secstruct(ss)
@@ -119,7 +119,7 @@ class RNADrawer(object):
         r.ax.axis("off")
         r.ax.set_xlim([min(r.xarray_) + 40 - 15, max(r.xarray_) + 40 + 15])
         r.ax.set_ylim([min(r.yarray_) + 40 - 15, max(r.yarray_) + 40 + 15])
-        r.setupfiguresize()
+        r.fig.set_size_inches
 
         r.draw(
             params.CELL_PADDING,
@@ -129,9 +129,7 @@ class RNADrawer(object):
             seq,
             params.RENDER_IN_LETTERS,
         )
-        r.fig.savefig(filename + ".png")
         return r.fig
-
 
 def __get_data_from_args(args):
     if args.data_str is not None or args.data_file is not None:
@@ -186,7 +184,8 @@ def rna_draw(**kwargs):
 
 def main():
     args = parse_args()
-    return __rna_draw_from_args(args)
+    __rna_draw_from_args(args)
+    return __rna_draw_from_args(args).savefig(args.out+".png")
 
 
 if __name__ == "__main__":
