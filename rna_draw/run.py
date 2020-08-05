@@ -6,5 +6,7 @@ from draw import rna_draw
 #     seq="GCGGAUUUAGCUCAGCCGGGAGAGCGCCAGACUGGACACCUGGAGGUCCUGUGCCCGAUCCACAGAAUUCGCACCA",
 #     render_type="res_type")
 
-fig = rna_draw(ss=".(((.....))).")
-fig.savefig("Yes.png")
+# fig = rna_draw(ss=".(((.....))).")
+# fig.savefig("Yes.png")
+
+rna_draw(ss=".(((.....))).")
