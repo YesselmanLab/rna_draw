@@ -8,6 +8,18 @@ A minimial python package for drawing nucleic acid secondary structures.
 
 ## Install
 
+Currently rna_draw requires cairosvg (https://cairosvg.org/) which requires cairo graphics (https://www.cairographics.org/download/) to be installed
+
+```shell
+#Mac 
+brew install cairo
+
+#ubuntu 
+sudo apt-get install libcairo2-dev
+
+#fedora 
+sudo yum install cairo-devel
+
 ```
 
 To install rna_draw 

@@ -328,6 +328,10 @@ class RNARenderer:
         self.xarray_ = xarray
         self.yarray_ = yarray
 
+        self.ax.axis("off")
+        self.ax.set_xlim([min(self.xarray_) + 40 - 15, max(self.xarray_) + 40 + 15])
+        self.ax.set_ylim([min(self.yarray_) + 40 - 15, max(self.yarray_) + 40 + 15])
+
     def get_size(self):
         return self.size_
 
@@ -360,8 +364,9 @@ class RNARenderer:
                 (max(self.yarray_) - min(self.yarray_))
                 / ((param[0]) * (area - param[1]) ** (param[2])),
             )
-        return self.fig.set_size_inches
 
+        return self.fig.set_size_inches
+    
     def draw(
         self, offset_x, offset_y, colors, pairs, sequence, render_in_letter, line=False
     ):

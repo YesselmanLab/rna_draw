@@ -1,6 +1,6 @@
 import unittest
 
-from rna_draw import data, 
+from rna_draw import data
 
 
 class DataUnittest(unittest.TestCase):
