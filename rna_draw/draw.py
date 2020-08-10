@@ -116,9 +116,6 @@ class RNADrawer(object):
 
         cell_size = max(size) + params.CELL_PADDING * 2
 
-        # r.ax.axis("off")
-        # r.ax.set_xlim([min(r.xarray_) + 40 - 15, max(r.xarray_) + 40 + 15])
-        # r.ax.set_ylim([min(r.yarray_) + 40 - 15, max(r.yarray_) + 40 + 15])
         r.setup_figuresize()
 
         r.draw(
