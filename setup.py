@@ -22,7 +22,13 @@ setup(
     ],
     include_package_data=True,
     install_requires=requirements,
-    classifiers=["Programming Language :: Python :: 3",],
-    entry_points={"console_scripts": ["rna_draw = rna_draw.draw:main",]},
+    classifiers=[
+        "Programming Language :: Python :: 3",
+    ],
+    entry_points={
+        "console_scripts": [
+            "rna_draw = rna_draw.draw:main",
+        ]
+    },
     python_requires=">=3.6",
 )
