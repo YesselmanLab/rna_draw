@@ -19,4 +19,11 @@ jobs:
           pip install -r requirements.txt
       - name: Run Tests
         run: |
-          python -m pytest
+          pip install coverage
+          coverage run -m pytest
+      - name: Upload coverage
+        uses: paambaati/codeclimate-action@v3.0.0
+        env:
+          CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
+        with:
+          coverageCommand: coverage xml
