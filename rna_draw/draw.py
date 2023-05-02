@@ -85,7 +85,6 @@ class RNADrawer(object):
         data=None,
         draw_params=None,
     ):
-
         self.__setup(draw_params)
 
         if seq is None:
@@ -207,7 +206,7 @@ def rna_draw(**kwargs):
     args = []
     for k, v in kwargs.items():
         args.append("-" + k)
-        if (isinstance(v, Path)):
+        if isinstance(v, Path):
             v = str(v)
         args.append(v)
     args = parser.parse_args(args)

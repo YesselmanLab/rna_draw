@@ -20,6 +20,6 @@ def get_os():
 
 class Paths:
     LIB_PATH = get_lib_path()
-    RESOURCES_PATH = LIB_PATH/"rna_draw/resources/"
-    UNITTEST_PATH = LIB_PATH/"tests/"
-    EXAMPLE_PATH = LIB_PATH/"examples/"
+    RESOURCES_PATH = LIB_PATH / "rna_draw/resources/"
+    UNITTEST_PATH = LIB_PATH / "tests/"
+    EXAMPLE_PATH = LIB_PATH / "examples/"

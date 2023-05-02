@@ -31,7 +31,6 @@ class Colorer(object):
     def get_rgb_colors(
         self, seq, ss, color_str=None, data=None, render_type=None, default_color=None
     ):
-
         if default_color is None:
             default_color = COLORS["e"]
 
