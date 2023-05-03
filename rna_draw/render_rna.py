@@ -68,13 +68,11 @@ def get_pairmap_from_secstruct(secstruct):
 
 
 def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
-
     if start_index > end_index:
         print("Error occured while drawing RNA %d %d" % (start_index, end_index))
         sys.exit(0)
 
     if bi_pairs[start_index] == end_index:
-
         newnode = RNATreeNode()
         newnode.is_pair_ = True
         newnode.index_a_ = start_index
@@ -83,7 +81,6 @@ def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
         add_nodes_recursive(bi_pairs, newnode, start_index + 1, end_index - 1)
 
     else:
-
         newnode = RNATreeNode()
         jj = start_index
         while jj <= end_index:
@@ -111,7 +108,6 @@ def setup_coords_recursive(
     PRIMARY_SPACE,
     PAIR_SPACE,
 ):
-
     cross_x = -go_y
     cross_y = go_x
 
@@ -165,7 +161,6 @@ def setup_coords_recursive(
             )
 
     elif len(rootnode.children_) > 1:
-
         npairs = 0
         for ii in range(0, len(rootnode.children_)):
             if rootnode.children_[ii].is_pair_:
@@ -185,7 +180,6 @@ def setup_coords_recursive(
             rootnode.y_ = parentnode.y_ + go_y * circle_radius
 
         for ii in range(0, len(rootnode.children_)):
-
             length_walker += PRIMARY_SPACE
 
             if rootnode.children_[ii].is_pair_:
@@ -257,7 +251,6 @@ class RNARenderer:
         self.ax = self.fig.add_subplot(111, aspect="equal")
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
-
         dangling_start = 0
         dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
@@ -333,7 +326,6 @@ class RNARenderer:
         self, offset_x, offset_y, colors, pairs, sequence, render_in_letter, line=False
     ):
         if self.xarray_ != None:
-
             if line:
                 for ii in range(len(self.xarray_) - 1):
                     if colors == None:
@@ -341,7 +333,6 @@ class RNARenderer:
                     else:
                         pass
             else:
-
                 if pairs:
                     for pair in pairs:
                         x1, y1 = (
@@ -394,7 +385,6 @@ class RNARenderer:
                             )
                             self.ax.add_patch(cir)
                 if sequence:
-
                     for ii in range(0, len(self.xarray_)):
                         if not render_in_letter:
                             text_size = 20
@@ -423,7 +413,6 @@ class RNARenderer:
                         )
 
     def get_coords(self, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
-
         if self.root_ != None:
             get_coords_recursive(self.root_, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
         else:

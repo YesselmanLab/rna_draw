@@ -3,6 +3,7 @@ import time
 import argparse
 import pandas as pd
 from scipy.optimize import curve_fit
+from pathlib import Path
 
 from rna_draw import render_rna, parameters, colorer
 from rna_draw.colorer import *
@@ -84,7 +85,6 @@ class RNADrawer(object):
         data=None,
         draw_params=None,
     ):
-
         self.__setup(draw_params)
 
         if seq is None:
@@ -206,6 +206,8 @@ def rna_draw(**kwargs):
     args = []
     for k, v in kwargs.items():
         args.append("-" + k)
+        if isinstance(v, Path):
+            v = str(v)
         args.append(v)
     args = parser.parse_args(args)
     return __rna_draw_from_args(args)
