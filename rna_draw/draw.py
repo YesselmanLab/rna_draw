@@ -182,6 +182,8 @@ def __get_render_type(render_type_name):
         return colorer.RenderType.RES_TYPE
     elif render_type_name == "paired":
         return colorer.RenderType.PAIRED
+    elif render_type_name == "strand":
+        return colorer.RenderType.STRAND
     elif render_type_name == "none":
         return None
     else:

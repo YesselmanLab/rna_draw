@@ -1,6 +1,6 @@
 import matplotlib.colors
 import matplotlib.cm
-
+import re
 import numpy as np
 import seaborn as sns
 
@@ -56,6 +56,8 @@ class Colorer(object):
                 rgb_colors = self.__color_by_restype()
             elif render_type == RenderType.PAIRED:
                 rgb_colors = self.__color_by_paired()
+            elif render_type == RenderType.STRAND:
+                rgb_colors = self.__color_by_strand()
             self.__add_rgb_colors(rgb_colors, set_colors)
 
         if data is not None:
@@ -160,6 +162,15 @@ class Colorer(object):
                 rgb_colors.append(COLORS["y"])
             else:
                 rgb_colors.append(COLORS["b"])
+        return rgb_colors
+
+    def __color_by_strand(self):
+        colors = list(COLORS.keys())
+        rgb_colors = [COLORS[colors[0]] for i in range(len(self.ss))]
+        breaks = {x.start() for x in re.finditer('\+', self.ss)}
+        for index,element in enumerate(breaks):
+            for i in range(element,len(rgb_colors)):
+                rgb_colors[i] = COLORS[colors[index + 1]]
         return rgb_colors
 
 
