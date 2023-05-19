@@ -1,6 +1,7 @@
 import os
 import time
 import argparse
+from pprint import pprint
 import pandas as pd
 from scipy.optimize import curve_fit
 from pathlib import Path
@@ -35,9 +36,13 @@ def get_parser():
         required=False,
     )
     parser.add_argument(
+        "-color_palette",
+        help="seaborn color palette. Optional",
+        required=False
+    )
+    parser.add_argument(
         "-default_color", help="the color used when no other color is supplied"
     )
-
     parser.add_argument(
         "-data_str", help="data values by res seperated by ;", required=False
     )
@@ -82,13 +87,16 @@ class RNADrawer(object):
         color_str=None,
         render_type=None,
         default_color=None,
+        color_palette=None,
         data=None,
         draw_params=None,
     ):
         self.__setup(draw_params)
-
         if seq is None:
             seq = " " * len(ss)
+
+        if color_palette is not None:
+            self.__colorer.color_palette(color_palette)
 
         final_color_rbgs = self.__colorer.get_rgb_colors(
             seq, ss, color_str, data, render_type, default_color
@@ -108,7 +116,7 @@ class RNADrawer(object):
         for i in range(len(pairmap)):
             if pairmap[i] > i:
                 pairs.append(
-                    {"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]}
+                    {"from": i, "to": pairmap[i], "p": 1.0, "color": DEFAULT_COLORS["e"]}
                 )
 
         r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE)
@@ -182,6 +190,8 @@ def __get_render_type(render_type_name):
         return colorer.RenderType.RES_TYPE
     elif render_type_name == "paired":
         return colorer.RenderType.PAIRED
+    elif render_type_name == "strand":
+        return colorer.RenderType.STRAND
     elif render_type_name == "none":
         return None
     else:
@@ -196,8 +206,12 @@ def __rna_draw_from_args(args):
         default_color = colorer.parse_color_code(args.default_color)
 
     rd = RNADrawer()
+#    pprint(args.color_palette)
     return rd.draw(
-        args.ss, args.seq, args.out, args.color_str, render_type, default_color, data
+        args.ss, seq=args.seq, filename=args.out,
+        color_str=args.color_str, render_type=render_type,
+        color_palette=args.color_palette,
+        default_color=default_color, data=data
     )
 
 

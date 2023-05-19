@@ -26,7 +26,7 @@ def draw_rna(sequence, secstruct, colors, filename, parameters):
     pairs = []
     for i in range(len(pairmap)):
         if pairmap[i] > i:
-            pairs.append({"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]})
+            pairs.append({"from": i, "to": pairmap[i], "p": 1.0, "color": DEFAULT_COLORS["e"]})
     r.setup_tree(
         secstruct, parameters.NODE_R, parameters.PRIMARY_SPACE, parameters.PAIR_SPACE
     )

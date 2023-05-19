@@ -14,3 +14,4 @@ class RenderType:
     RES_TYPE = 0
     PAIRED = 1
     MOTIF = 2
+    STRAND = 3
