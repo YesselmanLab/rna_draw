@@ -240,6 +240,43 @@ def get_coords_recursive(rootnode, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
             rootnode.children_[ii], xarray, yarray, PRIMARY_SPACE, PAIR_SPACE
         )
 
+class Node:
+    def __init__(self, index = None, pair = None, x = None, y = None, chunk = None) -> None:
+        self.index = index
+        self.pair = pair
+        self.x = x
+        self.y = y
+        self.chunk = chunk
+
+    def get_chunk(self):
+        return self.chunk
+
+class RNAChunk:
+    def __init__(self, chunk_Type):
+        self.chunkType = chunk_Type
+        self.nodes = []
+        self.Connected_Chunks = []
+
+    def add_node(self, node):
+        self.nodes.append(node)
+
+    def connect_chunks(self, other_chunk):
+        self.Connected_Chunks.append(other_chunk)
+
+    def __str__(self):
+        str_repr = "RNA Chunk\n"
+        str_repr += f"Type: {self.chunkType}\n"
+        str_repr += f"Number of Nodes: {len(self.nodes)}\n"
+        str_repr += "Connected to Chunks: \n"
+
+        for chunk in self.Connected_Chunks:
+            str_repr += f"- {chunk.chunkType}\n"
+        
+        return str_repr
+    
+    def __len__(self) -> int:
+        return len(self.nodes)
+
 
 class RNARenderer:
     def __init__(self):
@@ -249,6 +286,44 @@ class RNARenderer:
         self.size_ = None
         self.fig = plt.Figure()
         self.ax = self.fig.add_subplot(111, aspect="equal")
+        self.chunks = []
+
+    def setup_node_structure(self, bi_pairs):
+        chunk_type = "Linear"
+        current_chunk = None
+        chunks = []
+        node_registry = [None] * len(bi_pairs)
+
+        for i, pair_node in enumerate(bi_pairs):
+            if pair_node == -1:
+                # Unpaired
+                if chunk_type == "Linear" or chunk_type == None:
+                    if chunk_type is not None and current_chunk != None and len(current_chunk) > 0:
+                        chunks.append(current_chunk)
+                    chunk_type = "Circular"
+                    current_chunk = RNAChunk(chunk_type)
+            else:
+                # Paired
+                if chunk_type == "Circular" or chunk_type == None:
+                    if chunk_type is not None and current_chunk != None and len(current_chunk) > 0:
+                        chunks.append(current_chunk)
+                    chunk_type = "Linear"
+                    current_chunk = RNAChunk(chunk_type)
+
+                if node_registry[bi_pairs[i]] == None:
+                    new_node = Node(bi_pairs[i], chunk = current_chunk)
+                    current_chunk.add_node(new_node)
+                    node_registry[bi_pairs[i]] = new_node
+            
+            if node_registry[i] == None:
+                new_node = Node(i, chunk = current_chunk)
+                current_chunk.add_node(new_node)
+                node_registry[i] = new_node
+        
+        if current_chunk != None and len(current_chunk) > 0:
+            chunks.append(current_chunk)
+            
+        return chunks
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
         dangling_start = 0
@@ -271,6 +346,17 @@ class RNARenderer:
                 break
 
         self.root_ = RNATreeNode()
+
+        # New Data Structure Below
+
+        chunks = self.setup_node_structure(bi_pairs)
+
+        for chunk in chunks:
+            print(chunk)
+            print(" ")
+            print(" ")
+
+        # OLD DATA STRUCTURE BELOW
 
         # for jj in range(0,len(bi_pairs)):
         jj = 0
