@@ -6,7 +6,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, ConnectionPatch
 from matplotlib.axes import Axes
-
+from rna_secstruct import SecStruct, MotifSearchParams
+import numpy as np
+from scipy.interpolate import CubicSpline
+import scipy.interpolate
+from matplotlib.patches import Arc
+from itertools import combinations
 
 class Test:
     def __init__(self, something):
@@ -107,6 +112,7 @@ def setup_coords_recursive(
     NODE_R,
     PRIMARY_SPACE,
     PAIR_SPACE,
+    radii
 ):
     cross_x = -go_y
     cross_y = go_x
@@ -131,6 +137,7 @@ def setup_coords_recursive(
                 NODE_R,
                 PRIMARY_SPACE,
                 PAIR_SPACE,
+                radii
             )
         elif (
             rootnode.children_[0].is_pair_ == False
@@ -146,6 +153,7 @@ def setup_coords_recursive(
                 NODE_R,
                 PRIMARY_SPACE,
                 PAIR_SPACE,
+                radii
             )
         else:
             setup_coords_recursive(
@@ -158,6 +166,7 @@ def setup_coords_recursive(
                 NODE_R,
                 PRIMARY_SPACE,
                 PAIR_SPACE,
+                radii
             )
 
     elif len(rootnode.children_) > 1:
@@ -185,6 +194,8 @@ def setup_coords_recursive(
             if rootnode.children_[ii].is_pair_:
                 length_walker += PAIR_SPACE / 2.0
 
+            radii.insert(rootnode.children_[ii].index_a_, circle_radius)
+
             rad_angle = length_walker / circle_length * 2 * math.pi - math.pi / 2.0
             child_x = (
                 rootnode.x_
@@ -211,6 +222,7 @@ def setup_coords_recursive(
                 NODE_R,
                 PRIMARY_SPACE,
                 PAIR_SPACE,
+                radii
             )
 
             if rootnode.children_[ii].is_pair_:
@@ -219,6 +231,8 @@ def setup_coords_recursive(
     else:
         rootnode.x_ = start_x
         rootnode.y_ = start_y
+
+    return radii
 
 
 def get_coords_recursive(rootnode, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
@@ -240,44 +254,6 @@ def get_coords_recursive(rootnode, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
             rootnode.children_[ii], xarray, yarray, PRIMARY_SPACE, PAIR_SPACE
         )
 
-class Node:
-    def __init__(self, index = None, pair = None, x = None, y = None, chunk = None) -> None:
-        self.index = index
-        self.pair = pair
-        self.x = x
-        self.y = y
-        self.chunk = chunk
-
-    def get_chunk(self):
-        return self.chunk
-
-class RNAChunk:
-    def __init__(self, chunk_Type):
-        self.chunkType = chunk_Type
-        self.nodes = []
-        self.Connected_Chunks = []
-
-    def add_node(self, node):
-        self.nodes.append(node)
-
-    def connect_chunks(self, other_chunk):
-        self.Connected_Chunks.append(other_chunk)
-
-    def __str__(self):
-        str_repr = "RNA Chunk\n"
-        str_repr += f"Type: {self.chunkType}\n"
-        str_repr += f"Number of Nodes: {len(self.nodes)}\n"
-        str_repr += "Connected to Chunks: \n"
-
-        for chunk in self.Connected_Chunks:
-            str_repr += f"- {chunk.chunkType}\n"
-        
-        return str_repr
-    
-    def __len__(self) -> int:
-        return len(self.nodes)
-
-
 class RNARenderer:
     def __init__(self):
         self.root_ = None
@@ -287,48 +263,504 @@ class RNARenderer:
         self.fig = plt.Figure()
         self.ax = self.fig.add_subplot(111, aspect="equal")
         self.chunks = []
+        self.struct = None
 
-    def setup_node_structure(self, bi_pairs):
-        chunk_type = "Linear"
-        current_chunk = None
-        chunks = []
-        node_registry = [None] * len(bi_pairs)
-
-        for i, pair_node in enumerate(bi_pairs):
-            if pair_node == -1:
-                # Unpaired
-                if chunk_type == "Linear" or chunk_type == None:
-                    if chunk_type is not None and current_chunk != None and len(current_chunk) > 0:
-                        chunks.append(current_chunk)
-                    chunk_type = "Circular"
-                    current_chunk = RNAChunk(chunk_type)
-            else:
-                # Paired
-                if chunk_type == "Circular" or chunk_type == None:
-                    if chunk_type is not None and current_chunk != None and len(current_chunk) > 0:
-                        chunks.append(current_chunk)
-                    chunk_type = "Linear"
-                    current_chunk = RNAChunk(chunk_type)
-
-                if node_registry[bi_pairs[i]] == None:
-                    new_node = Node(bi_pairs[i], chunk = current_chunk)
-                    current_chunk.add_node(new_node)
-                    node_registry[bi_pairs[i]] = new_node
-            
-            if node_registry[i] == None:
-                new_node = Node(i, chunk = current_chunk)
-                current_chunk.add_node(new_node)
-                node_registry[i] = new_node
+    # Returns Nucleotide Pair in Junction used to Determine Angle
+    def get_first_nucleotides(self, strands):
+        first_nucleotide = strands[0][0]
+        last_nucleotide = strands[-1][-1]
+        return first_nucleotide, last_nucleotide
+    
+    def get_last_nucleotides(self, strands):
+        first_nucleotide = strands[0][-1]
+        last_nucleotide = strands[-1][0]
+        return first_nucleotide, last_nucleotide
+    
+    def get_junction_center(self, junction):
+        if hasattr(junction, 'center_x') and hasattr(junction, 'center_y'):
+            return junction.center_x, junction.center_y
+        else:
+            return self.update_junction_center(junction)
         
-        if current_chunk != None and len(current_chunk) > 0:
-            chunks.append(current_chunk)
-            
-        return chunks
+    def junction_substituents(self, junction):
+        return len(junction.children) + (1 if junction.has_parent() else 0)
+    
+    def junction_substituents_from_strands(self, strands):
+        count = 0
 
-    def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
+        for strand in strands:
+            if len(strand[1:-1]) > 0:
+                count += 1
+
+        return count
+    
+    def get_junction_radius(self, junction):
+        if hasattr(junction, "radius"):
+            return junction.radius
+        else:
+            junction.radius = self.calculate_junction_radius(junction)
+            return junction.radius
+    
+    def calculate_junction_radius(self, junction):
+        center_x, center_y = self.get_junction_center(junction)
+
+        if junction.has_parent():
+            parent_strand = junction.parent
+        elif junction.has_children():
+            parent_strand = junction.children[0]
+        else:
+            print("Junction has no parent or child.")
+            return None
+
+        first, last = self.get_last_nucleotides(parent_strand.strands)
+
+        mid_x = (self.xarray[first] + self.xarray[last]) / 2
+        mid_y = (self.yarray[first] + self.yarray[last]) / 2
+
+        radius = np.sqrt((mid_x - center_x) ** 2 + (mid_y - center_y) ** 2)
+
+        return radius
+            
+    def update_junction_center(self, junction):
+        if hasattr(junction, "radius") and junction.has_parent():
+            parent_strand = junction.parent
+            first, last = self.get_last_nucleotides(parent_strand.strands)
+            mid_x = (self.xarray[first] + self.xarray[last]) / 2
+            mid_y = (self.yarray[first] + self.yarray[last]) / 2
+
+            direction_x = self.xarray[last] - self.xarray[first]
+            direction_y = self.yarray[last] - self.yarray[first]
+
+            magnitude = np.sqrt(direction_x**2 + direction_y**2)
+            unit_x = direction_x / magnitude
+            unit_y = direction_y / magnitude
+
+            perp_x = -unit_y
+            perp_y = unit_x
+
+            center_x = mid_x + junction.radius * perp_x
+            center_y = mid_y + junction.radius * perp_y
+        else:
+            x_coords = [self.xarray[value] for value in junction.positions]
+            y_coords = [self.yarray[value] for value in junction.positions]
+            center_x = sum(x_coords) / len(x_coords)
+            center_y = sum(y_coords) / len(y_coords)
+
+        junction.center_x = center_x
+        junction.center_y = center_y
+
+        return center_x, center_y
+
+    # Gives Information About a Junction, such as the X,Y cords and the angle relative to the origin.
+    def get_junction_parent_data(self, junction, center_x, center_y):
+        if junction.has_parent():
+            left, right = self.get_last_nucleotides(junction.parent.strands)
+            parent_pos_x = (self.xarray[left] + self.xarray[right]) / 2
+            parent_pos_y = (self.yarray[left] + self.yarray[right]) / 2
+
+            parent_angle_rad = np.arctan2(parent_pos_y - center_y, parent_pos_x - center_x)
+            parent_angle_deg = np.rad2deg(parent_angle_rad)
+
+            return parent_pos_x, parent_pos_y, parent_angle_deg
+    
+    # Calculates the Angle of a Single Branch with Respect to the Parent Helix. (Angle is Counter-Clockwise)
+    def get_junction_branch_angle(self, junction, child, center_x, center_y, parent_angle_deg):
+        data_new = self.struct[child.m_id]
+        left, right = self.get_first_nucleotides(data_new.strands)
+        child_pos_x = (self.xarray[left] + self.xarray[right]) / 2
+        child_pos_y = (self.yarray[left] + self.yarray[right]) / 2
+
+        child_angle_rad = math.atan2(child_pos_y - center_y, child_pos_x - center_x)
+        child_angle_deg = math.degrees(child_angle_rad)
+
+        angle_between = (child_angle_deg - parent_angle_deg + 360) % 360
+
+        return angle_between
+
+    def get_children_angles(self, junction):
+        angles = []
+
+        center_x, center_y = self.get_junction_center(junction)
+        x, y, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
+
+        if junction.has_children():
+            for branch in junction.children:
+                angles.append(self.get_junction_branch_angle(junction, branch, center_x, center_y, parent_angle_deg))
+        
+        return angles
+    
+    def rotate_point(self, point, origin, angle):
+        px, py = point
+        ox, oy = origin
+
+        rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)], 
+                                    [np.sin(angle),  np.cos(angle)]])
+        
+        result = np.dot(rotation_matrix, np.array([px - ox, py - oy])) + np.array([ox, oy])
+        
+        return result[0], result[1]
+    
+    def set_branch_angle(self, junction, child, target_angle):
+        center_x, center_y = self.get_junction_center(junction)
+        x, y, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
+
+        current_angle = self.get_junction_branch_angle(junction, child, center_x, center_y, parent_angle_deg)
+        angle_diff = math.radians(target_angle) - math.radians(current_angle)
+
+        queue = [child]
+        processed_nucleotides = set()
+
+        while queue:
+            current_branch = queue.pop(0)
+            data_new = self.struct[current_branch.m_id]
+
+            for strand in data_new.strands:
+                for nucleotide in strand:
+                    if nucleotide not in processed_nucleotides:
+                        new_x, new_y = self.rotate_point((self.xarray[nucleotide], self.yarray[nucleotide]), (center_x, center_y), angle_diff)
+                        self.xarray[nucleotide] = new_x
+                        self.yarray[nucleotide] = new_y
+                        processed_nucleotides.add(nucleotide)
+
+            if current_branch.is_junction():
+                if (hasattr(current_branch, 'center_x') and hasattr(current_branch, 'center_y')):
+                    new_center_x, new_center_y = self.rotate_point((current_branch.center_x, current_branch.center_y), (center_x, center_y), angle_diff)
+                    current_branch.center_x = new_center_x
+                    current_branch.center_y = new_center_y
+
+            if current_branch.has_children():
+                for child_branch in current_branch.children:
+                    queue.append(child_branch)
+        
+        #left, right = self.get_adjacent_unpaired_strands(junction, junction.children.index(child))
+
+        #self.update_unpaired_strands_positions(junction)
+
+    def get_adjacent_unpaired_strands(self, junction, index):
+        if index < 0 or index >= len(junction.strands):
+            raise ValueError("Index out of range in junction strands")
+
+        left_strand = junction.strands[index]
+
+        right_strand = junction.strands[index + 1] if index + 1 < len(junction.strands) else junction.parent
+
+        return left_strand, right_strand
+    
+    def update_unpaired_strands_positions(self, junction):
+        center_x, center_y = self.get_junction_center(junction)
+        radius = self.get_junction_radius(junction)
+
+        _, _, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
+
+        radius_updated = False
+
+        for index, strand in enumerate(junction.strands):
+            num_nodes = len(strand[1:-1])
+            space_needed = (num_nodes) * self.NODE_R * 2
+            arc_length = -math.inf
+
+            shifted_start_rad = None
+            shifted_end_rad = None
+            angle_shift_rad = None
+
+            while arc_length < space_needed:
+                shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
+                shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
+
+                shifted_start_rad %= (2 * np.pi)
+                shifted_end_rad %= (2 * np.pi)
+
+                angle_shift_rad = self.NODE_R * 2 / radius
+
+                if num_nodes > 1:
+                    shifted_start_rad -= angle_shift_rad
+                    shifted_end_rad += angle_shift_rad
+
+                if shifted_end_rad > shifted_start_rad:
+                    shifted_end_rad -= 2 * np.pi
+
+                angular_span_rad = (shifted_start_rad + angle_shift_rad/2) - (shifted_end_rad - angle_shift_rad/2)
+                arc_length = radius * angular_span_rad
+
+                if num_nodes == 1:
+                    arc_length -= self.NODE_R * 4
+
+                if space_needed > arc_length:
+                    radius += 1
+                    self.set_radius(junction, radius, auto_call=True)
+                    radius_updated = True
+
+            shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
+            shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
+
+            shifted_start_rad %= (2 * np.pi)
+            shifted_end_rad %= (2 * np.pi)
+
+            angle_shift_rad = self.NODE_R * 2 / radius
+            shifted_start_rad -= angle_shift_rad
+            shifted_end_rad += angle_shift_rad
+
+            if shifted_end_rad > shifted_start_rad:
+                shifted_end_rad -= 2 * np.pi
+
+            if space_needed + self.NODE_R < arc_length or num_nodes == 1:
+                start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
+                end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
+
+                start_rad %= (2 * np.pi)
+                end_rad %= (2 * np.pi)
+
+                if end_rad > start_rad:
+                    end_rad -= 2 * np.pi
+
+                total_angular_span_rad = start_rad - end_rad
+                angle_between_nodes_rad = total_angular_span_rad / (num_nodes + 1)
+                angles = [start_rad - angle_between_nodes_rad - i * angle_between_nodes_rad for i in range(num_nodes)]
+            else:
+                angles = np.linspace(shifted_start_rad, shifted_end_rad, num_nodes)
+
+            for i, node in enumerate(strand[1:-1]):
+                self.xarray[node] = center_x + radius * np.cos(angles[i])
+                self.yarray[node] = center_y + radius * np.sin(angles[i])
+
+        if radius_updated:
+            self.update_unpaired_strands_positions(junction)
+
+    def set_radius(self, junction, new_radius, auto_call=False):
+        center_x, center_y = self.get_junction_center(junction)
+
+        visited_junctions = set()
+        visited_nodes = set()
+
+        visited_junctions.add(junction)
+
+        for child in junction.children:
+            delta_x, delta_y = self._calculate_deltas(original_junction=junction, subpart=child, center_x=center_x, center_y=center_y, new_radius=new_radius)
+            self._update_positions(child, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=False)
+
+        if junction.has_parent():
+            delta_x, delta_y = self._calculate_deltas(original_junction=junction, subpart=junction.parent, center_x=center_x, center_y=center_y, new_radius=new_radius, parent=True)
+            self._update_positions(junction.parent, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=True)
+
+        if auto_call is not True:
+            self.update_unpaired_strands_positions(junction)
+
+        junction.radius = self.calculate_junction_radius(junction)
+
+    def _calculate_deltas(self, original_junction=None, subpart=None, center_x=None, center_y=None, new_radius=None, parent=False):
+        first_node = None
+        last_node = None
+
+        if parent == False:
+            first_node,last_node = self.get_first_nucleotides(subpart.strands)
+        else:
+            first_node,last_node = self.get_last_nucleotides(subpart.strands)
+
+        midpoint_x = (self.xarray[first_node] + self.xarray[last_node]) / 2
+        midpoint_y = (self.yarray[first_node] + self.yarray[last_node]) / 2
+        dx = midpoint_x - center_x
+        dy = midpoint_y - center_y
+
+        old_radius = self.get_junction_radius(original_junction)
+
+        radius_difference = new_radius - old_radius
+
+        unit_vector_x = dx / old_radius
+        unit_vector_y = dy / old_radius
+
+        delta_x = radius_difference * unit_vector_x
+        delta_y = radius_difference * unit_vector_y
+
+        return delta_x, delta_y
+
+    def _update_positions(self, junction, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=None):
+        if junction in visited_junctions:
+            return
+
+        visited_junctions.add(junction)
+
+        for node in junction.positions:
+            if node in visited_nodes:
+                continue
+            visited_nodes.add(node)
+            self.xarray[node] += delta_x
+            self.yarray[node] += delta_y
+
+        if junction.is_junction:
+            if hasattr(junction, "center_x"):
+                junction.center_x += delta_x
+                junction.center_y += delta_y
+
+        if junction.has_children():
+            for child in junction.children:
+                self._update_positions(child, delta_x, delta_y, visited_junctions, visited_nodes)
+
+        if upward_recursion == True:
+            if junction.has_parent():
+                self._update_positions(junction.parent, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion)
+
+    def straighten_unpaired_strands(self):
+        if len(self.struct.get_single_strands()) > 0:
+            single_strand_chunks = self.struct.get_single_strands()
+            first_id = single_strand_chunks[0].positions[0]
+            direction_vector = [1, 0]
+            self.direction_vector = direction_vector
+
+            number = 0
+            between_strands = []
+            between_strand_positions = {}
+
+            total_offset = [0, 0]
+
+            if first_id > 0:
+                between_strands.append((0, first_id - 1))
+
+                original_dx = self.xarray[first_id - 1] - self.xarray[0]
+                original_dy = self.yarray[first_id - 1] - self.yarray[0]
+                magnitude = math.sqrt(original_dx**2 + original_dy**2)
+                extra_x = magnitude * direction_vector[0]
+                extra_y = magnitude * direction_vector[1]
+
+                between_strand_positions[first_id - 1] = (
+                    self.xarray[first_id] - self.NODE_R * 2 * direction_vector[0],
+                    self.yarray[first_id] - self.NODE_R * 2 * direction_vector[1]
+                )
+
+                between_strand_positions[0] = (
+                    between_strand_positions[first_id - 1][0] - extra_x,
+                    between_strand_positions[first_id - 1][1] - extra_y
+                )
+
+            for i, strand in enumerate(single_strand_chunks):
+                positions = strand.positions
+                if i != 0:
+                    start, end = last_end+1, positions[0]-1
+                    between_strands.append((start, end))
+
+                    original_dx = self.xarray[end] - self.xarray[start]
+                    original_dy = self.yarray[end] - self.yarray[start]
+                    magnitude = math.sqrt(original_dx**2 + original_dy**2)
+                    extra_x = magnitude * direction_vector[0]
+                    extra_y = magnitude * direction_vector[1]
+                    
+                    between_strand_positions[start] = (self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * (number-2) + total_offset[0],
+                                                        self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * (number-2) + total_offset[1])
+                    
+                    total_offset[0] += extra_x
+                    total_offset[1] += extra_y
+                    number -= 1
+
+                    between_strand_positions[end] = (self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * (number-1) + total_offset[0],
+                                                    self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * (number-1) + total_offset[1])
+
+                for pos in positions:
+                    self.xarray[pos] = self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * number + total_offset[0]
+                    self.yarray[pos] = self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * number + total_offset[1]
+                    number += 1
+
+                last_end = positions[-1]
+                number += 2
+
+            if last_end < len(self.xarray) - 1:
+                start, end = last_end+1, len(self.xarray) - 1
+                between_strands.append((start, end))
+
+                original_dx = self.xarray[end] - self.xarray[start]
+                original_dy = self.yarray[end] - self.yarray[start]
+                magnitude = math.sqrt(original_dx**2 + original_dy**2)
+                extra_x = magnitude * direction_vector[0]
+                extra_y = magnitude * direction_vector[1]
+                
+                between_strand_positions[start] = (self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * (number-2) + total_offset[0],
+                                                    self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * (number-2) + total_offset[1])
+                
+                total_offset[0] += extra_x
+                total_offset[1] += extra_y
+                number -= 1
+            
+                between_strand_positions[end] = (self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * (number-1) + total_offset[0],
+                                                self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * (number-1) + total_offset[1])
+
+            for set in between_strands:
+                saved_original = {}
+                for node in set:
+                    saved_original[node] = (self.xarray[node], self.yarray[node])
+                    self.xarray[node] = between_strand_positions[node][0]
+                    self.yarray[node] = between_strand_positions[node][1]
+
+                start, end = set
+                old_dx = saved_original[end][0] - saved_original[start][0]
+                old_dy = saved_original[end][1] - saved_original[start][1]
+
+                new_dx = self.xarray[end] - self.xarray[start]
+                new_dy = self.yarray[end] - self.yarray[start]
+
+                for i in range(start + 1, end):
+                    old_pos = (self.xarray[i], self.yarray[i])
+                    dx = old_pos[0] - saved_original[start][0]
+                    dy = old_pos[1] - saved_original[start][1]
+
+                    angle_old = math.atan2(old_dy, old_dx)
+                    angle_new = math.atan2(new_dy, new_dx)
+                    rotation_angle = angle_new - angle_old
+
+                    rotated_dx = dx * math.cos(rotation_angle) - dy * math.sin(rotation_angle)
+                    rotated_dy = dx * math.sin(rotation_angle) + dy * math.cos(rotation_angle)
+
+                    self.xarray[i] = self.xarray[start] + rotated_dx
+                    self.yarray[i] = self.yarray[start] + rotated_dy
+
+                if hasattr(self, 'center_x') and hasattr(self, 'center_y'):
+                    dx = self.center_x - saved_original[start][0]
+                    dy = self.center_y - saved_original[start][1]
+
+                    rotated_dx = dx * math.cos(rotation_angle) - dy * math.sin(rotation_angle)
+                    rotated_dy = dx * math.sin(rotation_angle) + dy * math.cos(rotation_angle)
+
+                    self.center_x = self.xarray[start] + rotated_dx
+                    self.center_y = self.yarray[start] + rotated_dy
+
+            return between_strands
+
+    def change_unpaired_direction(self, between_strands, node_number):
+        straight_nodes = []
+        all_nodes = []
+
+        if node_number <= 0:
+            return
+
+        for strand in self.struct.get_single_strands():
+            for node in strand.positions:
+                all_nodes.append(node)
+
+        for group in between_strands:
+            for node in group:
+                all_nodes.append(node)
+
+        if node_number < len(all_nodes):
+            direction_vector = (self.xarray[node_number] - self.xarray[node_number - 1], self.yarray[node_number] - self.yarray[node_number - 1])
+            print("Direction vector", direction_vector)
+
+        print(all_nodes)
+        print(len(all_nodes))
+
+    def check_node_overlap(self, epsilon=1):
+        overlap_count = 0
+        node_diameter = 2 * self.NODE_R
+        
+        for i in range(len(self.xarray)):
+            for j in range(i + 1, len(self.xarray)):
+                distance = math.sqrt((self.xarray[i] - self.xarray[j])**2 + (self.yarray[i] - self.yarray[j])**2)
+                if distance < node_diameter - epsilon:
+                    overlap_count += 1
+                    
+        return overlap_count
+
+    def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
         dangling_start = 0
         dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
+        self.length = len(bi_pairs)
 
         self.NODE_R = NODE_R
         self.root_ = None
@@ -346,17 +778,6 @@ class RNARenderer:
                 break
 
         self.root_ = RNATreeNode()
-
-        # New Data Structure Below
-
-        chunks = self.setup_node_structure(bi_pairs)
-
-        for chunk in chunks:
-            print(chunk)
-            print(" ")
-            print(" ")
-
-        # OLD DATA STRUCTURE BELOW
 
         # for jj in range(0,len(bi_pairs)):
         jj = 0
@@ -377,8 +798,200 @@ class RNARenderer:
             xarray.append(0.0)
             yarray.append(0.0)
 
-        self.setup_coords(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
+        radii = self.setup_coords(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         self.get_coords(xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
+
+        ## Everything Below is New to Modify Angles
+
+        self.xarray = xarray
+        self.yarray = yarray
+
+        self.struct = SecStruct(seq, secstruct) 
+
+        for a in self.struct:
+            print(a)
+        '''
+        junction = self.struct.get_junctions()[1] 
+        self.set_branch_angle(junction, junction.children[0], 180) 
+        x, y = self.get_junction_center(junction)
+
+        junction = self.struct.get_junctions()[2] 
+        print(self.get_children_angles(junction))
+        self.set_branch_angle(junction, junction.children[0], 180) 
+        print(self.get_children_angles(junction))
+        x, y = self.get_junction_center(junction)
+        
+        junction = self.struct.get_junctions()[1] 
+        #self.set_branch_angle(junction, junction.children[0], 180) 
+        x, y = self.get_junction_center(junction)
+        '''
+
+        for junction in self.struct.get_junctions():
+            for strand in junction.strands:
+                for node in strand[1:-1]:
+                    junction.radius = radii[node]
+
+        between_strands = self.straighten_unpaired_strands()
+        self.change_unpaired_direction(between_strands, 7)
+        
+        best_overlap = [None] * len(self.struct.get_junctions())
+        best_combo = [None] * len(self.struct.get_junctions())
+        
+        #for junction in self.struct.get_junctions():
+            #self.update_unpaired_strands_positions(junction)
+
+        def explore_paths(index, current_combo):
+            if index == len(self.struct.get_junctions()):
+                return
+
+            junction = self.struct.get_junctions()[index]
+            ideal_angles = []
+
+            if len(junction.children) == 1:
+                ideal_angles = [180]
+            elif len(junction.children) <= 3:
+                ideal_angles = reversed([90, 180, 270])
+            else:
+                interval = 360 / len(junction.children)
+                ideal_angles = reversed(list(range(interval, 360 - interval, interval)))
+
+            for comb in combinations(ideal_angles, len(junction.children)):
+                if all(comb[i] > comb[i + 1] for i in range(len(comb) - 1)):
+                    for child_index, child in enumerate(junction.children):
+                        self.set_branch_angle(junction, child, comb[child_index])
+                        self.update_unpaired_strands_positions(junction)
+                    
+                    overlap_count = self.check_node_overlap()
+                    print("Overlap:", overlap_count)
+                    if best_overlap[index] is None or overlap_count <= best_overlap[index]:
+                        print("New Smaller Overlap: ", overlap_count, best_overlap[index])
+                        best_overlap[index] = overlap_count
+                        current_combo[index] = comb
+                        best_combo[index] = current_combo[index]
+
+                    explore_paths(index + 1, current_combo.copy())
+                
+        explore_paths(0, [None] * len(self.struct.get_junctions()))
+
+        for i, junction in enumerate(self.struct.get_junctions()):
+            combo = best_combo[i]
+            if combo:
+                for child_index, child in enumerate(junction.children):
+                    self.set_branch_angle(junction, child, combo[child_index])
+                    self.update_unpaired_strands_positions(junction)
+
+        '''
+        for index, junction in enumerate(self.struct.get_junctions()):
+            ideal_angles = []
+
+            if len(junction.children) == 1:
+                ideal_angles = [180]
+            elif len(junction.children) <= 3:
+                ideal_angles = reversed([90, 180, 270])
+            else:
+                interval = 360 / len(junction.children)
+                ideal_angles = reversed(list(range(interval, 360 - interval, interval)))
+
+            for comb in combinations(ideal_angles, len(junction.children)):
+                if all(comb[i] > comb[i+1] for i in range(len(comb) - 1)):
+                    for child_index, child in enumerate(junction.children):
+                        self.set_branch_angle(junction, child, comb[child_index])
+                    overlap_count = self.check_node_overlap()
+                    if best_overlap[index] is None or overlap_count <= best_overlap[index]:
+                        best_overlap[index] = overlap_count
+                        best_combo[index] = comb
+
+            for child, angle in zip(junction.children, best_combo[index]):
+                self.set_branch_angle(junction, child, angle)
+        
+        for junction in self.struct.get_junctions():
+            if len(junction.children) == 2:
+                self.set_branch_angle(junction, junction.children[0], 180)
+                self.set_branch_angle(junction, junction.children[1], 90)
+            elif len(junction.children) == 1: 
+                self.set_branch_angle(junction, junction.children[0], 180)
+            elif len(junction.children) == 3:
+                self.set_branch_angle(junction, junction.children[0], 270)
+                self.set_branch_angle(junction, junction.children[1], 180)
+                self.set_branch_angle(junction, junction.children[2], 90)
+                #self.set_radius(junction, self.get_junction_radius(junction) * 2)
+
+                #for nodes in junction.strands:
+                    #for node in nodes:
+                        #self.xarray[node] = junction.center_x
+                        #self.yarray[node] = junction.center_y
+
+            #print(self.get_children_angles(junction))
+
+            #print(junction.strands)
+            #print(len(junction.strands))
+        #print("Junction Rad", self.get_junction_radius(self.struct.get_junctions()[1]))
+        #self.set_radius(self.struct.get_junctions()[4], self.get_junction_radius(self.struct.get_junctions()[4]) * 2)
+        #self.set_radius(self.struct.get_junctions()[1], self.struct.get_junctions()[1].radius * -3.25)
+        #self.set_radius(self.struct.get_junctions()[2], self.struct.get_junctions()[2].radius * 3.25)
+        '''
+        #self.straighten_unpaired_strands()
+        
+        #junction = self.struct.get_junctions()[0]
+        #self.set_branch_angle(junction, junction.children[0], 180)
+        #print("Second below")
+        #junction = self.struct.get_junctions()[1]
+        #self.set_branch_angle(junction, junction.children[0], 180)
+        #self.set_branch_angle(junction, junction.children[1], 90)
+        #print(self.struct.to_str())
+
+        # Keep these at the End
+
+        print("overlap: ", self.check_node_overlap())
+
+        # Sets up the Information to Connect Junction Nodes
+        self.junction_data = []
+
+        for junction in self.struct.get_junctions():
+            center_x, center_y = self.update_junction_center(junction)
+            radius = self.get_junction_radius(junction)
+            
+            for strand in junction.strands:
+                nodes_data = []
+                start_node, end_node = strand[0], strand[-1]
+                
+                start_angle = np.arctan2(self.yarray[start_node] - center_y, self.xarray[start_node] - center_x)
+                end_angle = np.arctan2(self.yarray[end_node] - center_y, self.xarray[end_node] - center_x)
+
+                start_angle %= (2 * np.pi)
+                end_angle %= (2 * np.pi)
+
+                start_angle, end_angle = end_angle, start_angle
+
+                if end_angle > start_angle:
+                    end_angle -= 2 * np.pi
+
+                if start_angle < end_angle:
+                    start_angle, end_angle = end_angle, start_angle
+
+                a,b = self.get_last_nucleotides(junction.parent.strands)
+                
+                for node in strand:
+                    x = self.xarray[node]
+                    y = self.yarray[node]
+                    nodes_data.append({'Node': node, 'X': x, 'Y': y})
+                    
+                self.junction_data.append({
+                    'Junction': junction,
+                    'Strand': strand,
+                    'Center': (center_x, center_y),
+                    'First': a,
+                    'Last': b,
+                    'Radius': radius,
+                    'Nodes': nodes_data,
+                    'Start Angle': start_angle,
+                    'End Angle': end_angle
+                })
+
+        xarray = self.xarray
+        yarray = self.yarray
+
+        ## Below Is From Prior
 
         min_x = xarray[0] - NODE_R
         min_y = yarray[0] - NODE_R
@@ -411,6 +1024,57 @@ class RNARenderer:
     def draw(
         self, offset_x, offset_y, colors, pairs, sequence, render_in_letter, line=False
     ):
+        for strand_info in self.junction_data:
+            radius = strand_info['Radius']
+            start_angle = np.degrees(strand_info['Start Angle'])
+            end_angle = np.degrees(strand_info['End Angle'])
+
+            if len(strand_info['Strand']) > 2 or len(strand_info['Junction'].children) > 1:
+                first = strand_info['First']
+                last = strand_info['Last']
+
+                mid_x = (self.xarray[first] + self.xarray[last]) / 2
+                mid_y = (self.yarray[first] + self.yarray[last]) / 2
+
+                direction_x = self.xarray[last] - self.xarray[first]
+                direction_y = self.yarray[last] - self.yarray[first]
+
+                magnitude = np.sqrt(direction_x**2 + direction_y**2)
+                unit_x = direction_x / magnitude
+                unit_y = direction_y / magnitude
+
+                perp_x = -unit_y
+                perp_y = unit_x
+
+                center_x = mid_x + radius * perp_x + offset_x
+                center_y = mid_y + radius * perp_y + offset_y
+
+                arc = Arc(
+                    (center_x, center_y),
+                    2 * radius,
+                    2 * radius,
+                    angle=0,
+                    theta1=start_angle,
+                    theta2=end_angle,
+                    linewidth=7.5,
+                    edgecolor="#969696"
+                )
+                self.ax.add_patch(arc)
+            else:
+                node_1 = strand_info['Strand'][0]
+                node_2 = strand_info['Strand'][1]
+
+                x1, y1 = self.xarray_[node_1] + offset_x, self.yarray_[node_1] + offset_y
+                x2, y2 = self.xarray_[node_2] + offset_x, self.yarray_[node_2] + offset_y
+
+                rec = ConnectionPatch(
+                    (x1, y1),
+                    (x2, y2),
+                    coordsA="data",
+                    linewidth=7.5,
+                    edgecolor="#969696",
+                )
+                self.ax.add_patch(rec)
         if self.xarray_ != None:
             if line:
                 for ii in range(len(self.xarray_) - 1):
@@ -420,17 +1084,6 @@ class RNARenderer:
                         pass
             else:
                 if pairs:
-                    for pair in pairs:
-                        x1, y1 = (
-                            [
-                                offset_x + self.xarray_[pair["from"]],
-                                offset_y + self.yarray_[pair["from"]],
-                            ],
-                            [
-                                offset_x + self.xarray_[pair["to"]],
-                                offset_y + self.yarray_[pair["to"]],
-                            ],
-                        )
                     for pair in pairs:
                         x1, y1 = (
                             [
@@ -508,6 +1161,8 @@ class RNARenderer:
 
     def setup_coords(self, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
         if self.root_ != None:
-            setup_coords_recursive(
-                self.root_, None, 0, 0, 0, 1, NODE_R, PRIMARY_SPACE, PAIR_SPACE
+            radii = [0] * self.length
+
+            return setup_coords_recursive(
+                self.root_, None, 0, 0, 0, 1, NODE_R, PRIMARY_SPACE, PAIR_SPACE, radii
             )

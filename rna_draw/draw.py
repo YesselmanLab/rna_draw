@@ -111,7 +111,7 @@ class RNADrawer(object):
                     {"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]}
                 )
 
-        r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE)
+        r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE, seq)
         size = r.get_size()
 
         cell_size = max(size) + params.CELL_PADDING * 2
