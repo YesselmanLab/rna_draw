@@ -1,3 +1,4 @@
+import io
 import os
 import time
 import argparse
@@ -45,6 +46,12 @@ def draw_rna(sequence, secstruct, colors, filename, parameters):
     )
     r.fig.savefig("secstruct.png")
 
+    # Save for Jupiter Notebook
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    return buf.read()
+
 
 class RNARender(object):
     def __init__(self):
@@ -71,7 +78,7 @@ class RNARender(object):
             raise ValueError("unknown color type")
 
         p = parameters.Parameters(seq, ss)
-        draw_rna(seq, ss, final_color_rbgs, filename, p)
+        return draw_rna(seq, ss, final_color_rbgs, filename, p)
 
 
 def main():

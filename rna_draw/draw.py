@@ -1,9 +1,11 @@
 import os
+import sys
 import time
 import argparse
 import pandas as pd
 from scipy.optimize import curve_fit
 from pathlib import Path
+from matplotlib.transforms import Bbox
 
 from rna_draw import render_rna, parameters, colorer
 from rna_draw.colorer import *
@@ -13,7 +15,6 @@ import matplotlib.pyplot as plt
 
 import re
 import numpy as np
-
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -104,6 +105,7 @@ class RNADrawer(object):
         r = render_rna.RNARenderer()
 
         pairmap = render_rna.get_pairmap_from_secstruct(ss)
+
         pairs = []
         for i in range(len(pairmap)):
             if pairmap[i] > i:
@@ -111,7 +113,11 @@ class RNADrawer(object):
                     {"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]}
                 )
 
-        r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE, seq)
+        response = r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE, seq)
+
+        if response == 'Too Large':
+            return
+
         size = r.get_size()
 
         cell_size = max(size) + params.CELL_PADDING * 2
@@ -142,12 +148,18 @@ class RNADrawer(object):
 
         if min(r.xarray_) != max(r.yarray_):
             area = (max(r.xarray_) - min(r.xarray_)) * (max(r.yarray_) - min(r.yarray_))
-            r.fig.set_size_inches(
-                (max(r.xarray_) - min(r.xarray_))
-                / ((param[0]) * (area - param[1]) ** (param[2])),
-                (max(r.yarray_) - min(r.yarray_))
-                / ((param[0]) * (area - param[1]) ** (param[2])),
-            )
+
+            x = (max(r.xarray_) - min(r.xarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
+            y = (max(r.yarray_) - min(r.yarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
+
+            if (x > 650 or y > 650):
+                print("Structure BP Length:", len(r.xarray_))
+                print('Structure is too big for matplotlib to render.')
+                return
+
+            r.fig.set_size_inches(x, y)
+
+        # This draw takes about 1/5th the time
         r.draw(
             params.CELL_PADDING,
             params.CELL_PADDING,
@@ -156,7 +168,13 @@ class RNADrawer(object):
             seq,
             params.RENDER_IN_LETTERS,
         )
-        r.fig.savefig(filename + ".png")
+
+        plt.setp(r.ax, rasterized=True)
+        plt.show()
+        # To save a few seconds on larger structures, you can just plt.show
+        # instead of saving the figure to a file.
+        r.fig.savefig(fname=filename + ".png", format="raw")
+
         return r.fig
 
 
