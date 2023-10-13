@@ -10,7 +10,7 @@ DBN_FOLDER = "dbnFiles"
 This code is used to mass generate RNA secondary structures, given DBN files as inputs.
 
 To use: 
-- Obtain a Folder and place it in this directory. Name this folder 'dbnFiles'.
+- Obtain a Folder and place it in this directory. Name this folder 'dbnFiles'. Place desired dbn structure files in this directory.
 - Create an empty Folder named 'Images' in this directory. It will be filled with the rendered RNA Structures.
 
 Afterwards, you can simply run this python file with the environment installed.
