@@ -480,7 +480,10 @@ class RNARenderer:
             shifted_end_rad = None
             angle_shift_rad = None
 
+            tolerance = self.NODE_R
+
             while arc_length < space_needed and space_needed != 0:
+            #while space_needed != 0 and abs(arc_length - space_needed) < tolerance:
                 shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
                 shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
 
@@ -502,10 +505,17 @@ class RNARenderer:
                 if num_nodes == 1:
                     arc_length -= self.NODE_R * 4
 
+                tolerance = self.NODE_R
+
+                #if abs(arc_length - space_needed) > tolerance:
                 if space_needed > arc_length:
                     radius += 1
                     self.set_radius(junction, radius, auto_call=True)
                     radius_updated = True
+                    #elif space_needed < arc_length:
+                        #radius *= 0.9
+                        #self.set_radius(junction, radius, auto_call=True)
+                        #radius_updated = True
 
             shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
             shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
@@ -773,7 +783,7 @@ class RNARenderer:
         
     # Checks for Node Overlap between all nodes.
     # Only checks overlap between node_array and other nodes if node_array is specified.
-    def check_node_overlap(self, epsilon=1, node_array=None):
+    def check_node_overlap(self, epsilon=1, node_array=None, ignore_table=None):
         overlap_count = 0
         below_first_node_count = 0
         node_diameter = 2 * self.NODE_R
@@ -782,9 +792,12 @@ class RNARenderer:
 
         first_y = self.yarray[0]
 
+        if ignore_table is None:
+            ignore_table = set()
+
         if node_array is not None:
-            outside_points = [points[i] for i in range(len(points)) if i not in node_array]
-            inside_points = [points[i] for i in node_array]
+            outside_points = [points[i] for i in range(len(points)) if i not in node_array and i not in ignore_table]
+            inside_points = [points[i] for i in node_array if i not in ignore_table]
 
             tree_outside = cKDTree(outside_points)
 
@@ -793,9 +806,12 @@ class RNARenderer:
                 if point[1] < first_y:
                     below_first_node_count += 1
         else:
-            tree = cKDTree(points)
-            
+            tree = cKDTree([point for i, point in enumerate(points) if i not in ignore_table])
+
             for i, point in enumerate(points):
+                if i in ignore_table:
+                    continue
+
                 overlap_count += len(tree.query_ball_point(point, node_diameter - epsilon)) - 1
                 if point[1] < first_y:
                     below_first_node_count += 1
@@ -830,6 +846,37 @@ class RNARenderer:
                 shift_nodes_y_axis(start=between[0] + 1, end=between[1], value=magnitude)
                 n += 1
                 overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(between[0] + 1, between[1])))
+
+        for junction in self.struct.get_junctions():
+            self.update_junction_center(junction)
+
+    # Goes back through and minimizes the distance between.
+    def minimize_horizontal_distance_between(self, between_strands):
+        for between in between_strands[1:]:
+            best_distance = float('inf')
+            best_overlap = 0
+            distance = 0
+            n = 0
+            
+            def shift_nodes_x_axis(start, value):
+                for node in range(start, self.length):
+                    self.xarray[node] += value
+
+            while True:
+                magnitude = -(1 + n ** 2)  # Negative magnitude to move left
+                shift_nodes_x_axis(start=between[0], value=magnitude)
+                distance += magnitude
+                
+                overlap, nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
+                
+                if overlap == 0 and abs(distance) < best_distance:
+                    best_distance = abs(distance)
+                    
+                if overlap > 0:
+                    shift_nodes_x_axis(start=between[0], value=-magnitude)  # Move back to the previous position if overlap is detected
+                    break
+                    
+                n += 1
 
         for junction in self.struct.get_junctions():
             self.update_junction_center(junction)
@@ -869,7 +916,6 @@ class RNARenderer:
             self.update_junction_center(junction)
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
-        start = time.time()
         dangling_start = 0
         dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
@@ -963,54 +1009,57 @@ class RNARenderer:
             print('Structure BP Length', len(self.xarray))
             return 'Too Large'
         
-        def set_and_compare_angles(index, junction, comb, best_overlap, best_combo, is_ideal):
-            for child_index, child in enumerate(junction.children):
-                self.set_branch_angle(junction, child, comb[child_index])
-
-            overlap_count, nodes_below_straight_strand = self.check_node_overlap()
-            overlap_count += nodes_below_straight_strand
-
-            # This prioritizes nodes to remain above the straight strand of nucleotides.
-            if nodes_below_straight_strand > 0:
-                self.add_horizontal_distance_between(between_strands)
-
-            # Update best_overlap and best_combo if a better combination is found.
-            # Prioritizing ideal angles may not be working in all cases, more testing will be done.
-            if best_overlap[index] is None or overlap_count < best_overlap[index] or \
-            (overlap_count == best_overlap[index] and is_ideal):
-                best_overlap[index] = overlap_count
-                best_combo[index] = comb
-
         def explore_paths():
             for index, junction in enumerate(self.struct.get_junctions()):
                 if len(junction.children) == 1:
                     angles = [180]
                 elif len(junction.children) <= 3:
                     angles = [270, 180, 90]
-                    #angles = [270, 180, 90, 315, 225, 135, 45]
                 else:
-                    angles = [270, 180, 90, 315, 225, 135, 45]
+                    angles = [315, 270, 225, 180, 135, 90, 45]
 
-                best_overlap = [None] * len(self.struct.get_junctions())
-                best_combo = [None] * len(self.struct.get_junctions())
-                best_is_ideal = {}
-
-                best_overlap[index] = float('inf')
-                best_combo[index] = [None] * len(junction.children)
-                best_is_ideal[index] = [False] * len(junction.children)
+                best_overlap = None
+                best_combo = None
 
                 for comb in combinations(angles, len(junction.children)):
-                    if all(comb[i] > comb[i+1] for i in range(len(comb) - 1)):
-                        set_and_compare_angles(index, junction, comb, best_overlap, best_combo, best_is_ideal)
+                    for child_index, child in enumerate(junction.children):
+                        self.set_branch_angle(junction, child, comb[child_index])
 
-                        if best_overlap[index] == 0:
-                            break
+                    self.update_unpaired_strands_positions(junction)
 
-                for child, angle in zip(junction.children, best_combo[index]):
+                    overlap_count, nodes_below_straight_strand = None, None
+
+                    overlap_count, nodes_below_straight_strand = self.check_node_overlap() 
+
+                    overlap_count += nodes_below_straight_strand
+
+                    if nodes_below_straight_strand > 0:
+                        self.add_horizontal_distance_between(between_strands)
+
+                    if best_overlap is None or overlap_count < best_overlap:
+                        best_overlap = overlap_count
+                        best_combo = comb
+
+                for child, angle in zip(junction.children, best_combo):
                     self.set_branch_angle(junction, child, angle)
                     self.update_unpaired_strands_positions(junction)
 
+
         explore_paths()
+
+        # afterwards, go through paths with overlap still occuring
+        # increase radius for those, attempting to see if that fixes the issue with the angle checking?
+
+        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[3], 90)
+        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[2], 135)
+        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[1], 225)
+        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[0], 270)
+
+        #self.update_unpaired_strands_positions(self.struct.get_junctions()[1])
+
+        self.minimize_horizontal_distance_between(between_strands)
+        #overlap,nodes_below_straight_strand = self.check_node_overlap()
+        #print("overlap", overlap, nodes_below_straight_strand)
 
         # Sets up the Information to Connect Junction Nodes
         self.junction_data = []
