@@ -16,8 +16,8 @@ from itertools import combinations
 from scipy.spatial import cKDTree
 import pandas as pd
 from scipy.optimize import curve_fit
-import pygame
-from pygame.locals import *
+#import pygame
+#from pygame.locals import *
 
 
 class Test:
@@ -924,7 +924,7 @@ class RNARenderer:
         max_y = max(self.yarray)
 
         return min_x, max_x, min_y, max_y
-
+    '''
     def draw_objects(self):
         pygame.init()
 
@@ -952,7 +952,7 @@ class RNARenderer:
                     running = False
 
         pygame.quit()
-
+    '''
     def check_overlaps(self, pygame_objects):
         overlap_found = 0
 
