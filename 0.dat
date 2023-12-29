@@ -1,0 +1,8 @@
+HTTP/2 400 
+date: Wed, 14 Jun 2023 02:42:07 GMT
+x-cache: Error from cloudfront
+via: 1.1 da0eae00616d2f7db2cd4159a37ca678.cloudfront.net (CloudFront)
+x-amz-cf-pop: ORD53-C2
+x-amz-cf-id: RBrMDkYM5wX-bKzSO8XDUm47hxHZCUZPtDZ2gDF8PYwYoSGbweREIQ==
+
+not a WebSocket request: a |Connection| header must includes a token 'Upgrade'

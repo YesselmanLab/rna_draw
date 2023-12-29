@@ -1,0 +1,2 @@
+[console_scripts]
+rna_draw = rna_draw.draw:main

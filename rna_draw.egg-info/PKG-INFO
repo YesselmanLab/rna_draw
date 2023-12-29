@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: rna-draw
+Version: 0.0.4+24.g9e70fd6.dirty
+Author: Joe Yesselman
+Author-email: jyesselm@unl.edu
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.6

@@ -1,0 +1,5 @@
+scipy
+matplotlib
+seaborn
+versioneer
+pytest
