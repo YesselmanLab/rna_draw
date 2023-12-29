@@ -175,7 +175,7 @@ class RNADrawer(object):
         # instead of saving the figure to a file.
         r.fig.savefig(fname=filename + ".png")#, format="raw")
 
-        return r.fig
+        return r.fig, 0
 
 
 def __get_data_from_args(args):
