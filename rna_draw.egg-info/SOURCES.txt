@@ -14,7 +14,9 @@ rna_draw/parameters.py
 rna_draw/render.py
 rna_draw/render_rna.py
 rna_draw/run.py
+rna_draw/run_rna_draw.py
 rna_draw/settings.py
+rna_draw/split_dbn_files.py
 rna_draw.egg-info/PKG-INFO
 rna_draw.egg-info/SOURCES.txt
 rna_draw.egg-info/dependency_links.txt
