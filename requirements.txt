@@ -3,4 +3,3 @@ matplotlib
 seaborn
 versioneer
 pytest
-rna_secstruct
