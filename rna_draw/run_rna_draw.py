@@ -19,8 +19,9 @@ def parse_dbn_file(dbn_file_path):
 
 def run_rna_draw(dbn_file_path):
     ss, seq = parse_dbn_file(dbn_file_path)
-    respose = rd.rna_draw(ss=ss, seq=seq, render_type='res_type')
+    respose, overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type')
     print("Successfully Drew Structure with Response:", respose)
+    print("Overlap Count:", overlap_count)
 
 if __name__ == "__main__":
     dbn_file_path = sys.argv[1]
