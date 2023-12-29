@@ -11,7 +11,7 @@ cd {JOB_DIR}
 # Loop through all DBN files in the current directory
 for dbn_file in *.dbn; do
     # Call the Python script for each DBN file
-    python rna_draw/run_rna_draw.py "$dbn_file"
+    python ../../rna_draw/run_rna_draw.py "$dbn_file"
 done
 
 #rna_draw 
