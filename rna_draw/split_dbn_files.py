@@ -29,13 +29,14 @@ def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
     f_sum = open('README_SUBMIT', 'w')
     os.makedirs(run_dir, exist_ok=True)
 
-    success_dir = os.path.join(job_dir, "Success")
-    fails_dir = os.path.join(job_dir, "Fails")
-    os.makedirs(success_dir, exist_ok=True)
-    os.makedirs(fails_dir, exist_ok=True)
-
     for i, file_group in enumerate(dbn_file_splits):
         job_dir = os.path.join(run_dir, str(i))
+
+        success_dir = os.path.join(job_dir, "Success")
+        fails_dir = os.path.join(job_dir, "Fails")
+        os.makedirs(success_dir, exist_ok=True)
+        os.makedirs(fails_dir, exist_ok=True)
+
         os.makedirs(job_dir, exist_ok=True)
         for file in file_group:
             shutil.copy(os.path.join(dbn_dir, file), job_dir)
