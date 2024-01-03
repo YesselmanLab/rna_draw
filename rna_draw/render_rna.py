@@ -1171,8 +1171,6 @@ class RNARenderer:
                     else:
                         original_angle = 180
 
-                    print('original angle:', original_angle)
-
                     # Try setting the angle to 180 degrees
                     self.set_branch_angle(junction, junction.children[0], 180)
                     self.update_unpaired_strands_positions(junction)
@@ -1303,6 +1301,10 @@ class RNARenderer:
         self.size_ = [max_x - min_x, max_y - min_y]
         self.xarray_ = xarray
         self.yarray_ = yarray
+
+        overlap_count, _ = self.check_node_overlap() 
+
+        return overlap_count
 
     def get_size(self):
         return self.size_

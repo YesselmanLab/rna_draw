@@ -8,12 +8,27 @@ module load anaconda
 conda activate py3
 cd {JOB_DIR}
 
-# Loop through all DBN files in the current directory
+failure_count=0
+success_count=0
+
 for dbn_file in *.dbn; do
-    # Call the Python script for each DBN file
     python $WORK/rna_draw/rna_draw/run_rna_draw.py "$dbn_file"
+
+    if [ $? -eq 1 ]; then
+        ((failure_count++))
+    else
+        ((success_count++))
+    fi
+
+    total=$((success_count + failure_count))
+
+    if [ $total -ne 0 ]; then
+        percent=$((100 * success_count / total))
+    else
+        percent=0
+    fi
+
+    echo "Success percentage: $percent%"
+    echo "Total: $total"
+    echo "Success: $success_count"
 done
-
-
-#rna_draw 
-#rna-struct-design helix-rand --csv-file input.csv --param-file {WORK_DIR}/resources/helix-rand.yml --output output.csv --num-seqs 3

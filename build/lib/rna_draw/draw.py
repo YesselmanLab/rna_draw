@@ -85,6 +85,7 @@ class RNADrawer(object):
         default_color=None,
         data=None,
         draw_params=None,
+        cluster=None,
     ):
         self.__setup(draw_params)
 
@@ -95,13 +96,13 @@ class RNADrawer(object):
             seq, ss, color_str, data, render_type, default_color
         )
 
-        return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params)
+        return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params, cluster=cluster)
 
     def __setup(self, draw_params):
         if draw_params is not None:
             self.__draw_params = draw_params
 
-    def __render(self, seq, ss, colors, filename, params):
+    def __render(self, seq, ss, colors, filename, params, cluster=None):
         r = render_rna.RNARenderer()
 
         pairmap = render_rna.get_pairmap_from_secstruct(ss)
@@ -175,6 +176,9 @@ class RNADrawer(object):
         # instead of saving the figure to a file.
         r.fig.savefig(fname=filename + ".png")#, format="raw")
 
+        if cluster: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered when utilizing cluster.
+            return response
+        
         return r.fig
 
 
