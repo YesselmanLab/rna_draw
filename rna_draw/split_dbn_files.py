@@ -15,7 +15,7 @@ def cli():
 @cli.command()  # @cli, not @click!
 @click.argument('cmd_file', type=click.Path(exists=True))
 @click.argument('dbn_dir', type=click.Path(exists=True))
-@click.option('--n', 'n_splits', default=100, help='Number of splits')
+@click.option('--n', 'n_splits', default=1000, help='Number of splits')
 @click.option('-rd', '--run-dir', default='sortedDBNFiles', help='where to store the sorted DBN files')
 @click.option('--time', 'JOB_TIME', default="24:00:00", help='how long should the jobs be')
 def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
@@ -28,6 +28,12 @@ def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
     dbn_file_splits = np.array_split(dbn_files, n_splits)
     f_sum = open('README_SUBMIT', 'w')
     os.makedirs(run_dir, exist_ok=True)
+
+    success_dir = os.path.join(job_dir, "Success")
+    fails_dir = os.path.join(job_dir, "Fails")
+    os.makedirs(success_dir, exist_ok=True)
+    os.makedirs(fails_dir, exist_ok=True)
+
     for i, file_group in enumerate(dbn_file_splits):
         job_dir = os.path.join(run_dir, str(i))
         os.makedirs(job_dir, exist_ok=True)
