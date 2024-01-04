@@ -22,7 +22,7 @@ def get_parser():
         "-ss", help="secondary structure in dot bracket notation", required=True
     )
     parser.add_argument("-seq", help="rna sequence", required=False)
-    #parser.add_argument("-cluster", help="return overlap count", required=False)
+    parser.add_argument("-cluster", help="return overlap count", required=False)
     parser.add_argument(
         "-out", help="output png file", required=False, default="secstruct"
     )
@@ -175,9 +175,13 @@ class RNADrawer(object):
         plt.show()
         # To save a few seconds on larger structures, you can just plt.show
         # instead of saving the figure to a file.
-        r.fig.savefig(fname=filename + ".png")#, format="raw")
+        # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
         if cluster: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
+            if response == 0:
+                r.fig.savefig(fname='Success/' + filename + ".png")
+            else:
+                r.fig.savefig(fname='Fails/' + filename + ".png")
             return response
         
         return r.fig
