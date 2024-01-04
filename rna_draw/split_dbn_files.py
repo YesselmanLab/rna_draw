@@ -19,7 +19,7 @@ def cli():
 @click.option('-rd', '--run-dir', default='sortedDBNFiles', help='where to store the sorted DBN files')
 @click.option('--time', 'JOB_TIME', default="24:00:00", help='how long should the jobs be')
 def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
-    run_dir = '/work/yesselmanlab/nklein' #os.path.abspath(run_dir)
+    run_dir = '/work/yesselmanlab/nklein/sortedDBNFiles' #os.path.abspath(run_dir)
     job_text = open(cmd_file).read()
     args['WORK_DIR'] = os.path.abspath('.')
     job_text = common_replaces(job_text, args)
