@@ -97,6 +97,8 @@ class RNADrawer(object):
             seq, ss, color_str, data, render_type, default_color
         )
 
+        print('clus', cluster)
+
         return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params, cluster=cluster)
 
     def __setup(self, draw_params):
@@ -114,6 +116,8 @@ class RNADrawer(object):
                 pairs.append(
                     {"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]}
                 )
+
+        print('clus', cluster)
 
         response = r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE, seq)
 
@@ -178,7 +182,7 @@ class RNADrawer(object):
         # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
         print(" ")
-        print('cluser:', cluster)
+        print('cluster:', cluster)
         print(" ")
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             print('filename', filename)
