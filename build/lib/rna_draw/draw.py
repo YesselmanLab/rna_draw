@@ -22,6 +22,7 @@ def get_parser():
         "-ss", help="secondary structure in dot bracket notation", required=True
     )
     parser.add_argument("-seq", help="rna sequence", required=False)
+    parser.add_argument("-cluster", help="return overlap count", required=False)
     parser.add_argument(
         "-out", help="output png file", required=False, default="secstruct"
     )
@@ -67,6 +68,7 @@ def get_parser():
 def parse_args():
     parser = get_parser()
     args = parser.parse_args()
+    print('parsed args:', args)
     return args
 
 
@@ -89,12 +91,16 @@ class RNADrawer(object):
     ):
         self.__setup(draw_params)
 
+        print(ss,seq,cluster)
+
         if seq is None:
             seq = " " * len(ss)
 
         final_color_rbgs = self.__colorer.get_rgb_colors(
             seq, ss, color_str, data, render_type, default_color
         )
+
+        print('clus', cluster)
 
         return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params, cluster=cluster)
 
@@ -174,9 +180,17 @@ class RNADrawer(object):
         plt.show()
         # To save a few seconds on larger structures, you can just plt.show
         # instead of saving the figure to a file.
-        r.fig.savefig(fname=filename + ".png")#, format="raw")
+        # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
-        if cluster: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered when utilizing cluster.
+        print(" ")
+        print('cluster:', cluster)
+        print(" ")
+        if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
+            print('filename', filename)
+            if response == 0:
+                r.fig.savefig(fname=filename + "Success.png")
+            else:
+                r.fig.savefig(fname=filename + "Fail.png")
             return response
         
         return r.fig
@@ -217,9 +231,13 @@ def __rna_draw_from_args(args):
     if args.default_color is not None:
         default_color = colorer.parse_color_code(args.default_color)
 
+    print(" ")
+    print(args.cluster)
+    print(" ")
+
     rd = RNADrawer()
     return rd.draw(
-        args.ss, args.seq, args.out, args.color_str, render_type, default_color, data
+        args.ss, args.seq, args.out, args.color_str, render_type, default_color, data, cluster=args.cluster
     )
 
 

@@ -4,7 +4,6 @@ setup.cfg
 setup.py
 rna_draw/__init__.py
 rna_draw/_version.py
-rna_draw/blah.py
 rna_draw/colorer.py
 rna_draw/data.py
 rna_draw/draw.py
