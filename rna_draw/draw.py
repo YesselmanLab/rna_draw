@@ -22,6 +22,7 @@ def get_parser():
         "-ss", help="secondary structure in dot bracket notation", required=True
     )
     parser.add_argument("-seq", help="rna sequence", required=False)
+    parser.add_argument("-cluster", help="return overlap count", required=False)
     parser.add_argument(
         "-out", help="output png file", required=False, default="secstruct"
     )
