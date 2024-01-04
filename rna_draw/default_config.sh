@@ -14,10 +14,10 @@ success_count=0
 for dbn_file in *.dbn; do
     python $WORK/rna_draw/rna_draw/run_rna_draw.py "$dbn_file"
 
-    if [ $? -eq 1 ]; then
-        ((failure_count++))
-    else
+    if [ $? -eq 0 ]; then
         ((success_count++))
+    else
+        ((failure_count++))
     fi
 
     total=$((success_count + failure_count))
