@@ -1,5 +1,6 @@
 import sys
 import re
+import traceback
 import rna_draw as rd
 
 def parse_dbn_file(dbn_file_path):
@@ -19,8 +20,18 @@ def parse_dbn_file(dbn_file_path):
 
 def run_rna_draw(dbn_file_path):
     ss, seq = parse_dbn_file(dbn_file_path)
-    overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type', cluster='True', out=dbn_file_path.replace('.dbn', ''))
-    print("Successfully Drew Structure with Response Overlap:", overlap_count)
+    try:
+        overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type', cluster='True', out=dbn_file_path.replace('.dbn', ''))
+    except Exception as e:
+        error_message = f"An error occurred: {e}\n"
+        error_traceback = traceback.format_exc()
+        
+        error_file_path = '/work/yesselmanlab/nklein/Fails/' + dbn_file_path.replace('.dbn', '_error.txt')
+
+        with open(error_file_path, 'w') as error_file:
+            error_file.write(error_message)
+            error_file.write(error_traceback)
+    print("Attempted Structure", dbn_file_path.replace('.dbn', ''))
 
 if __name__ == "__main__":
     dbn_file_path = sys.argv[1]
