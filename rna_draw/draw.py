@@ -180,7 +180,7 @@ class RNADrawer(object):
         print(" ")
         print('cluser:', cluster)
         print(" ")
-        if cluster: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
+        if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             print('filename', filename)
             if response == 0:
                 r.fig.savefig(fname=filename + "Success.png")
