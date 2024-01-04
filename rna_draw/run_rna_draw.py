@@ -19,7 +19,6 @@ def parse_dbn_file(dbn_file_path):
 
 def run_rna_draw(dbn_file_path):
     ss, seq = parse_dbn_file(dbn_file_path)
-    print("ss:", ss, "seq:", seq, "render_type: 'res_type', cluster:", True)
     overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type', cluster='True')
     print("Successfully Drew Structure with Response Overlap:", overlap_count)
 
