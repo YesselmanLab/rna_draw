@@ -178,13 +178,13 @@ class RNADrawer(object):
         # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
-            print('filename', filename)
-            print('cluster', cluster)
             if response == 0:
                 r.fig.savefig(fname='Success/' + filename + ".png")
             else:
-                r.fig.savefig(fname='Fail/' + filename + ".png")
+                r.fig.savefig(fname='Fails/' + filename + ".png")
             return response
+        else:
+            r.fig.savefig(fname=filename + ".png")
         
         return r.fig
 
