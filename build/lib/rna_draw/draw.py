@@ -68,7 +68,6 @@ def get_parser():
 def parse_args():
     parser = get_parser()
     args = parser.parse_args()
-    print('parsed args:', args)
     return args
 
 
@@ -91,16 +90,12 @@ class RNADrawer(object):
     ):
         self.__setup(draw_params)
 
-        print(ss,seq,cluster)
-
         if seq is None:
             seq = " " * len(ss)
 
         final_color_rbgs = self.__colorer.get_rgb_colors(
             seq, ss, color_str, data, render_type, default_color
         )
-
-        print('clus', cluster)
 
         return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params, cluster=cluster)
 
@@ -182,15 +177,13 @@ class RNADrawer(object):
         # instead of saving the figure to a file.
         # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
-        print(" ")
-        print('cluster:', cluster)
-        print(" ")
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             print('filename', filename)
+            print('cluster', cluster)
             if response == 0:
-                r.fig.savefig(fname=filename + "Success.png")
+                r.fig.savefig(fname='Success/' + filename + ".png")
             else:
-                r.fig.savefig(fname=filename + "Fail.png")
+                r.fig.savefig(fname='Fail/' + filename + ".png")
             return response
         
         return r.fig
@@ -230,10 +223,6 @@ def __rna_draw_from_args(args):
     default_color = None
     if args.default_color is not None:
         default_color = colorer.parse_color_code(args.default_color)
-
-    print(" ")
-    print(args.cluster)
-    print(" ")
 
     rd = RNADrawer()
     return rd.draw(
