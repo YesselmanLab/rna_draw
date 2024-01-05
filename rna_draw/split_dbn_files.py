@@ -47,7 +47,7 @@ def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
         job_text_final = job_text.replace('{JOB_DIR}', job_dir)
         f.write(job_text_final)
         f.close()
-        f_sum.write(f"sbatch {submit_path}\n")
+        f_sum.write(f"{submit_path}\n")
     f_sum.close()
 
 if __name__ == '__main__':
