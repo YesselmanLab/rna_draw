@@ -41,6 +41,8 @@ def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
         for file in file_group:
             shutil.copy(os.path.join(dbn_dir, file), job_dir)
         submit_path = os.path.join(job_dir, 'job.sh')
+        submit_path = os.path.join('sortedDBNFiles', str(i), 'job.sh')
+        print(submit_path)
         f = open(submit_path, 'w')
         job_text_final = job_text.replace('{JOB_DIR}', job_dir)
         f.write(job_text_final)
