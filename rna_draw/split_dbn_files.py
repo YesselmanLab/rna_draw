@@ -19,7 +19,7 @@ def cli():
 @click.option('-rd', '--run-dir', default='sortedDBNFiles', help='where to store the sorted DBN files')
 @click.option('--time', 'JOB_TIME', default="24:00:00", help='how long should the jobs be')
 def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
-    run_dir = '/sortedDBNFiles' #os.path.abspath(run_dir)
+    run_dir = '/work/yesselmanlab/nklein/sortedDBNFiles' #os.path.abspath(run_dir)
     job_text = open(cmd_file).read()
     args['WORK_DIR'] = os.path.abspath('.')
     job_text = common_replaces(job_text, args)
@@ -30,7 +30,7 @@ def split_dbn(cmd_file, dbn_dir, n_splits, run_dir, **args):
     os.makedirs(run_dir, exist_ok=True)
 
     for i, file_group in enumerate(dbn_file_splits):
-        job_dir = os.path.join(run_dir, str(i))
+        job_dir = os.path.join('/sortedDBNFiles', str(i))
 
         success_dir = os.path.join(job_dir, "Success")
         fails_dir = os.path.join(job_dir, "Fails")
