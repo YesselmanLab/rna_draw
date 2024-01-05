@@ -117,9 +117,6 @@ class RNADrawer(object):
 
         response = r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE, seq)
 
-        if response == 'Too Large':
-            return
-
         size = r.get_size()
 
         cell_size = max(size) + params.CELL_PADDING * 2
@@ -157,7 +154,7 @@ class RNADrawer(object):
             if (x > 650 or y > 650):
                 print("Structure BP Length:", len(r.xarray_))
                 print('Structure is too big for matplotlib to render.')
-                return
+                raise Exception('Too Large')
 
             r.fig.set_size_inches(x, y)
 

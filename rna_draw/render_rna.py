@@ -1070,7 +1070,7 @@ class RNARenderer:
             print('Estimated Inches Required (X):', estimated_inches_x)
             print('Estimated Inches Required (Y):', estimated_inches_y)
             print('Structure BP Length', len(self.xarray))
-            return 'Too Large'
+            raise Exception('Too Large')
         
         #self.setup_pygame_objects()
 
