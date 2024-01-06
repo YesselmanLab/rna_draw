@@ -169,13 +169,10 @@ class RNADrawer(object):
         )
 
         #plt.setp(r.ax, rasterized=True)
-        print("before ayo")
         plt.show()
         # To save a few seconds on larger structures, you can just plt.show
         # instead of saving the figure to a file.
         # r.fig.savefig(fname=filename + ".png")#, format="raw")
-
-        print('ayo')
 
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             if response == 0:
@@ -184,7 +181,6 @@ class RNADrawer(object):
                 r.fig.savefig(fname='/work/yesselmanlab/nklein/Fails/' + filename + ".png")
             return response
         else:
-            print('tryna save here')
             r.fig.savefig(fname=filename + ".png")
         
         return r.fig
