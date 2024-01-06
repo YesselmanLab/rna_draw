@@ -1,7 +1,8 @@
 import sys
 import re
 import traceback
-import rna_draw as rd
+from rna_draw import draw
+rna_draw = draw.RNADrawer()
 
 def parse_dbn_file(dbn_file_path):
     with open(dbn_file_path, "r") as file:
@@ -21,7 +22,7 @@ def parse_dbn_file(dbn_file_path):
 def run_rna_draw(dbn_file_path):
     ss, seq = parse_dbn_file(dbn_file_path)
     try:
-        overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type', cluster='True', out=dbn_file_path.replace('.dbn', ''))
+        overlap_count = rna_draw.draw(ss=ss, seq=seq, render_type='res_type', cluster='True', out=dbn_file_path.replace('.dbn', ''))
     except Exception as e:
         error_message = f"An error occurred: {e}\n"
         error_traceback = traceback.format_exc()

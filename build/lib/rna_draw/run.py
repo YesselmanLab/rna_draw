@@ -2,11 +2,12 @@ import os
 import re
 import traceback
 from PIL import Image
-import rna_draw as rd
+from rna_draw import draw
+rna_draw = draw.RNADrawer()
 
 DBN_FOLDER = "dbnFiles"
 process_all_files = False
-specific_file_name = "bpRNA_CRW_7831.dbn"
+specific_file_name = "bpRNA_RFAM_36999.dbn"
 
 def create_empty_image(filename):
     img = Image.new('RGB', (800, 600), color='white')
@@ -26,10 +27,13 @@ def process_file(dbn_file_name):
             ss = ss.group(0) if ss else ""
             ss = ss.replace('[', '.').replace(']', '.').replace('}', '.').replace('{', '.').replace('<', '.').replace('>', '.')
 
+            print(ss)
+            print(seq)
+
             if not seq or not ss:
                 raise ValueError("Invalid characters detected.")
 
-            rd.rna_draw(ss=ss, seq=seq, render_type='res_type')
+            rna_draw.draw(ss=ss, seq=seq, render_type='res_type')
 
         os.rename("secstruct.png", f"Images/{file_name_no_ext}.png")
     except SystemExit:

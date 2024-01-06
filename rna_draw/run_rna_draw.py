@@ -19,8 +19,8 @@ def parse_dbn_file(dbn_file_path):
     return ss, seq
 
 def run_rna_draw(dbn_file_path):
-    ss, seq = parse_dbn_file(dbn_file_path)
     try:
+        ss, seq = parse_dbn_file(dbn_file_path)
         overlap_count = rd.rna_draw(ss=ss, seq=seq, render_type='res_type', cluster='True', out=dbn_file_path.replace('.dbn', ''))
     except Exception as e:
         error_message = f"An error occurred: {e}\n"
@@ -31,7 +31,6 @@ def run_rna_draw(dbn_file_path):
         with open(error_file_path, 'w') as error_file:
             error_file.write(error_message)
             error_file.write(error_traceback)
-    print("Attempted Structure", dbn_file_path.replace('.dbn', ''))
 
 if __name__ == "__main__":
     dbn_file_path = sys.argv[1]
