@@ -7,7 +7,7 @@ rna_draw = draw.RNADrawer()
 
 DBN_FOLDER = "dbnFiles"
 process_all_files = False
-specific_file_name = "bpRNA_RFAM_36999.dbn"
+specific_file_name = "bpRNA_CRW_44802.dbn"
 
 def create_empty_image(filename):
     img = Image.new('RGB', (800, 600), color='white')
@@ -27,9 +27,6 @@ def process_file(dbn_file_name):
             ss = ss.group(0) if ss else ""
             ss = ss.replace('[', '.').replace(']', '.').replace('}', '.').replace('{', '.').replace('<', '.').replace('>', '.')
 
-            print(ss)
-            print(seq)
-
             if not seq or not ss:
                 raise ValueError("Invalid characters detected.")
 
@@ -43,6 +40,7 @@ def process_file(dbn_file_name):
         tb = traceback.extract_tb(e.__traceback__)
         filename, line, func, text = tb[-1]
         print(f"Error processing {dbn_file_name}: {str(e)}. Creating empty image. Error at line {line}")
+        print(tb)
         create_empty_image(f"Images/{file_name_no_ext}-ERROR.png")
 
 if process_all_files:

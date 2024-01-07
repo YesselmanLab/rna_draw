@@ -146,10 +146,18 @@ class RNADrawer(object):
         param, param_cov = curve_fit(test, x, y)
 
         if min(r.xarray_) != max(r.yarray_):
-            area = (max(r.xarray_) - min(r.xarray_)) * (max(r.yarray_) - min(r.yarray_))
+            diff_x = max(r.xarray_) - min(r.xarray_)
+            diff_y = max(r.yarray_) - min(r.yarray_)
 
-            x = (max(r.xarray_) - min(r.xarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
-            y = (max(r.yarray_) - min(r.yarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
+            if diff_y == 0:
+                diff_y = self.__draw_params.NODE_R * 2
+            if diff_x == 0:
+                diff_x = self.__draw_params.NODE_R * 2
+
+            area = diff_x * diff_y
+
+            x = (diff_x) / ((param[0]) * (area - param[1]) ** (param[2]))
+            y = (diff_y) / ((param[0]) * (area - param[1]) ** (param[2]))
 
             if (x > 650 or y > 650):
                 print("Structure BP Length:", len(r.xarray_))

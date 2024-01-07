@@ -146,10 +146,18 @@ class RNADrawer(object):
         param, param_cov = curve_fit(test, x, y)
 
         if min(r.xarray_) != max(r.yarray_):
-            area = (max(r.xarray_) - min(r.xarray_)) * (max(r.yarray_) - min(r.yarray_))
+            diff_x = max(r.xarray_) - min(r.xarray_)
+            diff_y = max(r.yarray_) - min(r.yarray_)
 
-            x = (max(r.xarray_) - min(r.xarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
-            y = (max(r.yarray_) - min(r.yarray_)) / ((param[0]) * (area - param[1]) ** (param[2]))
+            if diff_y == 0:
+                diff_y = self.__draw_params.NODE_R * 2
+            if diff_x == 0:
+                diff_x = self.__draw_params.NODE_R * 2
+
+            area = diff_x * diff_y
+
+            x = (diff_x) / ((param[0]) * (area - param[1]) ** (param[2]))
+            y = (diff_y) / ((param[0]) * (area - param[1]) ** (param[2]))
 
             if (x > 650 or y > 650):
                 print("Structure BP Length:", len(r.xarray_))
@@ -169,13 +177,10 @@ class RNADrawer(object):
         )
 
         #plt.setp(r.ax, rasterized=True)
-        print("before ayo")
         plt.show()
         # To save a few seconds on larger structures, you can just plt.show
         # instead of saving the figure to a file.
         # r.fig.savefig(fname=filename + ".png")#, format="raw")
-
-        print('ayo')
 
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             if response == 0:
@@ -184,7 +189,6 @@ class RNADrawer(object):
                 r.fig.savefig(fname='/work/yesselmanlab/nklein/Fails/' + filename + ".png")
             return response
         else:
-            print('tryna save here')
             r.fig.savefig(fname=filename + ".png")
         
         return r.fig
