@@ -1036,6 +1036,7 @@ class RNARenderer:
                     junction.radius = radii[node]
 
         between_strands = self.straighten_unpaired_strands()
+        #between_strands = None
 
         if between_strands:
             self.add_horizontal_distance_between(between_strands)
