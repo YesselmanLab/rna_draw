@@ -1036,7 +1036,9 @@ class RNARenderer:
                     junction.radius = radii[node]
 
         between_strands = self.straighten_unpaired_strands()
-        self.add_horizontal_distance_between(between_strands)
+
+        if between_strands:
+            self.add_horizontal_distance_between(between_strands)
 
         def estimate_inches_using_curve_fit(x_range, y_range):
             data = {
@@ -1117,7 +1119,7 @@ class RNARenderer:
 
                     #overlap_count += nodes_below_straight_strand
 
-                    if nodes_below_straight_strand > 0:
+                    if nodes_below_straight_strand > 0 and between_strands:
                         self.add_horizontal_distance_between(between_strands)
 
                     if global_best_overlap is None or overlap_count < global_best_overlap:
@@ -1377,16 +1379,17 @@ class RNARenderer:
                 )
                 self.ax.add_patch(rec)
 
-        for between_strand in self.between_strands[0:]:
-            rec = ConnectionPatch(
-                (self.xarray[between_strand[0]-1] + offset_x, self.yarray[between_strand[0]-1] + offset_y),
-                (self.xarray[between_strand[0]] + offset_x, self.yarray[between_strand[0]] + offset_y),
-                coordsA="data",
-                linewidth=7.5,
-                edgecolor="#969696",
-            )
-            #Draws Horizontal Line between. This is where extra check should occur.
-            self.ax.add_patch(rec)
+        if self.between_strands:
+            for between_strand in self.between_strands[0:]:
+                rec = ConnectionPatch(
+                    (self.xarray[between_strand[0]-1] + offset_x, self.yarray[between_strand[0]-1] + offset_y),
+                    (self.xarray[between_strand[0]] + offset_x, self.yarray[between_strand[0]] + offset_y),
+                    coordsA="data",
+                    linewidth=7.5,
+                    edgecolor="#969696",
+                )
+                #Draws Horizontal Line between. This is where extra check should occur.
+                self.ax.add_patch(rec)
         '''
         for between_strand in self.between_strands[0:]:
             # We are drawing from start_node to end_node.
