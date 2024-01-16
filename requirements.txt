@@ -3,4 +3,4 @@ matplotlib
 seaborn
 versioneer
 pytest
-rna_secstruct @ git+https://github.com/jyesselm/rna_secstruct.git@main
+rna_secstruct @ git+https://github.com/jyesselm/rna_secstruct@main

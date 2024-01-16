@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages
-import versioneer
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
@@ -8,8 +7,7 @@ with open("requirements.txt") as f:
 
 setup(
     name="rna_draw",
-    version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
+    version=0.17,
     author="Joe Yesselman",
     author_email="jyesselm@unl.edu",
     packages=["rna_draw"],

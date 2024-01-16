@@ -4,6 +4,7 @@ setup.cfg
 setup.py
 rna_draw/__init__.py
 rna_draw/_version.py
+rna_draw/chunk_controller.py
 rna_draw/colorer.py
 rna_draw/data.py
 rna_draw/draw.py
@@ -18,3 +19,7 @@ rna_draw.egg-info/dependency_links.txt
 rna_draw.egg-info/entry_points.txt
 rna_draw.egg-info/requires.txt
 rna_draw.egg-info/top_level.txt
+tests/test_colorer.py
+tests/test_data.py
+tests/test_draw.py
+tests/test_render.py

@@ -16,6 +16,7 @@ from itertools import combinations
 from scipy.spatial import cKDTree
 import pandas as pd
 from scipy.optimize import curve_fit
+from rna_draw.chunk_controller import ChunkContainer
 #import pygame
 #from pygame.locals import *
 
@@ -80,9 +81,9 @@ def get_pairmap_from_secstruct(secstruct):
 
 
 def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
-    if start_index > end_index:
-        print("Error occured while drawing RNA %d %d" % (start_index, end_index))
-        sys.exit(0)
+    #if start_index > end_index:
+        #print("Error occured while drawing RNA %d %d" % (start_index, end_index))
+        #sys.exit(0)
 
     if bi_pairs[start_index] == end_index:
         newnode = RNATreeNode()
@@ -977,6 +978,11 @@ class RNARenderer:
             pygame_objects.append(rect)
 
         return pygame_objects
+    
+    def update_overlap_count(self):
+        container = ChunkContainer(self.struct, self.xarray, self.yarray)
+
+        return container.check_any_overlap()
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
         dangling_start = 0
@@ -1094,7 +1100,7 @@ class RNARenderer:
             for index, junction in enumerate(self.struct.get_junctions()):
                 if len(junction.children) == 1:
                     angles = [180]
-                    angles = [270, 180, 90]
+                    angles = [180, 270, 90]
                 elif len(junction.children) <= 3:
                     angles = [270, 180, 90]
                 else:
@@ -1113,15 +1119,10 @@ class RNARenderer:
 
                     overlap_count, nodes_below_straight_strand = None, 0
 
-                    overlap_count, nodes_below_straight_strand = self.check_node_overlap() 
+                    overlap_count = self.update_overlap_count()
 
-                    #obj = self.setup_pygame_objects()
-                    #overlap_count = self.check_overlaps(obj)
-
-                    #overlap_count += nodes_below_straight_strand
-
-                    if nodes_below_straight_strand > 0 and between_strands:
-                        self.add_horizontal_distance_between(between_strands)
+                    #if nodes_below_straight_strand > 0 and between_strands:
+                        #self.add_horizontal_distance_between(between_strands)
 
                     if global_best_overlap is None or overlap_count < global_best_overlap:
                         global_best_overlap = overlap_count
@@ -1152,7 +1153,8 @@ class RNARenderer:
                     self.set_branch_angle(junction, child, angle)
                     self.update_unpaired_strands_positions(junction)
 
-            overlap_count, nodes_below_straight_strand = self.check_node_overlap()
+            #overlap_count, nodes_below_straight_strand = self.check_node_overlap()
+            overlap_count = self.update_overlap_count()
             print('Elapsed Seconds:', time.time() - start_time)
             print('Overlap Count:', overlap_count)
         
@@ -1179,7 +1181,7 @@ class RNARenderer:
                     self.update_unpaired_strands_positions(junction)
 
                     # Check if this change increases the overlap count
-                    new_overlap_count, _ = self.check_node_overlap()
+                    new_overlap_count = self.update_overlap_count()
                     if new_overlap_count > global_best_overlap:
                         # Revert to original angle if overlap increases
                         self.set_branch_angle(junction, junction.children[0], original_angle)
@@ -1305,7 +1307,7 @@ class RNARenderer:
         self.xarray_ = xarray
         self.yarray_ = yarray
 
-        overlap_count, _ = self.check_node_overlap() 
+        overlap_count = self.update_overlap_count()
 
         return overlap_count
 

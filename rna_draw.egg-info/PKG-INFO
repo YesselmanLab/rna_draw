@@ -1,7 +1,13 @@
 Metadata-Version: 2.1
 Name: rna-draw
-Version: 0.0.4+74.ga01475da7.dirty
+Version: 0.17
 Author: Joe Yesselman
 Author-email: jyesselm@unl.edu
 Classifier: Programming Language :: Python :: 3
 Requires-Python: >=3.6
+Requires-Dist: scipy
+Requires-Dist: matplotlib
+Requires-Dist: seaborn
+Requires-Dist: versioneer
+Requires-Dist: pytest
+Requires-Dist: rna_secstruct@ git+https://github.com/jyesselm/rna_secstruct@main
