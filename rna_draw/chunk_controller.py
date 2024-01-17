@@ -35,7 +35,7 @@ class ChunkContainer:
         self.struct = struct
 
         for m in struct:
-            if m in struct.get_junctions():
+            if m in struct.get_junctions() and hasattr(m, 'center_x') and hasattr(m, 'center_y') and hasattr(m, 'radius'):
                 circle = Circle(m.center_x, m.center_y, m.radius)
                 self.add_chunk(circle, m)
             else:
