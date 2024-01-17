@@ -1040,6 +1040,7 @@ class RNARenderer:
             for strand in junction.strands:
                 for node in strand[1:-1]:
                     junction.radius = radii[node]
+                    self.get_junction_center(junction)
 
         between_strands = self.straighten_unpaired_strands()
         #between_strands = None
