@@ -1,4 +1,0 @@
-ss=.(((.....))).
-seq=AUGANNNNNUCAA
-render_type=paired
-comment=there are different types of render types, here is showing "paired", which colors by whether a residue is in a basepair.

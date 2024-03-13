@@ -1,3 +1,5 @@
+import os
+import shutil
 import sys
 import re
 import random
@@ -272,6 +274,7 @@ class RNARenderer:
         self.ax = self.fig.add_subplot(111, aspect="equal")
         self.chunks = []
         self.struct = None
+        self.structure_draw_num = 0
 
     # Returns Nucleotide Pair in Junction used to Determine Angle
     def get_first_nucleotides(self, strands):
@@ -786,75 +789,17 @@ class RNARenderer:
         
     # Checks for Node Overlap between all nodes.
     # Only checks overlap between node_array and other nodes if node_array is specified.
-    def check_node_overlap(self, epsilon=1, node_array=None, ignore_table=None):
-        overlap_count = 0
-        below_first_node_count = 0
-        node_diameter = 2 * self.NODE_R
-
-        points = list(zip(self.xarray, self.yarray))
-
-        first_y = self.yarray[0]
-
-        if ignore_table is None:
-            ignore_table = set()
-
-        if node_array is not None:
-            outside_points = [points[i] for i in range(len(points)) if i not in node_array and i not in ignore_table]
-            inside_points = [points[i] for i in node_array if i not in ignore_table]
-
-            tree_outside = cKDTree(outside_points)
-
-            for point in inside_points:
-                overlap_count += len(tree_outside.query_ball_point(point, node_diameter - epsilon))
-                if point[1] < first_y:
-                    below_first_node_count += 1
-        else:
-            tree = cKDTree([point for i, point in enumerate(points) if i not in ignore_table])
-
-            for i, point in enumerate(points):
-                if i in ignore_table:
-                    continue
-
-                overlap_count += len(tree.query_ball_point(point, node_diameter - epsilon)) - 1
-                if point[1] < first_y:
-                    below_first_node_count += 1
-
-            overlap_count //= 2
-
-        return overlap_count, below_first_node_count
 
     def in_junction(self, node_number: int) -> bool:
         for junction in self.struct.get_junctions():
             if (node_number in junction.positions):
                 return True
-        return False
-
-    # Prevents overlap by adding spacing along the y axis between nodes.
-    def add_vertical_distance_between(self, between_strands):
-        n = 0
-
-        def shift_nodes_y_axis(start, end, value):
-            for node in range(start, end):
-                self.yarray[node] += value
-
-        for between in between_strands:
-            # Prevents Junctions from being Modified (Implementation is not Supported)
-            if (self.in_junction(between[0]) or self.in_junction(between[1])):
-                continue
-
-            overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(between[0] + 1, between[1])))
-
-            while nodes_below_straight_strand > 0 or overlap > 0:
-                magnitude = 1 + n ** 2
-                shift_nodes_y_axis(start=between[0] + 1, end=between[1], value=magnitude)
-                n += 1
-                overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(between[0] + 1, between[1])))
-
-        for junction in self.struct.get_junctions():
-            self.update_junction_center(junction)
+        return False    
 
     # Goes back through and minimizes the distance between.
     def minimize_horizontal_distance_between(self, between_strands):
+        return 
+    
         for between in between_strands[1:]:
             best_distance = float('inf')
             best_overlap = 0
@@ -870,7 +815,8 @@ class RNARenderer:
                 shift_nodes_x_axis(start=between[0], value=magnitude)
                 distance += magnitude
                 
-                overlap, nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
+                overlap = 0
+                #overlap, nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
                 
                 if overlap == 0 and abs(distance) < best_distance:
                     best_distance = abs(distance)
@@ -900,17 +846,23 @@ class RNARenderer:
             n = 0
                         
             while True:
-                magnitude = 1 + n ** 3
+                magnitude = 1 + n ** 2
                 shift_nodes_x_axis(start=between[0], value=magnitude)
                 distance += magnitude
+
+                overlap = self.update_overlap_count(node_array=list(range(0, between[0])))
+
+                #print("Overlaps:", overlap, best_overlap)
+                #print(" ")
                 
-                overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
+                #overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
                 
-                if overlap + nodes_below_straight_strand < best_overlap:
-                    best_overlap = overlap + nodes_below_straight_strand
+                if overlap < best_overlap:
+                    print("Updated Best Overlap from", best_overlap, " to ", overlap)
+                    best_overlap = overlap
                     best_distance = distance
                     
-                if overlap == 0:
+                if overlap == 0 or n == 10:
                     break
                 
                 n += 1
@@ -921,66 +873,16 @@ class RNARenderer:
     def get_bounds(self):
         min_x = min(self.xarray)
         max_x = max(self.xarray)
-        min_y = min(self.yarray)  # Assuming you have a similar yarray for y positions
+        min_y = min(self.yarray)
         max_y = max(self.yarray)
 
         return min_x, max_x, min_y, max_y
-    '''
-    def draw_objects(self):
-        pygame.init()
-
-        min_x, max_x, min_y, max_y = self.get_bounds()
-        width = max_x - min_x + self.NODE_R  # Add some padding
-        height = max_y - min_y + self.NODE_R  # Add some padding
-        screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption('Draw Objects')
-
-        pygame_objects = self.setup_pygame_objects()
-
-        screen.fill((255, 255, 255))  # Fill the screen with white
-
-        # Draw the objects
-        for rect in pygame_objects:
-            pygame.draw.rect(screen, (0, 0, 0), rect, 1)  # Draw rectangles in black
-
-        pygame.display.flip()  # Update the full display Surface to the screen
-
-        # Pause to view the window
-        running = True
-        while running:
-            for event in pygame.event.get():
-                if event.type == QUIT:
-                    running = False
-
-        pygame.quit()
-    '''
-    def check_overlaps(self, pygame_objects):
-        overlap_found = 0
-
-        for i in range(len(pygame_objects)):
-            for j in range(i + 1, len(pygame_objects)):
-                if pygame_objects[i].colliderect(pygame_objects[j]):
-                    overlap_found += 1
-                    #print(f"Overlap detected between object {i} and object {j}")
-
-        print('overlap:', overlap_found)
-
-        return overlap_found
-
-    def setup_pygame_objects(self):
-        pygame_objects = []
-
-        for pos in range(0, len(self.xarray)):
-            x_center = self.xarray[pos]
-            y_center = self.xarray[pos]
-            radius = self.NODE_R / 2
-            rect = Rect(x_center - radius, y_center - radius, 2 * radius, 2 * radius)
-            pygame_objects.append(rect)
-
-        return pygame_objects
     
-    def update_overlap_count(self):
-        container = ChunkContainer(self.struct, self.xarray, self.yarray)
+    def update_overlap_count(self, node_array=None, draw=False):
+        container = None
+
+        container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
+        self.structure_draw_num += 1
 
         return container.check_any_overlap()
 
@@ -989,6 +891,12 @@ class RNARenderer:
         dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
         self.length = len(bi_pairs)
+
+        directory = "DrawVisualizer"
+
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+        os.makedirs(directory)
 
         self.NODE_R = NODE_R
         self.root_ = None
@@ -1085,6 +993,9 @@ class RNARenderer:
         #self.setup_pygame_objects()
 
         start_time = time.time()
+
+        self.global_best_overlap = {}
+        self.global_best_combo = {}
         
         def explore_paths():
             total_acc = 0
@@ -1107,7 +1018,12 @@ class RNARenderer:
                 else:
                     angles = [315, 270, 225, 180, 135, 90, 45]
 
-                global_best_overlap,global_best_combo=None,None
+                #global_best_overlap,global_best_combo=None,None
+                    
+                if self.global_best_combo.get(junction) is None:
+                    self.global_best_combo[junction] = None
+                if self.global_best_overlap.get(junction) is None:
+                    self.global_best_overlap[junction] = None
 
                 best_overlap = None
                 best_combo = None
@@ -1120,14 +1036,20 @@ class RNARenderer:
 
                     overlap_count, nodes_below_straight_strand = None, 0
 
-                    overlap_count = self.update_overlap_count()
+                    overlap_count = self.update_overlap_count(draw=False)
 
-                    #if nodes_below_straight_strand > 0 and between_strands:
+                    for node_pos in self.yarray:
+                        if node_pos < self.yarray[0] + self.NODE_R:
+                            nodes_below_straight_strand += 1
+
+                    #if between_strands and nodes_below_straight_strand > 0:
                         #self.add_horizontal_distance_between(between_strands)
+                            
+                    self.add_horizontal_distance_between(between_strands)
 
-                    if global_best_overlap is None or overlap_count < global_best_overlap:
-                        global_best_overlap = overlap_count
-                        global_best_combo = comb
+                    if self.global_best_overlap.get(junction) is None or overlap_count < self.global_best_overlap[junction]:
+                        self.global_best_overlap[junction] = overlap_count
+                        self.global_best_combo[junction] = comb
 
                     if best_overlap is None or overlap_count < best_overlap:
                         best_overlap = overlap_count
@@ -1150,14 +1072,13 @@ class RNARenderer:
                         total_tried += 1
                         #print("Percentage Acceptance:", (total_acc/total_tried) * 100)
 
-                for child, angle in zip(junction.children, global_best_combo):
+                for child, angle in zip(junction.children, self.global_best_combo[junction]):
                     self.set_branch_angle(junction, child, angle)
                     self.update_unpaired_strands_positions(junction)
 
-            #overlap_count, nodes_below_straight_strand = self.check_node_overlap()
             overlap_count = self.update_overlap_count()
-            print('Elapsed Seconds:', time.time() - start_time)
-            print('Overlap Count:', overlap_count)
+            #print('Elapsed Seconds:', time.time() - start_time)
+            #print('Overlap Count:', overlap_count)
         
             return overlap_count
         
@@ -1187,9 +1108,7 @@ class RNARenderer:
                         # Revert to original angle if overlap increases
                         self.set_branch_angle(junction, junction.children[0], original_angle)
                         self.update_unpaired_strands_positions(junction)
-
-        #self.draw_objects()
-
+                        
         last_best = None
         ovp = explore_paths()
 
@@ -1197,13 +1116,15 @@ class RNARenderer:
             last_best = ovp
             ovp = explore_paths()
 
-        straighten_branches(ovp)
-        straighten_branches(ovp)
-                    
-        #explore_paths()
-        #explore_paths()
-        #explore_paths()
-        #explore_paths()
+        for i in range(0,5):
+            straighten_branches(ovp)
+
+        self.add_horizontal_distance_between(between_strands)
+
+        overlap_count = self.update_overlap_count(draw=True)
+
+        print("Final Overlap:", overlap_count)
+        print(last_best)
 
         # afterwards, go through paths with overlap still occuring
         # increase radius for those, attempting to see if that fixes the issue with the angle checking?
@@ -1217,7 +1138,6 @@ class RNARenderer:
 
         if False:
             self.minimize_horizontal_distance_between(between_strands)
-        #overlap,nodes_below_straight_strand = self.check_node_overlap()
         #print("overlap", overlap, nodes_below_straight_strand)
 
         # Sets up the Information to Connect Junction Nodes
@@ -1307,8 +1227,6 @@ class RNARenderer:
         self.size_ = [max_x - min_x, max_y - min_y]
         self.xarray_ = xarray
         self.yarray_ = yarray
-
-        overlap_count = self.update_overlap_count()
 
         return overlap_count
 

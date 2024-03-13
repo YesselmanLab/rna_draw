@@ -1,5 +1,0 @@
-ss=.(((.....))).
-seq=AUGANNNNNUCAA
-color_str=5-9:aqua blue
-render_type=res_type
-comment=color_str always overrides render type colors, to allow for more flexibility in coloring.d xkcd colors (https://xkcd.com/color/rgb/). Here we changed the color of residue 5 to 9 which would of been gray but instead is aqua blue.

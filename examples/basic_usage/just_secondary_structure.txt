@@ -1,2 +1,0 @@
-ss=.(((.....))).
-comment=all that is needed is to supply a secondary structure

@@ -1,5 +1,0 @@
-ss=.(((.....))).
-seq=AUGAAAAAAUCAA
-data_str=0;1;2;3;4;5;6;7;8;9;10;11;12
-data_ignore_restype=GU
-comment=Specific data can be ignored if its not applicable. For example G and U for DMS chemical mapping.
