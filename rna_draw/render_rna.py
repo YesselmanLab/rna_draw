@@ -843,7 +843,7 @@ class RNARenderer:
 
         return min_x, max_x, min_y, max_y
     
-    def update_overlap_count(self, node_array=None, draw=True):
+    def update_overlap_count(self, node_array=None, draw=False):
         container = None
 
         container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
