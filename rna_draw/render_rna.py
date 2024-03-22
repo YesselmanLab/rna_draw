@@ -728,6 +728,8 @@ class RNARenderer:
                             between_strands[i] = (between[0], valid_positions[-1])
                             between_strands.append((group.positions[0], group.positions[-1]))
 
+            between_strands.sort(key=lambda x: x[0])
+
             for i in range(len(between_strands) - 1):
                 current_strand = between_strands[i]
                 next_strand = between_strands[i+1]
@@ -854,11 +856,6 @@ class RNARenderer:
                 distance += magnitude
 
                 overlap = self.update_overlap_count(node_array=list(range(0, between[0])))
-
-                #print("Overlaps:", overlap, best_overlap)
-                #print(" ")
-                
-                #overlap,nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
                 
                 if overlap < best_overlap:
                     print("Updated Best Overlap from", best_overlap, " to ", overlap)
