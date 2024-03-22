@@ -796,53 +796,20 @@ class RNARenderer:
         for junction in self.struct.get_junctions():
             if (node_number in junction.positions):
                 return True
-        return False    
-
-    # Goes back through and minimizes the distance between.
-    def minimize_horizontal_distance_between(self, between_strands):
-        return 
-    
-        for between in between_strands[1:]:
-            best_distance = float('inf')
-            best_overlap = 0
-            distance = 0
-            n = 0
-            
-            def shift_nodes_x_axis(start, value):
-                for node in range(start, self.length):
-                    self.xarray[node] += value
-
-            while True:
-                magnitude = -(1 + n ** 2)  # Negative magnitude to move left
-                shift_nodes_x_axis(start=between[0], value=magnitude)
-                distance += magnitude
-                
-                overlap = 0
-                #overlap, nodes_below_straight_strand = self.check_node_overlap(node_array=list(range(0, between[0])))
-                
-                if overlap == 0 and abs(distance) < best_distance:
-                    best_distance = abs(distance)
-                    
-                if overlap > 0:
-                    shift_nodes_x_axis(start=between[0], value=-magnitude)  # Move back to the previous position if overlap is detected
-                    break
-                    
-                n += 1
-
-        for junction in self.struct.get_junctions():
-            self.update_junction_center(junction)
+        return False
 
     # Prevents overlap by adding spacing along the x axis between nodes.
     def add_horizontal_distance_between(self, between_strands):
         distance = 0
         n = 0
-        
+
+        if not between_strands:
+            # No between strands to add space between.
+            return
+                        
         def shift_nodes_x_axis(start, value):
             for node in range(start, self.length):
                 self.xarray[node] += value
-
-        if not between_strands:
-            return
 
         for between in between_strands[1:]:
             best_distance = 0
@@ -850,21 +817,19 @@ class RNARenderer:
             distance = 0
             n = 0
                         
-            while True:
+            overlap = self.update_overlap_count(node_array=list(range(0, between[1])))
+
+            while overlap > 0 and n < 100:
                 magnitude = 1 + n ** 2
                 shift_nodes_x_axis(start=between[0], value=magnitude)
                 distance += magnitude
 
-                overlap = self.update_overlap_count(node_array=list(range(0, between[0])))
-                
+                overlap = self.update_overlap_count(node_array=list(range(0, between[1])))
+
                 if overlap < best_overlap:
-                    print("Updated Best Overlap from", best_overlap, " to ", overlap)
                     best_overlap = overlap
                     best_distance = distance
-                    
-                if overlap == 0 or n == 10:
-                    break
-                
+
                 n += 1
 
         for junction in self.struct.get_junctions():
@@ -878,7 +843,7 @@ class RNARenderer:
 
         return min_x, max_x, min_y, max_y
     
-    def update_overlap_count(self, node_array=None, draw=False):
+    def update_overlap_count(self, node_array=None, draw=True):
         container = None
 
         container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
@@ -990,8 +955,6 @@ class RNARenderer:
             print('Structure BP Length', len(self.xarray))
             raise Exception('Too Large')
         
-        #self.setup_pygame_objects()
-
         start_time = time.time()
 
         self.global_best_overlap = {}
@@ -1017,8 +980,6 @@ class RNARenderer:
                     angles = [270, 180, 90]
                 else:
                     angles = [315, 270, 225, 180, 135, 90, 45]
-
-                #global_best_overlap,global_best_combo=None,None
                     
                 if self.global_best_combo.get(junction) is None:
                     self.global_best_combo[junction] = None
@@ -1036,14 +997,20 @@ class RNARenderer:
 
                     overlap_count, nodes_below_straight_strand = None, 0
 
-                    overlap_count = self.update_overlap_count(draw=True)
+                    def get_between_strand(junction):
+                        if between_strands:
+                            for between_strand in between_strands:
+                                if between_strand[0] <= junction.positions[0] <= between_strand[1] and between_strand[0] <= junction.positions[1] <= between_strand[1]:
+                                    return between_strand
+                        return None
+
+                    overlap_count = self.update_overlap_count(get_between_strand(junction))
+
+                    print('har', overlap_count)
 
                     for node_pos in self.yarray:
                         if node_pos < self.yarray[0] + self.NODE_R:
                             nodes_below_straight_strand += 1
-
-                    #if between_strands and nodes_below_straight_strand > 0:
-                        #self.add_horizontal_distance_between(between_strands)
                             
                     self.add_horizontal_distance_between(between_strands)
 
@@ -1111,17 +1078,19 @@ class RNARenderer:
                         
         last_best = None
         ovp = explore_paths()
+        print(ovp)
 
         while ovp > 0 and last_best is not ovp:
             last_best = ovp
             ovp = explore_paths()
+            print('last overlap best', ovp)
 
         for i in range(0,5):
             straighten_branches(ovp)
 
         self.add_horizontal_distance_between(between_strands)
 
-        overlap_count = self.update_overlap_count(draw=True)
+        overlap_count = self.update_overlap_count(draw=self.draw)
 
         print("Final Overlap:", overlap_count)
         print(last_best)
