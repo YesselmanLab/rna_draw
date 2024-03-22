@@ -839,6 +839,9 @@ class RNARenderer:
             for node in range(start, self.length):
                 self.xarray[node] += value
 
+        if not between_strands:
+            return
+
         for between in between_strands[1:]:
             best_distance = 0
             best_overlap = float('inf')
@@ -1036,7 +1039,7 @@ class RNARenderer:
 
                     overlap_count, nodes_below_straight_strand = None, 0
 
-                    overlap_count = self.update_overlap_count(draw=False)
+                    overlap_count = self.update_overlap_count(draw=True)
 
                     for node_pos in self.yarray:
                         if node_pos < self.yarray[0] + self.NODE_R:
