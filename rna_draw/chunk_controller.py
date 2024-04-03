@@ -43,10 +43,18 @@ class ChunkContainer:
         self.draw_parms = parameters.DrawParameters()
         self.draw_num = draw_num
 
+        self.chunks_before = []
+        self.chunks_in_node_array = []
+
         for m in struct:
             if m in struct.get_junctions() and hasattr(m, 'center_x') and hasattr(m, 'center_y') and hasattr(m, 'radius'):
                 circle = Circle(m.center_x, m.center_y, m.radius)
                 self.add_chunk(circle, m)
+                
+                if m.positions[0] < self.node_array[0]:  # If the start position of the junction is before the node_array
+                    self.chunks_before.append(circle)
+                elif m.positions[0] < self.node_array[-1]:
+                    self.chunks_in_node_array.append(circle)
             else:
                 nodes = []
                 for node in m.positions:
@@ -55,6 +63,11 @@ class ChunkContainer:
                 if len(nodes) > 0:
                     rect = Rectangle(nodes)
                     self.add_chunk(rect, m)
+                    
+                    if m.positions[0] < self.node_array[0]:  # If the start position of the junction is before the node_array
+                        self.chunks_before.append(rect)
+                    elif m.positions[0] < self.node_array[-1]:
+                        self.chunks_in_node_array.append(rect)
 
     def fitted_size_function(self, area):
         base_size = 10
@@ -148,6 +161,41 @@ class ChunkContainer:
                     bb1['bottom_right'][0] < bb2['top_left'][0] or 
                     bb1['top_left'][1] > bb2['bottom_right'][1] or 
                     bb1['bottom_right'][1] < bb2['top_left'][1])
+    
+    def check_specific_overlap(self):
+        overlaps = 0
+        overlapping_chunks = []
+
+        for chunk1 in self.chunks_before:
+            for chunk2 in self.chunks_in_node_array:
+                if not (self.chunks[chunk2] in self.chunks[chunk1].children or self.chunks[chunk1] in self.chunks[chunk2].children):
+                    if isinstance(chunk1, Rectangle) and isinstance(chunk2, Rectangle):
+                        if self.rectangles_overlap(chunk1, chunk2):
+                            overlapping_chunks.append(chunk1)
+                            overlapping_chunks.append(chunk2)
+                            overlaps += 1
+                    elif isinstance(chunk1, Circle) and isinstance(chunk2, Circle):
+                        if self.circles_overlap(chunk1, chunk2):
+                            overlaps += 1
+                            overlapping_chunks.append(chunk1)
+                            overlapping_chunks.append(chunk2)
+                    elif isinstance(chunk1, Rectangle) and isinstance(chunk2, Circle):
+                        if self.circle_rectangle_overlap(chunk2, chunk1):
+                            overlaps += 1
+                            overlapping_chunks.append(chunk1)
+                            overlapping_chunks.append(chunk2)
+                    elif isinstance(chunk1, Circle) and isinstance(chunk2, Rectangle):
+                        if self.circle_rectangle_overlap(chunk1, chunk2):
+                            overlaps += 1
+                            overlapping_chunks.append(chunk1)
+                            overlapping_chunks.append(chunk2)
+
+        #print('overlapping chunks', overlapping_chunks)
+
+        if self.draw:
+            self.visualize_chunks(overlapping_chunks=overlapping_chunks)
+
+        return overlaps
 
     def check_any_overlap(self):
         overlaps = 0

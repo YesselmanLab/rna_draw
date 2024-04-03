@@ -811,20 +811,24 @@ class RNARenderer:
             for node in range(start, self.length):
                 self.xarray[node] += value
 
+            for junction in self.struct.get_junctions():
+                if junction.positions[0] >= start:
+                    junction.center_x += value
+
         for between in between_strands[1:]:
             best_distance = 0
             best_overlap = float('inf')
             distance = 0
             n = 0
-                        
-            overlap = self.update_overlap_count(node_array=list(range(0, between[1])))
+            
+            overlap = self.update_overlap_count(node_array=list(range(between[0], between[1])), specific_check=True)
 
-            while overlap > 0 and n < 100:
+            while overlap > 0 and n < 15:
                 magnitude = 1 + n ** 2
                 shift_nodes_x_axis(start=between[0], value=magnitude)
                 distance += magnitude
 
-                overlap = self.update_overlap_count(node_array=list(range(0, between[1])))
+                overlap = self.update_overlap_count(node_array=list(range(between[0], between[1])), specific_check=True)
 
                 if overlap < best_overlap:
                     best_overlap = overlap
@@ -843,11 +847,14 @@ class RNARenderer:
 
         return min_x, max_x, min_y, max_y
     
-    def update_overlap_count(self, node_array=None, draw=False):
+    def update_overlap_count(self, node_array=None, draw=False, specific_check=False):
         container = None
 
-        container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
+        container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=False, draw_num=self.structure_draw_num)
         self.structure_draw_num += 1
+
+        if specific_check == True:
+            return container.check_specific_overlap()
 
         return container.check_any_overlap()
 
@@ -1005,8 +1012,6 @@ class RNARenderer:
                         return None
 
                     overlap_count = self.update_overlap_count(get_between_strand(junction))
-
-                    print('har', overlap_count)
 
                     for node_pos in self.yarray:
                         if node_pos < self.yarray[0] + self.NODE_R:
