@@ -282,29 +282,20 @@ class RNARenderer:
         last_nucleotide = strands[-1][-1]
         return first_nucleotide, last_nucleotide
     
+    # Returns Last Nucleotide Pair in Junction
     def get_last_nucleotides(self, strands):
         first_nucleotide = strands[0][-1]
         last_nucleotide = strands[-1][0]
         return first_nucleotide, last_nucleotide
     
+    # Returns Center_x and Center_y (These are updated by other methods such as angle changes, etc.)
     def get_junction_center(self, junction):
         if hasattr(junction, 'center_x') and hasattr(junction, 'center_y'):
             return junction.center_x, junction.center_y
         else:
             return self.update_junction_center(junction)
-        
-    def junction_substituents(self, junction):
-        return len(junction.children) + (1 if junction.has_parent() else 0)
     
-    def junction_substituents_from_strands(self, strands):
-        count = 0
-
-        for strand in strands:
-            if len(strand[1:-1]) > 0:
-                count += 1
-
-        return count
-    
+    # Returns Junction Radius (These are updated by other methods such as set_radius, etc.)
     def get_junction_radius(self, junction):
         if hasattr(junction, "radius"):
             return junction.radius
@@ -312,6 +303,7 @@ class RNARenderer:
             junction.radius = self.calculate_junction_radius(junction)
             return junction.radius
     
+    # Calculates Junction Radius
     def calculate_junction_radius(self, junction):
         center_x, center_y = self.get_junction_center(junction)
 
@@ -332,6 +324,11 @@ class RNARenderer:
 
         return radius
             
+    # Calculates the Junction Center
+
+    # Note: If no radius is set, this relies on the assumption that all nucleotides are placed in
+    # in a perfect circle, taking the center and using it as the "center" of the junction.)
+    # If a radius exists, it's used and more reliable. Equal spacing of nucleotides around a center is not always guaranteed.
     def update_junction_center(self, junction, inversion_check=False):
         if (hasattr(junction, "radius") and junction.has_parent()):
             parent_strand = junction.parent
@@ -399,18 +396,6 @@ class RNARenderer:
         angle_between = (child_angle_deg - parent_angle_deg + 360) % 360
 
         return angle_between
-
-    def get_children_angles(self, junction):
-        angles = []
-
-        center_x, center_y = self.get_junction_center(junction)
-        x, y, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
-
-        if junction.has_children():
-            for branch in junction.children:
-                angles.append(self.get_junction_branch_angle(junction, branch, center_x, center_y, parent_angle_deg))
-        
-        return angles
     
     def rotate_point(self, point, origin, angle):
         px, py = point
@@ -423,6 +408,7 @@ class RNARenderer:
         
         return result[0], result[1]
     
+    # Sets the child's angle relative to the parent of the junction to the target angle. (Counter-Clockwise)
     def set_branch_angle(self, junction, child, target_angle):
         center_x, center_y = self.get_junction_center(junction)
         x, y, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
@@ -454,21 +440,15 @@ class RNARenderer:
             if current_branch.has_children():
                 for child_branch in current_branch.children:
                     queue.append(child_branch)
-        
-        #left, right = self.get_adjacent_unpaired_strands(junction, junction.children.index(child))
-
-        #self.update_unpaired_strands_positions(junction)
-
-    def get_adjacent_unpaired_strands(self, junction, index):
-        if index < 0 or index >= len(junction.strands):
-            raise ValueError("Index out of range in junction strands")
-
-        left_strand = junction.strands[index]
-
-        right_strand = junction.strands[index + 1] if index + 1 < len(junction.strands) else junction.parent
-
-        return left_strand, right_strand
     
+    # Places the Unpaired Nucleotides in a Circle around the Junction Center (Spaced Evenly)
+    # Increases the radius if necessary. It does NOT decrease the radius, however, this could be implemented.
+
+    # From my understanding, there were two unknowns in the arc length equation, thus a guess and check method is used.
+    # The radius is increased until the arc length is greater than the space needed for the nucleotides.
+
+    # Since there is no way to decrease the radius, even if the radius is increased to accomodate for structural positioning that doesn't work, that increased
+    # radius will remain. (Thus the reason for large radii in some structures even though it's not necessary.)
     def update_unpaired_strands_positions(self, junction):
         center_x, center_y = self.get_junction_center(junction)
         radius = self.get_junction_radius(junction)
@@ -486,10 +466,7 @@ class RNARenderer:
             shifted_end_rad = None
             angle_shift_rad = None
 
-            tolerance = self.NODE_R
-
             while arc_length < space_needed and space_needed != 0:
-            #while space_needed != 0 and abs(arc_length - space_needed) < tolerance:
                 shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
                 shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
 
@@ -511,17 +488,10 @@ class RNARenderer:
                 if num_nodes == 1:
                     arc_length -= self.NODE_R * 4
 
-                tolerance = self.NODE_R
-
-                #if abs(arc_length - space_needed) > tolerance:
                 if space_needed > arc_length:
                     radius += 1
                     self.set_radius(junction, radius, auto_call=True)
                     radius_updated = True
-                    #elif space_needed < arc_length:
-                        #radius *= 0.9
-                        #self.set_radius(junction, radius, auto_call=True)
-                        #radius_updated = True
 
             shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
             shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
@@ -559,6 +529,7 @@ class RNARenderer:
         if radius_updated:
             self.update_unpaired_strands_positions(junction)
 
+    # Sets the junction radius.
     def set_radius(self, junction, new_radius, auto_call=False):
         center_x, center_y = self.get_junction_center(junction)
 
@@ -580,6 +551,7 @@ class RNARenderer:
 
         junction.radius = self.calculate_junction_radius(junction)
 
+    # Helper method for updating junction radius.
     def _calculate_deltas(self, original_junction=None, subpart=None, center_x=None, center_y=None, new_radius=None, parent=False):
         first_node = None
         last_node = None
@@ -606,6 +578,7 @@ class RNARenderer:
 
         return delta_x, delta_y
 
+    # Helper method for updating junction radius.
     def _update_positions(self, junction, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=None):
         if junction in visited_junctions:
             return
@@ -632,6 +605,8 @@ class RNARenderer:
             if junction.has_parent():
                 self._update_positions(junction.parent, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion)
 
+    # This forms the straight horizontal line of nucleotides. 
+    # Between strands are those paired nucleotides that come off of the straight horizontal line in the form of a junction or helix.
     def straighten_unpaired_strands(self):
         if len(self.struct.get_single_strands()) > 0:
             single_strand_chunks = self.struct.get_single_strands()
@@ -788,17 +763,8 @@ class RNARenderer:
                     self.center_y = self.yarray[start] + rotated_dy
 
             return between_strands
-        
-    # Checks for Node Overlap between all nodes.
-    # Only checks overlap between node_array and other nodes if node_array is specified.
 
-    def in_junction(self, node_number: int) -> bool:
-        for junction in self.struct.get_junctions():
-            if (node_number in junction.positions):
-                return True
-        return False
-
-    # Prevents overlap by adding spacing along the x axis between nodes.
+    # Prevents overlap by adding spacing along the x axis between "between_nodes".
     def add_horizontal_distance_between(self, between_strands):
         distance = 0
         n = 0
@@ -838,14 +804,6 @@ class RNARenderer:
 
         for junction in self.struct.get_junctions():
             self.update_junction_center(junction)
-
-    def get_bounds(self):
-        min_x = min(self.xarray)
-        max_x = max(self.xarray)
-        min_y = min(self.yarray)
-        max_y = max(self.yarray)
-
-        return min_x, max_x, min_y, max_y
     
     def update_overlap_count(self, node_array=None, draw=False, specific_check=False, only_inside=False):
         container = None
@@ -853,14 +811,18 @@ class RNARenderer:
         container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
         self.structure_draw_num += 1
 
+        # Check all chunks (in node_array) against all other chunks (after node_array) for overlap.
         if specific_check == True:
             return container.check_specific_overlap()
         
+        # Check chunks (in node_array) against themselves and all other chunks (in node_array) for overlap.
         if only_inside == True:
             return container.check_any_overlap_in_node_array()
 
+        # Check all chunks against themselves and all other chunks for overlap.
         return container.check_any_overlap()
 
+    # Main method that controls everything.
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
         dangling_start = 0
         dangling_end = 0
@@ -890,7 +852,6 @@ class RNARenderer:
 
         self.root_ = RNATreeNode()
 
-        # for jj in range(0,len(bi_pairs)):
         jj = 0
         while jj < len(bi_pairs):
             if bi_pairs[jj] > jj:
@@ -912,7 +873,8 @@ class RNARenderer:
         radii = self.setup_coords(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         self.get_coords(xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
 
-        ## Everything Below is New to Modify Angles
+        ## Everything Below is New and Modify Angles
+        ## The old program was kept, and is now modified using the below methods.
 
         self.xarray = xarray
         self.yarray = yarray
@@ -930,6 +892,7 @@ class RNARenderer:
         if between_strands:
             self.add_horizontal_distance_between(between_strands)
 
+        # Ensure the size isn't too large. (Copied and modified from draw.py)
         def estimate_inches_using_curve_fit(x_range, y_range):
             data = {
                 "rna_identity": ["hairpin", "t-RNA", "CO-VID19 5' UTR", "50S Ribosome"],
@@ -964,8 +927,6 @@ class RNARenderer:
             print('Structure BP Length', len(self.xarray))
             raise Exception('Too Large')
         
-        start_time = time.time()
-
         self.global_best_overlap = {}
         self.global_best_combo = {}
         
@@ -977,11 +938,12 @@ class RNARenderer:
 
             # a* or dijstras
 
-            # panda have a weighted distribution for picking different junctions, prefering those with 5 possible solutions.
+            # panda has a weighted distribution for picking different junctions, prefering those with 5 possible solutions.
             # random.choices and supply weights
 
             # pick random junctions
             for index, junction in enumerate(self.struct.get_junctions()):
+                # Possible angles based on # of children.
                 if len(junction.children) == 1:
                     angles = [180]
                     angles = [180, 270, 90]
@@ -1055,11 +1017,11 @@ class RNARenderer:
             self.add_horizontal_distance_between(between_strands)
 
             overlap_count = self.update_overlap_count()
-            #print('Elapsed Seconds:', time.time() - start_time)
-            #print('Overlap Count:', overlap_count)
         
             return overlap_count
         
+        # This is a helper method. Since the currently algorithm for setting angles doesn't ideally prioritize angles that are 180 degrees, for example,
+        # this method was added to re-adjust after the algorithm has run. Ideally the actual algorithm should be doing this.
         def straighten_branches(global_best_overlap):
             for junction in self.struct.get_junctions():
                 if len(junction.children) == 1:
@@ -1069,6 +1031,7 @@ class RNARenderer:
                     # Retrieve the original angle of the branch
                     original_angle = self.get_junction_branch_angle(junction, junction.children[0], parent_pos_x, parent_pos_y, parent_angle_deg)
 
+                    # It seems get_junction_branch_angle can be slightly inaccurate, by about 5 degrees. This needs to be looked into if relying on this method.
                     if original_angle > 185:
                         original_angle = 270
                     elif original_angle < 175:
@@ -1106,6 +1069,7 @@ class RNARenderer:
             ovp = explore_paths()
             print('last overlap best', ovp)
 
+        # Ran multiple times to ensure as many are straightened. (This is not ideal)
         for i in range(0,5):
             straighten_branches(ovp)
 
@@ -1115,9 +1079,7 @@ class RNARenderer:
 
         print("Final Overlap:", overlap_count)
 
-        # afterwards, go through paths with overlap still occuring
-        # increase radius for those, attempting to see if that fixes the issue with the angle checking?
-
+        # These are to manually test setting junction angles.
         #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[3], 90)
         #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[2], 135)
         #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[1], 225)
@@ -1125,11 +1087,7 @@ class RNARenderer:
 
         #self.update_unpaired_strands_positions(self.struct.get_junctions()[1])
 
-        if False:
-            self.minimize_horizontal_distance_between(between_strands)
-        #print("overlap", overlap, nodes_below_straight_strand)
-
-        # Sets up the Information to Connect Junction Nodes
+        # Below is the transfer and setup of drawing using matplotlib. 
         self.junction_data = []
         self.between_strands = between_strands
 

@@ -98,8 +98,6 @@ class ChunkContainer:
         min_y, max_y = min(all_y), max(all_y)
         area = (max_x - min_x) * (max_y - min_y)
 
-        # get true error % as of right now.
-
         fig_size = self.fitted_size_function(area)
 
         linewidth = max(1, fig_size / 100)
@@ -221,7 +219,7 @@ class ChunkContainer:
                                 overlapping_chunks.append(chunk2)
                                 overlaps += 1
                         elif isinstance(chunk1, Circle) and isinstance(chunk2, Circle):
-                            if self.circles_overlap(chunk1, chunk2, ):
+                            if self.circles_overlap(chunk1, chunk2):
                                 overlaps += 1
                                 overlapping_chunks.append(chunk1)
                                 overlapping_chunks.append(chunk2)
