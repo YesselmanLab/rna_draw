@@ -587,12 +587,13 @@ class RNARenderer:
 
     def set_radius(self, junction, new_radius, auto_call=False):
         """
-        Sets the junction radius and updates the positions of related nodes.
+        Sets the radius of the junction and updates the positions of related nodes accordingly.
 
         Args:
         junction (object): The junction object whose radius is being set.
         new_radius (float): The new radius to set.
-        auto_call (bool): Flag to indicate if the function is called automatically.
+        auto_call (bool): Flag to indicate if the function is called automatically as part of an adjustment process.
+                        If True, it prevents further recursive calls to `update_unpaired_strands_positions` to avoid infinite recursion.
 
         Returns:
         None
