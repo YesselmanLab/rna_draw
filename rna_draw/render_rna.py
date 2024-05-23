@@ -1,35 +1,17 @@
 import os
 import shutil
-import sys
-import re
 import random
 import math
-import time
-import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, ConnectionPatch
-from matplotlib.axes import Axes
 from rna_secstruct import SecStruct, MotifSearchParams
 import numpy as np
-from scipy.interpolate import CubicSpline
-import scipy.interpolate
 from matplotlib.patches import Arc
 from itertools import combinations
-from scipy.spatial import cKDTree
 import pandas as pd
 from scipy.optimize import curve_fit
 from rna_draw.chunk_controller import ChunkContainer
-#import pygame
-#from pygame.locals import *
-
-
-class Test:
-    def __init__(self, something):
-        self.something = something
-
-
-test_1 = Test("something")
-
+from rna_draw.rna_optimizer import estimate_inches_using_curve_fit, explore_paths, straighten_branches
 
 class RNATreeNode:
     def __init__(self):
@@ -822,34 +804,25 @@ class RNARenderer:
         # Check all chunks against themselves and all other chunks for overlap.
         return container.check_any_overlap()
 
-    # Main method that controls everything.
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
-        dangling_start = 0
-        dangling_end = 0
+        print("Initializing tree...")
+        self.initialize_tree(secstruct, NODE_R)
+        print("Setting up coordinates...")
+        self.setup_coordinates(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
+        print("Initializing junctions...")
+        self.initialize_junctions(seq, secstruct, PRIMARY_SPACE, PAIR_SPACE)
+        print("Optimizing structure...")
+        self.optimize_structure()
+        print("Preparing drawing...")
+        self.prepare_drawing(NODE_R)
+        self.xarray_ = self.xarray
+        self.yarray_ = self.yarray
+        return self.overlap_count()
+
+    def initialize_tree(self, secstruct, NODE_R):
+        self.NODE_R = NODE_R
         bi_pairs = get_pairmap_from_secstruct(secstruct)
         self.length = len(bi_pairs)
-
-        directory = "DrawVisualizer"
-
-        if os.path.exists(directory):
-            shutil.rmtree(directory)
-        os.makedirs(directory)
-
-        self.NODE_R = NODE_R
-        self.root_ = None
-
-        for ii in range(0, len(bi_pairs)):
-            if bi_pairs[ii] < 0:
-                dangling_start += 1
-            else:
-                break
-
-        for ii in (len(bi_pairs) - 1, -1, -1):
-            if bi_pairs[ii] < 0:
-                dangling_end += 1
-            else:
-                break
-
         self.root_ = RNATreeNode()
 
         jj = 0
@@ -863,58 +836,33 @@ class RNARenderer:
                 newsubnode.index_a_ = jj
                 self.root_.children_.append(newsubnode)
                 jj += 1
-        xarray = []
-        yarray = []
 
-        for ii in range(0, len(secstruct)):
-            xarray.append(0.0)
-            yarray.append(0.0)
+    def setup_coordinates(self, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
+        xarray = [0.0] * self.length
+        yarray = [0.0] * self.length
 
         radii = self.setup_coords(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         self.get_coords(xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
 
-        ## Everything Below is New and Modify Angles
-        ## The old program was kept, and is now modified using the below methods.
-
         self.xarray = xarray
         self.yarray = yarray
+        return radii
 
-        self.struct = SecStruct(seq, secstruct) 
-
+    def initialize_junctions(self, seq, secstruct, PRIMARY_SPACE, PAIR_SPACE):
+        self.struct = SecStruct(seq, secstruct)
+        radii = self.setup_coordinates(self.NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         for junction in self.struct.get_junctions():
             for strand in junction.strands:
                 for node in strand[1:-1]:
                     junction.radius = radii[node]
                     self.get_junction_center(junction)
 
+    def optimize_structure(self):
         between_strands = self.straighten_unpaired_strands()
-
+        self.between_strands = between_strands
         if between_strands:
             self.add_horizontal_distance_between(between_strands)
 
-        # Ensure the size isn't too large. (Copied and modified from draw.py)
-        def estimate_inches_using_curve_fit(x_range, y_range):
-            data = {
-                "rna_identity": ["hairpin", "t-RNA", "CO-VID19 5' UTR", "50S Ribosome"],
-                "rna_area": [3781, 126207, 1150472, 4286761],
-                "rna_figsize_variable": [25, 30, 35, 40],
-            }
-            df = pd.DataFrame(data)
-            
-            x = df["rna_area"]
-            y = df["rna_figsize_variable"]
-            
-            def test(x, a, b, c):
-                return a * (x - b) ** c
-
-            param, param_cov = curve_fit(test, x, y)
-            
-            area = x_range * y_range
-            estimated_inches_x = x_range / (param[0] * (area - param[1]) ** param[2])
-            estimated_inches_y = y_range / (param[0] * (area - param[1]) ** param[2])
-            
-            return estimated_inches_x, estimated_inches_y
-        
         x_range = max(self.xarray) - min(self.xarray)
         y_range = max(self.yarray) - min(self.yarray)
 
@@ -922,260 +870,87 @@ class RNARenderer:
 
         if estimated_inches_x > 650 or estimated_inches_y > 650:
             print("Structure is too large to output using matplotlib.")
-            print('Estimated Inches Required (X):', estimated_inches_x)
-            print('Estimated Inches Required (Y):', estimated_inches_y)
-            print('Structure BP Length', len(self.xarray))
+            print(f'Estimated Inches Required (X): {estimated_inches_x}')
+            print(f'Estimated Inches Required (Y): {estimated_inches_y}')
+            print(f'Structure BP Length: {len(self.xarray)}')
             raise Exception('Too Large')
-        
+
         self.global_best_overlap = {}
         self.global_best_combo = {}
-        
-        def explore_paths():
-            total_acc = 0
-            total_tried = 0
 
-            # first node is too close sometimes, increase the radius of that first node to prevent closeness.
-
-            # a* or dijstras
-
-            # panda has a weighted distribution for picking different junctions, prefering those with 5 possible solutions.
-            # random.choices and supply weights
-
-            # pick random junctions
-            for index, junction in enumerate(self.struct.get_junctions()):
-                # Possible angles based on # of children.
-                if len(junction.children) == 1:
-                    angles = [180]
-                    angles = [180, 270, 90]
-                elif len(junction.children) <= 3:
-                    angles = [270, 180, 90]
-                else:
-                    angles = [315, 270, 225, 180, 135, 90, 45]
-                    
-                if self.global_best_combo.get(junction) is None:
-                    self.global_best_combo[junction] = None
-                if self.global_best_overlap.get(junction) is None:
-                    self.global_best_overlap[junction] = None
-
-                best_overlap = None
-                best_combo = None
-
-                for comb in combinations(angles, len(junction.children)):
-                    for child_index, child in enumerate(junction.children):
-                        self.set_branch_angle(junction, child, comb[child_index])
-
-                    self.update_unpaired_strands_positions(junction)
-
-                    overlap_count, nodes_below_straight_strand = None, 0
-
-                    def get_between_strand(junction):
-                        if between_strands:
-                            for between_strand in between_strands:
-                                if between_strand[0] <= junction.positions[0] <= between_strand[1] and between_strand[0] <= junction.positions[1] <= between_strand[1]:
-                                    return between_strand
-                        return [0, len(self.xarray)]
-                    
-                    between = get_between_strand(junction)
-
-                    overlap_count = self.update_overlap_count(node_array=list(range(between[0], between[1])), only_inside=True)
-
-                    for node_pos in self.yarray:
-                        if node_pos < self.yarray[0] + self.NODE_R:
-                            nodes_below_straight_strand += 1
-                            
-                    #self.add_horizontal_distance_between(between_strands)
-
-                    if self.global_best_overlap.get(junction) is None or overlap_count < self.global_best_overlap[junction]:
-                        self.global_best_overlap[junction] = overlap_count
-                        self.global_best_combo[junction] = comb
-
-                    if best_overlap is None or overlap_count < best_overlap:
-                        best_overlap = overlap_count
-                        best_combo = comb
-                    elif best_overlap is not None and overlap_count - best_overlap > 0:
-                        T = np.sqrt(len(self.xarray)) / 8 # Temperature
-                        # update tempertature based on acceptance percentage
-                        # simulated annealing, decrease temperature by a fixed amount
-                        diff = overlap_count - best_overlap
-                        val = np.exp(-diff / T)
-                        r = random.uniform(0,1)
-                        if val > r:
-                            best_overlap = overlap_count
-                            best_combo = comb
-                            #print("OVERWRITTEN", diff, val, r)
-                            total_acc += 1
-                        else:
-                            pass
-                            #print("NOT OVERWRITTEN", diff, val, r)
-                        total_tried += 1
-                        #print("Percentage Acceptance:", (total_acc/total_tried) * 100)
-
-                for child, angle in zip(junction.children, self.global_best_combo[junction]):
-                    self.set_branch_angle(junction, child, angle)
-                    self.update_unpaired_strands_positions(junction)
-
-            self.add_horizontal_distance_between(between_strands)
-
-            overlap_count = self.update_overlap_count()
-        
-            return overlap_count
-        
-        # This is a helper method. Since the currently algorithm for setting angles doesn't ideally prioritize angles that are 180 degrees, for example,
-        # this method was added to re-adjust after the algorithm has run. Ideally the actual algorithm should be doing this.
-        def straighten_branches(global_best_overlap):
-            for junction in self.struct.get_junctions():
-                if len(junction.children) == 1:
-                    # Retrieve parent data for the junction
-                    parent_pos_x, parent_pos_y, parent_angle_deg = self.get_junction_parent_data(junction, junction.center_x, junction.center_y)
-                    
-                    # Retrieve the original angle of the branch
-                    original_angle = self.get_junction_branch_angle(junction, junction.children[0], parent_pos_x, parent_pos_y, parent_angle_deg)
-
-                    # It seems get_junction_branch_angle can be slightly inaccurate, by about 5 degrees. This needs to be looked into if relying on this method.
-                    if original_angle > 185:
-                        original_angle = 270
-                    elif original_angle < 175:
-                        original_angle = 90
-                    else:
-                        original_angle = 180
-
-                    # Try setting the angle to 180 degrees
-                    self.set_branch_angle(junction, junction.children[0], 180)
-                    self.update_unpaired_strands_positions(junction)
-
-                    def get_between_strand(junction):
-                        if between_strands:
-                            for between_strand in between_strands:
-                                if between_strand[0] <= junction.positions[0] <= between_strand[1] and between_strand[0] <= junction.positions[1] <= between_strand[1]:
-                                    return between_strand
-                        return [0, len(self.xarray)]
-                    
-                    between = get_between_strand(junction)
-
-                    new_overlap_count = self.update_overlap_count(node_array=list(range(between[0], between[1])), only_inside=True)
-
-                    # Check if this change increases the overlap count
-                    if new_overlap_count > global_best_overlap:
-                        # Revert to original angle if overlap increases
-                        self.set_branch_angle(junction, junction.children[0], original_angle)
-                        self.update_unpaired_strands_positions(junction)
-                        
         last_best = None
-        ovp = explore_paths()
-        print('overlap check #1', ovp)
+        ovp = explore_paths(self)
+        print(f'overlap check #1: {ovp}')
 
-        while ovp > 0 and last_best is not ovp:
+        while ovp > 0 and last_best != ovp:
             last_best = ovp
-            ovp = explore_paths()
-            print('last overlap best', ovp)
+            ovp = explore_paths(self)
+            print(f'last overlap best: {ovp}')
 
-        # Ran multiple times to ensure as many are straightened. (This is not ideal)
-        for i in range(0,5):
-            straighten_branches(ovp)
+        for _ in range(5):
+            straighten_branches(self, ovp)
 
         self.add_horizontal_distance_between(between_strands)
 
-        overlap_count = self.update_overlap_count(draw=self.draw)
-
-        print("Final Overlap:", overlap_count)
-
-        # These are to manually test setting junction angles.
-        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[3], 90)
-        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[2], 135)
-        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[1], 225)
-        #self.set_branch_angle(self.struct.get_junctions()[1], self.struct.get_junctions()[1].children[0], 270)
-
-        #self.update_unpaired_strands_positions(self.struct.get_junctions()[1])
-
-        # Below is the transfer and setup of drawing using matplotlib. 
+    def prepare_drawing(self, NODE_R):
         self.junction_data = []
-        self.between_strands = between_strands
-
         for junction in self.struct.get_junctions():
             center_x, center_y = self.get_junction_center(junction)
             radius = self.get_junction_radius(junction)
-            
+
             for strand in junction.strands:
                 nodes_data = []
                 start_node, end_node = strand[0], strand[-1]
-
                 start_angle = np.arctan2(self.yarray[start_node] - center_y, self.xarray[start_node] - center_x)
                 end_angle = np.arctan2(self.yarray[end_node] - center_y, self.xarray[end_node] - center_x)
 
-                def normalize_angle(start_angle, end_angle):
-                    if start_angle < 0:
-                        start_angle += 2 * np.pi
-                    if end_angle < 0:
-                        end_angle += 2 * np.pi
-                    if start_angle > end_angle:
-                        end_angle += 2 * np.pi
+                start_angle, end_angle = self.normalize_angle(start_angle, end_angle)
+                first, last = self.get_last_nucleotides(junction.parent.strands)
 
-                    start_angle = start_angle % (2 * np.pi)
-                    end_angle = end_angle % (2 * np.pi)
-
-                    # Choose the shorter angle
-                    if end_angle - start_angle > np.pi:
-                        end_angle -= 2 * np.pi
-                    elif end_angle - start_angle < -np.pi:
-                        end_angle += 2 * np.pi
-
-                    # Reverse the angle for Matplotlib's clockwise drawing
-                    start_angle, end_angle = end_angle, start_angle
-
-                    return start_angle, end_angle
-
-                start_angle, end_angle = normalize_angle(start_angle, end_angle)
-
-                a,b = self.get_last_nucleotides(junction.parent.strands)
-                
                 for node in strand:
                     x = self.xarray[node]
                     y = self.yarray[node]
                     nodes_data.append({'Node': node, 'X': x, 'Y': y})
-                    
+
                 self.junction_data.append({
                     'Junction': junction,
                     'Strand': strand,
                     'Center': (center_x, center_y),
-                    'First': a,
-                    'Last': b,
+                    'First': first,
+                    'Last': last,
                     'Radius': radius,
                     'Nodes': nodes_data,
                     'Start Angle': start_angle,
                     'End Angle': end_angle
                 })
 
-        xarray = self.xarray
-        yarray = self.yarray
+        min_x, max_x = min(self.xarray) - NODE_R, max(self.xarray) + NODE_R
+        min_y, max_y = min(self.yarray) - NODE_R, max(self.yarray) + NODE_R
 
-        ## Below Is From Prior
-
-        min_x = xarray[0] - NODE_R
-        min_y = yarray[0] - NODE_R
-        max_x = xarray[0] + NODE_R
-        max_y = xarray[0] + NODE_R
-
-        for x in xarray:
-            if x - NODE_R < min_x:
-                min_x = x - NODE_R
-            if x + NODE_R > max_x:
-                max_x = x + NODE_R
-
-        for y in yarray:
-            if y - NODE_R < min_y:
-                min_y = y - NODE_R
-            if y + NODE_R > max_y:
-                max_y = y + NODE_R
-
-        for ii in range(0, len(xarray)):
-            xarray[ii] -= min_x
-            yarray[ii] -= min_y
-
+        self.xarray = [x - min_x for x in self.xarray]
+        self.yarray = [y - min_y for y in self.yarray]
         self.size_ = [max_x - min_x, max_y - min_y]
-        self.xarray_ = xarray
-        self.yarray_ = yarray
 
-        return overlap_count
+    def overlap_count(self):
+        return self.update_overlap_count(draw=self.draw)
+
+    def normalize_angle(self, start_angle, end_angle):
+        if start_angle < 0:
+            start_angle += 2 * np.pi
+        if end_angle < 0:
+            end_angle += 2 * np.pi
+        if start_angle > end_angle:
+            end_angle += 2 * np.pi
+
+        start_angle %= (2 * np.pi)
+        end_angle %= (2 * np.pi)
+
+        if end_angle - start_angle > np.pi:
+            end_angle -= 2 * np.pi
+        elif end_angle - start_angle < -np.pi:
+            end_angle += 2 * np.pi
+
+        return end_angle, start_angle  # Reversed for Matplotlib's clockwise drawing
 
     def get_size(self):
         return self.size_
@@ -1257,80 +1032,8 @@ class RNARenderer:
                     linewidth=7.5,
                     edgecolor="#969696",
                 )
-                #Draws Horizontal Line between. This is where extra check should occur.
+                #Draws Horizontal Line between.
                 self.ax.add_patch(rec)
-        '''
-        for between_strand in self.between_strands[0:]:
-            # We are drawing from start_node to end_node.
-            start_node = between_strand[0] - 1
-            end_node = start_node + 1
-
-            # Check if Straight Line Should be Drawn
-            #not self.between_strands[0] == between_strand and
-            if min(self.yarray[between_strand[0] + 1:between_strand[1] - 1]) < self.yarray[0] + self.NODE_R:
-                print('There is something below, needs to draw different')
-                line_distance_offset_y = self.NODE_R * 4
-
-                #Left Line Vertical
-                rec = ConnectionPatch(
-                    (self.xarray[start_node] + offset_x, self.yarray[start_node] + offset_y),
-                    (self.xarray[start_node] + offset_x, min(self.yarray[between_strand[0] + 1:between_strand[1] - 1]) + offset_y - line_distance_offset_y),
-                    coordsA="data",
-                    linewidth=7.5,
-                    edgecolor="#969696",
-                )
-                self.ax.add_patch(rec)
-
-                #Right Line Vertical
-                rec = ConnectionPatch(
-                    (self.xarray[end_node] + offset_x, self.yarray[end_node] + offset_y),
-                    (self.xarray[end_node] + offset_x, min(self.yarray[between_strand[0] + 1:between_strand[1] - 1]) + offset_y - line_distance_offset_y),
-                    coordsA="data",
-                    linewidth=7.5,
-                    edgecolor="#969696",
-                )
-                self.ax.add_patch(rec)
-
-                #Horizontal Connection Between Vertical Lines
-                rec = ConnectionPatch(
-                    (self.xarray[start_node] + offset_x, min(self.yarray[between_strand[0] + 1:between_strand[1] - 1]) + offset_y - line_distance_offset_y),
-                    (self.xarray[end_node] + offset_x, min(self.yarray[between_strand[0] + 1:between_strand[1] - 1]) + offset_y - line_distance_offset_y),
-                    coordsA="data",
-                    linewidth=7.5,
-                    edgecolor="#969696",
-                )
-                self.ax.add_patch(rec)
-            else:
-                rec = ConnectionPatch(
-                    (self.xarray[between_strand[0]-1] + offset_x, self.yarray[between_strand[0]-1] + offset_y),
-                    (self.xarray[between_strand[0]] + offset_x, self.yarray[between_strand[0]] + offset_y),
-                    coordsA="data",
-                    linewidth=7.5,
-                    edgecolor="#969696",
-                )
-                #Draws Horizontal Line between. This is where extra check should occur.
-                self.ax.add_patch(rec)
-
-            rec = ConnectionPatch(
-                (self.xarray[between_strand[0]] + offset_x, self.yarray[between_strand[0]] + offset_y),
-                (self.xarray[between_strand[0] + 1] + offset_x, self.yarray[between_strand[0] + 1] + offset_y),
-                coordsA="data",
-                linewidth=7.5,
-                edgecolor="#969696",
-            )
-            # I forget what this was for.
-            #self.ax.add_patch(rec)
-
-            rec = ConnectionPatch(
-                (self.xarray[between_strand[1]] + offset_x, self.yarray[between_strand[1]] + offset_y),
-                (self.xarray[between_strand[1] - 1] + offset_x, self.yarray[between_strand[1] - 1] + offset_y),
-                coordsA="data",
-                linewidth=7.5,
-                edgecolor="#969696",
-            )
-            # I forget what this was for.
-            #self.ax.add_patch(rec)
-        '''
         if self.xarray_ != None:
             if line:
                 for ii in range(len(self.xarray_) - 1):
