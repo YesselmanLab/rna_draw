@@ -149,6 +149,7 @@ def straighten_branches(renderer, global_best_overlap):
     for junction in renderer.struct.get_junctions():
         if len(junction.children) == 1:
             parent_pos_x, parent_pos_y, parent_angle_deg = renderer.get_junction_parent_data(junction, junction.center_x, junction.center_y)
+            # Note get_junction_branch_angle error. It is not always perfectly accurate. 
             original_angle = renderer.get_junction_branch_angle(junction, junction.children[0], parent_pos_x, parent_pos_y, parent_angle_deg)
             if original_angle > 185:
                 original_angle = 270

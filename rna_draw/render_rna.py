@@ -12,7 +12,7 @@ import pandas as pd
 from scipy.optimize import curve_fit
 from rna_draw.chunk_controller import ChunkContainer
 from rna_draw.rna_optimizer import estimate_inches_using_curve_fit, explore_paths, straighten_branches
-from rna_draw.geometry_utils import rotate_point, calculate_deltas, update_positions
+from rna_draw.geometry_utils import rotate_point, calculate_translation_vectors, translate_element_positions
 
 class RNATreeNode:
     def __init__(self):
@@ -605,50 +605,50 @@ class RNARenderer:
         visited_junctions.add(junction)
 
         for child in junction.children:
-            delta_x, delta_y = calculate_deltas(
-                original_junction=junction,
-                subpart=child,
-                center_x=center_x,
-                center_y=center_y,
-                new_radius=new_radius,
-                xarray=self.xarray,
-                yarray=self.yarray,
-                get_first_nucleotides=self.get_first_nucleotides,
-                get_last_nucleotides=self.get_last_nucleotides,
-                get_junction_radius=self.get_junction_radius
+            delta_x, delta_y = calculate_translation_vectors(
+                junction,
+                child,
+                center_x,
+                center_y,
+                new_radius,
+                self.xarray,
+                self.yarray,
+                self.get_first_nucleotides,
+                self.get_last_nucleotides,
+                self.get_junction_radius
             )
-            update_positions(
-                xarray=self.xarray,
-                yarray=self.yarray,
-                junction=child,
-                delta_x=delta_x,
-                delta_y=delta_y,
-                visited_junctions=visited_junctions,
-                visited_nodes=visited_nodes
+            translate_element_positions(
+                self.xarray,
+                self.yarray,
+                child,
+                delta_x,
+                delta_y,
+                visited_junctions,
+                visited_nodes
             )
 
         if junction.has_parent():
-            delta_x, delta_y = calculate_deltas(
-                original_junction=junction,
-                subpart=junction.parent,
-                center_x=center_x,
-                center_y=center_y,
-                new_radius=new_radius,
-                xarray=self.xarray,
-                yarray=self.yarray,
-                get_first_nucleotides=self.get_first_nucleotides,
-                get_last_nucleotides=self.get_last_nucleotides,
-                get_junction_radius=self.get_junction_radius,
-                parent=True
+            delta_x, delta_y = calculate_translation_vectors(
+                junction,
+                junction.parent,
+                center_x,
+                center_y,
+                new_radius,
+                self.xarray,
+                self.yarray,
+                self.get_first_nucleotides,
+                self.get_last_nucleotides,
+                self.get_junction_radius,
+                True
             )
-            update_positions(
-                xarray=self.xarray,
-                yarray=self.yarray,
-                junction=junction.parent,
-                delta_x=delta_x,
-                delta_y=delta_y,
-                visited_junctions=visited_junctions,
-                visited_nodes=visited_nodes
+            translate_element_positions(
+                self.xarray,
+                self.yarray,
+                junction.parent,
+                delta_x,
+                delta_y,
+                visited_junctions,
+                visited_nodes
             )
 
         if auto_call is not True:
