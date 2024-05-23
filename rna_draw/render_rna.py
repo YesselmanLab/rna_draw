@@ -12,6 +12,7 @@ import pandas as pd
 from scipy.optimize import curve_fit
 from rna_draw.chunk_controller import ChunkContainer
 from rna_draw.rna_optimizer import estimate_inches_using_curve_fit, explore_paths, straighten_branches
+from rna_draw.geometry_utils import rotate_point, calculate_deltas, update_positions
 
 class RNATreeNode:
     def __init__(self):
@@ -258,35 +259,75 @@ class RNARenderer:
         self.struct = None
         self.structure_draw_num = 0
 
-    # Returns Nucleotide Pair in Junction used to Determine Angle
     def get_first_nucleotides(self, strands):
+        """
+        Returns the first nucleotide pair in the junction used to determine angle.
+        
+        Args:
+        strands (list): List of strands in the junction.
+        
+        Returns:
+        tuple: First and last nucleotide in the junction.
+        """
         first_nucleotide = strands[0][0]
         last_nucleotide = strands[-1][-1]
         return first_nucleotide, last_nucleotide
     
-    # Returns Last Nucleotide Pair in Junction
     def get_last_nucleotides(self, strands):
+        """
+        Returns the last nucleotide pair in the junction.
+        
+        Args:
+        strands (list): List of strands in the junction.
+        
+        Returns:
+        tuple: Last nucleotide pair in the junction.
+        """
         first_nucleotide = strands[0][-1]
         last_nucleotide = strands[-1][0]
         return first_nucleotide, last_nucleotide
     
-    # Returns Center_x and Center_y (These are updated by other methods such as angle changes, etc.)
     def get_junction_center(self, junction):
+        """
+        Returns the center x and y coordinates of the junction.
+        
+        Args:
+        junction (object): The junction object.
+        
+        Returns:
+        tuple: Center x and y coordinates of the junction.
+        """
         if hasattr(junction, 'center_x') and hasattr(junction, 'center_y'):
             return junction.center_x, junction.center_y
         else:
             return self.update_junction_center(junction)
     
-    # Returns Junction Radius (These are updated by other methods such as set_radius, etc.)
     def get_junction_radius(self, junction):
+        """
+        Returns the radius of the junction.
+        
+        Args:
+        junction (object): The junction object.
+        
+        Returns:
+        float: Radius of the junction.
+        """
         if hasattr(junction, "radius"):
             return junction.radius
         else:
             junction.radius = self.calculate_junction_radius(junction)
             return junction.radius
     
-    # Calculates Junction Radius
     def calculate_junction_radius(self, junction):
+        """
+        Calculates the radius of the junction.
+        
+        Args:
+        junction (object): The junction object.
+        
+        Returns:
+        float: Calculated radius of the junction.
+        """
         center_x, center_y = self.get_junction_center(junction)
 
         if junction.has_parent():
@@ -306,12 +347,17 @@ class RNARenderer:
 
         return radius
             
-    # Calculates the Junction Center
-
-    # Note: If no radius is set, this relies on the assumption that all nucleotides are placed in
-    # in a perfect circle, taking the center and using it as the "center" of the junction.)
-    # If a radius exists, it's used and more reliable. Equal spacing of nucleotides around a center is not always guaranteed.
     def update_junction_center(self, junction, inversion_check=False):
+        """
+        Calculates the junction center and updates its coordinates.
+        
+        Args:
+        junction (object): The junction object.
+        inversion_check (bool): Flag to check for inversion.
+        
+        Returns:
+        tuple: Updated center x and y coordinates of the junction.
+        """
         if (hasattr(junction, "radius") and junction.has_parent()):
             parent_strand = junction.parent
             first, last = self.get_last_nucleotides(parent_strand.strands)
@@ -328,7 +374,6 @@ class RNARenderer:
             perp_x = -unit_y
             perp_y = unit_x
 
-            # Fixes issue when flipping across x axis.
             centroid_x = sum(self.xarray[node] for node in junction.positions) / len(junction.positions)
             centroid_y = sum(self.yarray[node] for node in junction.positions) / len(junction.positions)
             
@@ -353,8 +398,18 @@ class RNARenderer:
 
         return center_x, center_y
 
-    # Gives Information About a Junction, such as the X,Y cords and the angle relative to the origin.
     def get_junction_parent_data(self, junction, center_x, center_y):
+        """
+        Returns the parent data of the junction, including the coordinates and angle.
+        
+        Args:
+        junction (object): The junction object.
+        center_x (float): Center x-coordinate of the junction.
+        center_y (float): Center y-coordinate of the junction.
+        
+        Returns:
+        tuple: Parent x and y coordinates, and the angle in degrees.
+        """
         if junction.has_parent():
             left, right = self.get_last_nucleotides(junction.parent.strands)
             parent_pos_x = (self.xarray[left] + self.xarray[right]) / 2
@@ -365,8 +420,20 @@ class RNARenderer:
 
             return parent_pos_x, parent_pos_y, parent_angle_deg
     
-    # Calculates the Angle of a Single Branch with Respect to the Parent Helix. (Angle is Counter-Clockwise)
     def get_junction_branch_angle(self, junction, child, center_x, center_y, parent_angle_deg):
+        """
+        Calculates the angle of a single branch with respect to the parent helix.
+        
+        Args:
+        junction (object): The junction object.
+        child (object): The child node.
+        center_x (float): Center x-coordinate of the junction.
+        center_y (float): Center y-coordinate of the junction.
+        parent_angle_deg (float): Angle of the parent in degrees.
+        
+        Returns:
+        float: Angle between the parent and the child in degrees.
+        """
         data_new = self.struct[child.m_id]
         left, right = self.get_first_nucleotides(data_new.strands)
         child_pos_x = (self.xarray[left] + self.xarray[right]) / 2
@@ -379,19 +446,18 @@ class RNARenderer:
 
         return angle_between
     
-    def rotate_point(self, point, origin, angle):
-        px, py = point
-        ox, oy = origin
-
-        rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)], 
-                                    [np.sin(angle),  np.cos(angle)]])
-        
-        result = np.dot(rotation_matrix, np.array([px - ox, py - oy])) + np.array([ox, oy])
-        
-        return result[0], result[1]
-    
-    # Sets the child's angle relative to the parent of the junction to the target angle. (Counter-Clockwise)
     def set_branch_angle(self, junction, child, target_angle):
+        """
+        Sets the angle of a child branch relative to its parent junction to a target angle. (Counter-Clockwise)
+
+        Args:
+        junction (object): The junction object which serves as the reference point.
+        child (object): The child branch to be rotated.
+        target_angle (float): The target angle in degrees to set for the child branch.
+
+        Returns:
+        None
+        """
         center_x, center_y = self.get_junction_center(junction)
         x, y, parent_angle_deg = self.get_junction_parent_data(junction, center_x, center_y)
 
@@ -401,37 +467,43 @@ class RNARenderer:
         queue = [child]
         processed_nucleotides = set()
 
+        # Process each branch in the queue
         while queue:
             current_branch = queue.pop(0)
             data_new = self.struct[current_branch.m_id]
 
+            # Rotate each nucleotide in the current branch
             for strand in data_new.strands:
                 for nucleotide in strand:
                     if nucleotide not in processed_nucleotides:
-                        new_x, new_y = self.rotate_point((self.xarray[nucleotide], self.yarray[nucleotide]), (center_x, center_y), angle_diff)
+                        new_x, new_y = rotate_point((self.xarray[nucleotide], self.yarray[nucleotide]), (center_x, center_y), angle_diff)
                         self.xarray[nucleotide] = new_x
                         self.yarray[nucleotide] = new_y
                         processed_nucleotides.add(nucleotide)
 
+            # Rotate the junction center if the current branch is a junction.
             if current_branch.is_junction():
-                if (hasattr(current_branch, 'center_x') and hasattr(current_branch, 'center_y')):
-                    new_center_x, new_center_y = self.rotate_point((current_branch.center_x, current_branch.center_y), (center_x, center_y), angle_diff)
+                if hasattr(current_branch, 'center_x') and hasattr(current_branch, 'center_y'):
+                    new_center_x, new_center_y = rotate_point((current_branch.center_x, current_branch.center_y), (center_x, center_y), angle_diff)
                     current_branch.center_x = new_center_x
                     current_branch.center_y = new_center_y
 
+            # Add child branches of the current branch to the queue
             if current_branch.has_children():
                 for child_branch in current_branch.children:
                     queue.append(child_branch)
     
-    # Places the Unpaired Nucleotides in a Circle around the Junction Center (Spaced Evenly)
-    # Increases the radius if necessary. It does NOT decrease the radius, however, this could be implemented.
-
-    # From my understanding, there were two unknowns in the arc length equation, thus a guess and check method is used.
-    # The radius is increased until the arc length is greater than the space needed for the nucleotides.
-
-    # Since there is no way to decrease the radius, even if the radius is increased to accomodate for structural positioning that doesn't work, that increased
-    # radius will remain. (Thus the reason for large radii in some structures even though it's not necessary.)
     def update_unpaired_strands_positions(self, junction):
+        """
+        Places the unpaired nucleotides in a circle around the junction center,
+        spaced evenly. Increases the radius if necessary to fit the nucleotides.
+
+        Args:
+        junction (object): The junction object containing unpaired strands.
+
+        Returns:
+        None
+        """
         center_x, center_y = self.get_junction_center(junction)
         radius = self.get_junction_radius(junction)
 
@@ -439,6 +511,7 @@ class RNARenderer:
 
         radius_updated = False
 
+        # Process each strand in the junction
         for strand in junction.strands:
             num_nodes = len(strand[1:-1])
             space_needed = (num_nodes) * self.NODE_R * 2
@@ -448,6 +521,7 @@ class RNARenderer:
             shifted_end_rad = None
             angle_shift_rad = None
 
+            # Adjust the radius until the arc length can accommodate the nucleotides
             while arc_length < space_needed and space_needed != 0:
                 shifted_start_rad = np.arctan2(self.yarray[strand[0]] - center_y, self.xarray[strand[0]] - center_x)
                 shifted_end_rad = np.arctan2(self.yarray[strand[-1]] - center_y, self.xarray[strand[-1]] - center_x)
@@ -511,8 +585,18 @@ class RNARenderer:
         if radius_updated:
             self.update_unpaired_strands_positions(junction)
 
-    # Sets the junction radius.
     def set_radius(self, junction, new_radius, auto_call=False):
+        """
+        Sets the junction radius and updates the positions of related nodes.
+
+        Args:
+        junction (object): The junction object whose radius is being set.
+        new_radius (float): The new radius to set.
+        auto_call (bool): Flag to indicate if the function is called automatically.
+
+        Returns:
+        None
+        """
         center_x, center_y = self.get_junction_center(junction)
 
         visited_junctions = set()
@@ -521,75 +605,69 @@ class RNARenderer:
         visited_junctions.add(junction)
 
         for child in junction.children:
-            delta_x, delta_y = self._calculate_deltas(original_junction=junction, subpart=child, center_x=center_x, center_y=center_y, new_radius=new_radius)
-            self._update_positions(child, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=False)
+            delta_x, delta_y = calculate_deltas(
+                original_junction=junction,
+                subpart=child,
+                center_x=center_x,
+                center_y=center_y,
+                new_radius=new_radius,
+                xarray=self.xarray,
+                yarray=self.yarray,
+                get_first_nucleotides=self.get_first_nucleotides,
+                get_last_nucleotides=self.get_last_nucleotides,
+                get_junction_radius=self.get_junction_radius
+            )
+            update_positions(
+                xarray=self.xarray,
+                yarray=self.yarray,
+                junction=child,
+                delta_x=delta_x,
+                delta_y=delta_y,
+                visited_junctions=visited_junctions,
+                visited_nodes=visited_nodes
+            )
 
         if junction.has_parent():
-            delta_x, delta_y = self._calculate_deltas(original_junction=junction, subpart=junction.parent, center_x=center_x, center_y=center_y, new_radius=new_radius, parent=True)
-            self._update_positions(junction.parent, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=True)
+            delta_x, delta_y = calculate_deltas(
+                original_junction=junction,
+                subpart=junction.parent,
+                center_x=center_x,
+                center_y=center_y,
+                new_radius=new_radius,
+                xarray=self.xarray,
+                yarray=self.yarray,
+                get_first_nucleotides=self.get_first_nucleotides,
+                get_last_nucleotides=self.get_last_nucleotides,
+                get_junction_radius=self.get_junction_radius,
+                parent=True
+            )
+            update_positions(
+                xarray=self.xarray,
+                yarray=self.yarray,
+                junction=junction.parent,
+                delta_x=delta_x,
+                delta_y=delta_y,
+                visited_junctions=visited_junctions,
+                visited_nodes=visited_nodes
+            )
 
         if auto_call is not True:
             self.update_unpaired_strands_positions(junction)
 
         junction.radius = self.calculate_junction_radius(junction)
 
-    # Helper method for updating junction radius.
-    def _calculate_deltas(self, original_junction=None, subpart=None, center_x=None, center_y=None, new_radius=None, parent=False):
-        first_node = None
-        last_node = None
-
-        if parent == False:
-            first_node,last_node = self.get_first_nucleotides(subpart.strands)
-        else:
-            first_node,last_node = self.get_last_nucleotides(subpart.strands)
-
-        midpoint_x = (self.xarray[first_node] + self.xarray[last_node]) / 2
-        midpoint_y = (self.yarray[first_node] + self.yarray[last_node]) / 2
-        dx = midpoint_x - center_x
-        dy = midpoint_y - center_y
-
-        old_radius = self.get_junction_radius(original_junction)
-
-        radius_difference = new_radius - old_radius
-
-        unit_vector_x = dx / old_radius
-        unit_vector_y = dy / old_radius
-
-        delta_x = radius_difference * unit_vector_x
-        delta_y = radius_difference * unit_vector_y
-
-        return delta_x, delta_y
-
-    # Helper method for updating junction radius.
-    def _update_positions(self, junction, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion=None):
-        if junction in visited_junctions:
-            return
-
-        visited_junctions.add(junction)
-
-        for node in junction.positions:
-            if node in visited_nodes:
-                continue
-            visited_nodes.add(node)
-            self.xarray[node] += delta_x
-            self.yarray[node] += delta_y
-
-        if junction.is_junction:
-            if hasattr(junction, "center_x"):
-                junction.center_x += delta_x
-                junction.center_y += delta_y
-
-        if junction.has_children():
-            for child in junction.children:
-                self._update_positions(child, delta_x, delta_y, visited_junctions, visited_nodes)
-
-        if upward_recursion == True:
-            if junction.has_parent():
-                self._update_positions(junction.parent, delta_x, delta_y, visited_junctions, visited_nodes, upward_recursion)
-
-    # This forms the straight horizontal line of nucleotides. 
-    # Between strands are those paired nucleotides that come off of the straight horizontal line in the form of a junction or helix.
     def straighten_unpaired_strands(self):
+        """
+        Straightens unpaired strands of nucleotides in the RNA structure.
+        Forms a straight horizontal line of nucleotides.
+        Between strands are paired nucleotides that form junctions or helices.
+
+        Args:
+        None
+
+        Returns:
+        list: A list of tuples representing the start and end positions of between strands.
+        """
         if len(self.struct.get_single_strands()) > 0:
             single_strand_chunks = self.struct.get_single_strands()
             first_id = single_strand_chunks[0].positions[0]
@@ -602,6 +680,7 @@ class RNARenderer:
 
             total_offset = [0, 0]
 
+            # Add first strand
             if first_id > 0:
                 between_strands.append((0, first_id - 1))
 
@@ -671,6 +750,7 @@ class RNARenderer:
                 between_strand_positions[end] = (self.xarray[first_id] + self.NODE_R * 2 * direction_vector[0] * (number-1) + total_offset[0],
                                                 self.yarray[first_id] + self.NODE_R * 2 * direction_vector[1] * (number-1) + total_offset[1])
                 
+            # Validate between strands
             for i, between in enumerate(between_strands):
                 valid = False
                 valid_positions = None
@@ -687,6 +767,7 @@ class RNARenderer:
 
             between_strands.sort(key=lambda x: x[0])
 
+            # Adjust between strands
             for i in range(len(between_strands) - 1):
                 current_strand = between_strands[i]
                 next_strand = between_strands[i+1]
@@ -705,6 +786,7 @@ class RNARenderer:
                     between_strand_positions[next_strand[0]] = (position[0] + 2 * 2 * self.NODE_R,
                                                                    position[1])
 
+            # Update positions
             for set in between_strands:
                 saved_original = {}
                 for node in set:
@@ -746,8 +828,16 @@ class RNARenderer:
 
             return between_strands
 
-    # Prevents overlap by adding spacing along the x axis between "between_nodes".
     def add_horizontal_distance_between(self, between_strands):
+        """
+        Prevents overlap by adding spacing along the x-axis between "between_nodes".
+
+        Args:
+        between_strands (list): List of tuples representing the start and end positions of between strands.
+
+        Returns:
+        None
+        """
         distance = 0
         n = 0
 
@@ -756,6 +846,16 @@ class RNARenderer:
             return
                         
         def shift_nodes_x_axis(start, value):
+            """
+            Shifts nodes along the x-axis by a given value starting from a specific node.
+
+            Args:
+            start (int): Starting node position.
+            value (float): Distance to shift nodes along the x-axis.
+
+            Returns:
+            None
+            """
             for node in range(start, self.length):
                 self.xarray[node] += value
 
@@ -763,8 +863,8 @@ class RNARenderer:
                 if junction.positions[0] >= start:
                     junction.center_x += value
 
+        # Process each between strand to add horizontal distance
         for between in between_strands[1:]:
-            best_distance = 0
             best_overlap = float('inf')
             distance = 0
             n = 0
@@ -780,31 +880,54 @@ class RNARenderer:
 
                 if overlap < best_overlap:
                     best_overlap = overlap
-                    best_distance = distance
 
                 n += 1
 
+        # Update junction centers after adjusting the distances
         for junction in self.struct.get_junctions():
             self.update_junction_center(junction)
     
     def update_overlap_count(self, node_array=None, draw=False, specific_check=False, only_inside=False):
-        container = None
+        """
+        Updates the overlap count for nodes in the RNA structure. Determines if there is any overlap between nodes.
 
+        Args:
+        node_array (list, optional): List of node positions to check for overlap. If None, all nodes are checked.
+        draw (bool, optional): Flag to indicate if the drawing should be updated. Defaults to False.
+        specific_check (bool, optional): Flag to check for overlap specifically within the node_array. Defaults to False.
+        only_inside (bool, optional): Flag to check for overlap only within the node_array. Defaults to False.
+
+        Returns:
+        int: The number of overlaps found.
+        """
         container = ChunkContainer(self.struct, self.xarray, self.yarray, node_array=node_array, draw=draw, draw_num=self.structure_draw_num)
         self.structure_draw_num += 1
 
-        # Check all chunks (in node_array) against all other chunks (after node_array) for overlap.
-        if specific_check == True:
+        if specific_check:
+            # Check all chunks (in node_array) against all other chunks (after node_array) for overlap.
             return container.check_specific_overlap()
         
-        # Check chunks (in node_array) against themselves and all other chunks (in node_array) for overlap.
-        if only_inside == True:
+        if only_inside:
+            # Check chunks (in node_array) against themselves and all other chunks (in node_array) for overlap.
             return container.check_any_overlap_in_node_array()
 
-        # Check all chunks against themselves and all other chunks for overlap.
+        # Check all chunks against all other chunks for overlap.
         return container.check_any_overlap()
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE, seq):
+        """
+        Sets up the RNA tree for rendering, initializing all necessary structures and optimizing their layout.
+
+        Args:
+        secstruct (str): The secondary structure string of the RNA.
+        NODE_R (float): Radius of each node in the tree.
+        PRIMARY_SPACE (float): Primary spacing between nodes.
+        PAIR_SPACE (float): Spacing between paired nodes.
+        seq (str): The RNA sequence.
+
+        Returns:
+        int: The count of overlapping nodes.
+        """
         print("Initializing tree...")
         self.initialize_tree(secstruct, NODE_R)
         print("Setting up coordinates...")
@@ -817,9 +940,19 @@ class RNARenderer:
         self.prepare_drawing(NODE_R)
         self.xarray_ = self.xarray
         self.yarray_ = self.yarray
-        return self.overlap_count()
+        return self.update_overlap_count(draw=self.draw)
 
     def initialize_tree(self, secstruct, NODE_R):
+        """
+        Initializes the RNA tree based on the given secondary structure.
+
+        Args:
+        secstruct (str): The secondary structure string of the RNA.
+        NODE_R (float): Radius of each node in the tree.
+
+        Returns:
+        None
+        """
         self.NODE_R = NODE_R
         bi_pairs = get_pairmap_from_secstruct(secstruct)
         self.length = len(bi_pairs)
@@ -838,6 +971,17 @@ class RNARenderer:
                 jj += 1
 
     def setup_coordinates(self, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
+        """
+        Sets up the coordinates for the nodes in the RNA tree.
+
+        Args:
+        NODE_R (float): Radius of each node in the tree.
+        PRIMARY_SPACE (float): Primary spacing between nodes.
+        PAIR_SPACE (float): Spacing between paired nodes.
+
+        Returns:
+        list: List of radii for the nodes.
+        """
         xarray = [0.0] * self.length
         yarray = [0.0] * self.length
 
@@ -849,6 +993,18 @@ class RNARenderer:
         return radii
 
     def initialize_junctions(self, seq, secstruct, PRIMARY_SPACE, PAIR_SPACE):
+        """
+        Initializes the junctions in the RNA structure.
+
+        Args:
+        seq (str): The RNA sequence.
+        secstruct (str): The secondary structure string of the RNA.
+        PRIMARY_SPACE (float): Primary spacing between nodes.
+        PAIR_SPACE (float): Spacing between paired nodes.
+
+        Returns:
+        None
+        """
         self.struct = SecStruct(seq, secstruct)
         radii = self.setup_coordinates(self.NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         for junction in self.struct.get_junctions():
@@ -858,10 +1014,18 @@ class RNARenderer:
                     self.get_junction_center(junction)
 
     def optimize_structure(self):
-        between_strands = self.straighten_unpaired_strands()
-        self.between_strands = between_strands
-        if between_strands:
-            self.add_horizontal_distance_between(between_strands)
+        """
+        Optimizes the RNA structure to minimize overlap and prepare it for drawing.
+
+        Args:
+        None
+
+        Returns:
+        None
+        """
+        self.between_strands = self.straighten_unpaired_strands()
+        if self.between_strands:
+            self.add_horizontal_distance_between(self.between_strands)
 
         x_range = max(self.xarray) - min(self.xarray)
         y_range = max(self.yarray) - min(self.yarray)
@@ -890,9 +1054,18 @@ class RNARenderer:
         for _ in range(5):
             straighten_branches(self, ovp)
 
-        self.add_horizontal_distance_between(between_strands)
+        self.add_horizontal_distance_between(self.between_strands)
 
     def prepare_drawing(self, NODE_R):
+        """
+        Prepares the RNA structure for drawing by calculating necessary coordinates and angles.
+
+        Args:
+        NODE_R (float): Radius of each node in the tree.
+
+        Returns:
+        None
+        """
         self.junction_data = []
         for junction in self.struct.get_junctions():
             center_x, center_y = self.get_junction_center(junction)
@@ -931,10 +1104,17 @@ class RNARenderer:
         self.yarray = [y - min_y for y in self.yarray]
         self.size_ = [max_x - min_x, max_y - min_y]
 
-    def overlap_count(self):
-        return self.update_overlap_count(draw=self.draw)
-
     def normalize_angle(self, start_angle, end_angle):
+        """
+        Normalizes the start and end angles to ensure they are within the correct range for drawing.
+
+        Args:
+        start_angle (float): The starting angle in radians.
+        end_angle (float): The ending angle in radians.
+
+        Returns:
+        tuple: The normalized end and start angles in radians.
+        """
         if start_angle < 0:
             start_angle += 2 * np.pi
         if end_angle < 0:
