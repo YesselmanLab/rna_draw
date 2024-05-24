@@ -103,6 +103,7 @@ class RNADrawer(object):
         if draw_params is not None:
             self.__draw_params = draw_params
 
+    # Cluster is a parameter that is used to determine if the image should be saved. (Useful for mass rendering to determine tool accuracy)
     def __render(self, seq, ss, colors, filename, params, cluster=None):
         r = render_rna.RNARenderer()
 
@@ -166,7 +167,6 @@ class RNADrawer(object):
 
             r.fig.set_size_inches(x, y)
 
-        # This draw takes about 1/5th the time
         r.draw(
             params.CELL_PADDING,
             params.CELL_PADDING,
@@ -176,11 +176,7 @@ class RNADrawer(object):
             params.RENDER_IN_LETTERS,
         )
 
-        #plt.setp(r.ax, rasterized=True)
         plt.show()
-        # To save a few seconds on larger structures, you can just plt.show
-        # instead of saving the figure to a file.
-        # r.fig.savefig(fname=filename + ".png")#, format="raw")
 
         if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
             if response == 0:
@@ -190,6 +186,20 @@ class RNADrawer(object):
             return response
         else:
             r.fig.savefig(fname=filename + ".png")
+
+        '''
+        work_dir = os.getenv('WORK', '/work')
+        if cluster is not None: 
+            if response == 0:
+                save_path = os.path.join(work_dir, 'Success', filename + ".png")
+            else:
+                save_path = os.path.join(work_dir, 'Fails', filename + ".png")
+            r.fig.savefig(fname=save_path)
+            return response
+        else:
+            save_path = os.path.join(work_dir, filename + ".png")
+            r.fig.savefig(fname=save_path)
+        '''
         
         return r.fig
 
