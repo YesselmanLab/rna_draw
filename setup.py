@@ -7,7 +7,7 @@ with open("requirements.txt") as f:
 
 setup(
     name="rna_draw",
-    version=0.17,
+    version="0.17",
     author="Joe Yesselman",
     author_email="jyesselm@unl.edu",
     packages=["rna_draw"],
@@ -17,6 +17,9 @@ setup(
         "rna_draw/draw",
         "rna_draw/parameters",
         "rna_draw/render_rna",
+        "rna_draw/geometry_utils",
+        "rna_draw/chunk_controller",
+        "rna_draw/rna_optimizer",
     ],
     include_package_data=True,
     install_requires=requirements,
