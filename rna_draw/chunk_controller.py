@@ -1,3 +1,4 @@
+import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -139,7 +140,11 @@ class ChunkContainer:
 
         :param overlapping_chunks: List of chunks that are overlapping.
         """
-        filename = f'DrawVisualizer/chunks_visualization_{self.draw_num}.png'
+        directory = 'DrawVisualizer'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        filename = f'{directory}/chunks_visualization_{self.draw_num}.png'
 
         all_x = []
         all_y = []
