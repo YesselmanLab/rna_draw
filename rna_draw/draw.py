@@ -178,8 +178,10 @@ class RNADrawer(object):
 
         plt.show()
         
-        work_dir = os.getenv('WORK', '/work')
         if cluster is not None: 
+            work_dir = os.getenv('WORK')
+            if not work_dir:
+                work_dir = os.getcwd()
             if response == 0:
                 save_dir = os.path.join(work_dir, 'Success')
             else:
