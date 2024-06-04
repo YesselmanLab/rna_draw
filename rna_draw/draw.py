@@ -177,30 +177,20 @@ class RNADrawer(object):
         )
 
         plt.show()
-
-        if cluster is not None: # Return Overlap count to determine tool accuracy, as image is not necessary to be rendered for notebook when utilizing cluster.
+        
+        work_dir = os.getenv('WORK', '/work')
+        if cluster is not None: 
             if response == 0:
-                r.fig.savefig(fname='/work/yesselmanlab/nklein/Success/' + filename + ".png")
+                save_dir = os.path.join(work_dir, 'Success')
             else:
-                r.fig.savefig(fname='/work/yesselmanlab/nklein/Fails/' + filename + ".png")
+                save_dir = os.path.join(work_dir, 'Fails')
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, filename + ".png")
+            r.fig.savefig(fname=save_path)
             return response
         else:
             r.fig.savefig(fname=filename + ".png")
 
-        '''
-        work_dir = os.getenv('WORK', '/work')
-        if cluster is not None: 
-            if response == 0:
-                save_path = os.path.join(work_dir, 'Success', filename + ".png")
-            else:
-                save_path = os.path.join(work_dir, 'Fails', filename + ".png")
-            r.fig.savefig(fname=save_path)
-            return response
-        else:
-            save_path = os.path.join(work_dir, filename + ".png")
-            r.fig.savefig(fname=save_path)
-        '''
-        
         return r.fig
 
 
