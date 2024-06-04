@@ -309,9 +309,10 @@ class RNARenderer:
         self.initialize_junctions(seq, secstruct, PRIMARY_SPACE, PAIR_SPACE)
         print("Optimizing structure...")
         self.optimize_structure()
+        final_overlap_count = self.optimizer.update_overlap_count()
         print("Preparing drawing...")
         self.prepare_drawing(NODE_R)
-        return self.optimizer.update_overlap_count()
+        return final_overlap_count
 
     def initialize_tree(self, secstruct, NODE_R):
         """
