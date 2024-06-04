@@ -311,7 +311,7 @@ class RNARenderer:
         self.optimize_structure()
         print("Preparing drawing...")
         self.prepare_drawing(NODE_R)
-        return self.optimizer.update_overlap_count(draw=self.draw)
+        return self.optimizer.update_overlap_count()
 
     def initialize_tree(self, secstruct, NODE_R):
         """
