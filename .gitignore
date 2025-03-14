@@ -4,3 +4,5 @@ __pycache__
 .DS_Store
 tests/test_renders/*
 .venv/
+build/
+*.egg-info/

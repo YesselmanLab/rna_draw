@@ -1,13 +1,14 @@
-import matplotlib.colors
-import matplotlib.cm
-
+import matplotlib.colors as mcolors
+import re
+import rle
+from pprint import pprint
 import numpy as np
 import seaborn as sns
 
 from rna_draw.parameters import RenderType
 from rna_draw.data import Data
 
-COLORS = {
+DEFAULT_COLORS = {
     "r": [255 / 255, 102 / 255, 102 / 255],
     "g": [113 / 255, 188 / 255, 120 / 255],
     "b": [51 / 255, 153 / 255, 255 / 255],
@@ -20,19 +21,24 @@ COLORS = {
 }
 
 
+
 class Colorer(object):
+
+    COLORS = DEFAULT_COLORS
+
     def __init__(self):
         self.seq = None
         self.ss = None
         self.color_str = None
         self.data = None
         self.render_type = None
+        self.palette = self.__class__.COLORS
 
     def get_rgb_colors(
         self, seq, ss, color_str=None, data=None, render_type=None, default_color=None
     ):
         if default_color is None:
-            default_color = COLORS["e"]
+            default_color = DEFAULT_COLORS["e"]
 
         if len(seq) != len(ss):
             raise ValueError("sequence and structure must be the same length")
@@ -56,6 +62,8 @@ class Colorer(object):
                 rgb_colors = self.__color_by_restype()
             elif render_type == RenderType.PAIRED:
                 rgb_colors = self.__color_by_paired()
+            elif render_type == RenderType.STRAND:
+                rgb_colors = self.__color_by_strand()
             self.__add_rgb_colors(rgb_colors, set_colors)
 
         if data is not None:
@@ -74,8 +82,23 @@ class Colorer(object):
 
         return self.rgb_colors
 
+    @classmethod
+    def color_palette(cls,palette='colorblind'):
+        VALID_PALETTES = {"deep", "muted", "pastel", "bright", "dark", "colorblind"}
+        if palette not in VALID_PALETTES:
+            raise ValueError("color_palette: palette must be one of %r." % VALID_PALETTES)
+        cls.COLORS = dict(zip(['b', 'o', 'g', 'r', 'p', 'R', 'm', 'e', 'y', 'c'],
+                                 list(map(mcolors.hex2color,sns.color_palette(palette,as_cmap=True)))))
+
+    def color_palette(self,palette='colorblind'):
+        VALID_PALETTES = {"deep", "muted", "pastel", "bright", "dark", "colorblind"}
+        if palette not in VALID_PALETTES:
+            raise ValueError("color_palette: palette must be one of %r." % palette)
+        self.palette = dict(zip(['b', 'o', 'g', 'r', 'p', 'R', 'm', 'e', 'y', 'c'],
+                                list(map(mcolors.hex2color,sns.color_palette(palette,as_cmap=True)))))
+        
     def __parse_color_str(self, color_str):
-        rgb_colors = [COLORS["e"] for i in range(len(self.seq))]
+        rgb_colors = [DEFAULT_COLORS["e"] for i in range(len(self.seq))]
 
         spl = color_str.split(";")
         contains_digit = any(map(str.isdigit, color_str))
@@ -137,42 +160,39 @@ class Colorer(object):
                 self.set_colors[i] = 1
 
     def __color_by_restype(self):
-        rgb_colors = []
-        for e in self.seq:
-            if e == "A":
-                rgb_colors.append(COLORS["y"])
-            elif e == "C":
-                rgb_colors.append(COLORS["g"])
-            elif e == "G":
-                rgb_colors.append(COLORS["r"])
-            elif e == "U" or e == "T":
-                rgb_colors.append(COLORS["b"])
-            elif e == "N":
-                rgb_colors.append(COLORS["e"])
-            else:
-                rgb_colors.append(COLORS["m"])
-        return rgb_colors
+        res_colors = {
+            "A" : "y",
+            "C" : "g",
+            "G" : "r",
+            "U" : "b",
+            "T" : "b",
+            "N" : "e"}
+        return map(lambda s: self.palette[res_colors.get(s,"m")],self.seq)
+
 
     def __color_by_paired(self):
-        rgb_colors = []
-        for e in self.ss:
-            if e == ".":
-                rgb_colors.append(COLORS["y"])
-            else:
-                rgb_colors.append(COLORS["b"])
+        return map(lambda ss: self.palette["y" if ss == "." else "b"],self.ss)
+
+    def __color_by_strand(self):
+        colors = list(self.palette.keys())
+        rgb_colors = [self.palette[colors[0]] for i in range(len(self.ss))]
+        breaks = {x.start() for x in re.finditer('\+', self.ss)}
+        for index,element in enumerate(breaks):
+            for i in range(element,len(rgb_colors)):
+                rgb_colors[i] = self.palette[colors[index + 1]]
         return rgb_colors
 
 
 def parse_color_single_letter_codes(color_string):
     colors = []
     for e in color_string:
-        colors.append(COLORS[e])
+        colors.append(self.palette[e])
     return colors
 
 
 def parse_color_code(color_code):
     if len(color_code) == 1:
-        return COLORS[color_code]
+        return self.palette[color_code]
 
     elif color_code in sns.xkcd_rgb:
         return xkcd_color_name_to_rgb(color_code)
@@ -193,3 +213,5 @@ def color_by_data(data):
 def xkcd_color_name_to_rgb(name):
     raw_rgb = matplotlib.colors.hex2color(sns.xkcd_rgb[name])
     return raw_rgb
+
+

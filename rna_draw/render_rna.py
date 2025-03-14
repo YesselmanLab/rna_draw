@@ -249,11 +249,14 @@ class RNARenderer:
         self.size_ = None
         self.fig = plt.Figure()
         self.ax = self.fig.add_subplot(111, aspect="equal")
+        self.breaks = {}
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
         dangling_start = 0
         dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
+        self.breaks = {x.start() for x in re.finditer('\+', secstruct)}
+
 
         self.NODE_R = NODE_R
         self.root_ = None
@@ -367,50 +370,52 @@ class RNARenderer:
 
                 if not render_in_letter:
                     for ii in range(0, len(self.xarray_)):
-                        if colors == None:
-                            x = self.xarray_[ii] + offset_x
-                            y = self.yarray_[ii] + offset_y
-                            cir = Circle(
-                                (x, y), radius=self.NODE_R, facecolor="k", edgecolor="k"
-                            )
-                            self.ax.add_patch(cir)
-                        else:
-                            x = self.xarray_[ii] + offset_x
-                            y = self.yarray_[ii] + offset_y
-                            cir = Circle(
-                                (x, y),
-                                radius=self.NODE_R,
-                                facecolor=(colors[ii][0], colors[ii][1], colors[ii][2]),
-                                edgecolor="k",
-                            )
-                            self.ax.add_patch(cir)
+                        if ii not in self.breaks:
+                            if colors == None:
+                                x = self.xarray_[ii] + offset_x
+                                y = self.yarray_[ii] + offset_y
+                                cir = Circle(
+                                    (x, y), radius=self.NODE_R, facecolor="k", edgecolor="k"
+                                )
+                                self.ax.add_patch(cir)
+                            else:
+                                x = self.xarray_[ii] + offset_x
+                                y = self.yarray_[ii] + offset_y
+                                cir = Circle(
+                                    (x, y),
+                                    radius=self.NODE_R,
+                                    facecolor=(colors[ii][0], colors[ii][1], colors[ii][2]),
+                                    edgecolor="k",
+                                )
+                                self.ax.add_patch(cir)
                 if sequence:
                     for ii in range(0, len(self.xarray_)):
-                        if not render_in_letter:
-                            text_size = 20
-                            if colors[ii] == [0, 0, 0]:
-                                color = "w"
+                        if ii not in self.breaks:
+                            if not render_in_letter:
+                                text_size = 20
+                                if colors[ii] == [0, 0, 0]:
+                                    color = "w"
+                                else:
+                                    color = "k"
+                                text_offset_x = 0
+                                text_offset_y = 0
                             else:
-                                color = "k"
-                            text_offset_x = 0
-                            text_offset_y = 0
-                        else:
-                            if colors == None:
-                                color = "k"
-                            else:
-                                color = colors[ii]
-                            text_size = 20
-                            text_offset_x = 0
-                            text_offset_y = 0
-                        self.ax.text(
-                            self.xarray_[ii] + offset_x + text_offset_x,
-                            self.yarray_[ii] + offset_y + text_offset_y,
-                            sequence[ii],
-                            family="monospace",
-                            fontsize=text_size,
-                            ha="center",
-                            va="center",
-                        )
+                                if colors == None:
+                                    color = "k"
+                                else:
+                                    color = colors[ii]
+                                text_size = 20
+                                text_offset_x = 0
+                                text_offset_y = 0
+                            self.ax.text(
+                                self.xarray_[ii] + offset_x + text_offset_x,
+                                self.yarray_[ii] + offset_y + text_offset_y,
+                                sequence[ii],
+                                family="monospace",
+                                fontsize=text_size,
+                                ha="center",
+                                va="center",
+                            )
 
     def get_coords(self, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
         if self.root_ != None:
