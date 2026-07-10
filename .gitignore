@@ -3,3 +3,9 @@ __pycache__
 .idea
 .DS_Store
 tests/test_renders/*
+build/
+dist/
+*.egg-info/
+/*.png
+secstruct.png
+test.png.png

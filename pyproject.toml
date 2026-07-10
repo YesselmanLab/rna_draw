@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rna_draw"
+version = "0.1.0"
+description = "A minimal python package for drawing nucleic acid secondary structures."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Joe Yesselman", email = "jyesselm@unl.edu" }]
+classifiers = ["Programming Language :: Python :: 3"]
+dependencies = ["matplotlib", "seaborn"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+
+[project.scripts]
+rna_draw = "rna_draw.draw:main"
+
+[tool.setuptools]
+packages = ["rna_draw"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"rna_draw/render_rna.py" = ["C901", "E501"]
+"rna_draw/draw.py" = ["F403", "F405"]
+
+[tool.mypy]
+python_version = "3.9"
+
+[[tool.mypy.overrides]]
+module = [
+    "rna_draw.render_rna",
+    "rna_draw.draw",
+    "rna_draw.colorer",
+    "rna_draw.data",
+    "rna_draw.parameters",
+]
+ignore_errors = true
