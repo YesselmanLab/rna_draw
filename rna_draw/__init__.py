@@ -1,10 +1,19 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .draw import rna_draw
+from .overlap import OverlapKind, OverlapParams, OverlapReport, Witness, check_overlaps
 
 try:
     __version__ = version("rna_draw")
 except PackageNotFoundError:  # source tree without install
     __version__ = "0.0.0"
 
-__all__ = ["rna_draw", "__version__"]
+__all__ = [
+    "rna_draw",
+    "__version__",
+    "check_overlaps",
+    "OverlapReport",
+    "OverlapParams",
+    "Witness",
+    "OverlapKind",
+]

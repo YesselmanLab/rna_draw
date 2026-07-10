@@ -66,3 +66,13 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = ["seaborn", "seaborn.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The installed pytest build's own internals (_pytest/terminal.py) use
+# `match` statements (Python 3.10+ syntax); since this project's mypy
+# `python_version` targets 3.9, following into pytest's py.typed package
+# from a test file's `import pytest` would otherwise fail on pytest's own
+# source, not ours. Skip following into it -- pytest's public API is still
+# usable (as `Any`), only its internals are no longer type-checked.
+module = ["_pytest.*", "pytest.*"]
+follow_imports = "skip"
