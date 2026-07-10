@@ -5,7 +5,6 @@ import numpy as np
 import seaborn as sns
 
 from rna_draw.parameters import RenderType
-from rna_draw.data import Data
 
 COLORS = {
     "r": [255 / 255, 102 / 255, 102 / 255],
@@ -91,7 +90,8 @@ class Colorer(object):
         elif not contains_digit:
             if len(spl) != len(self.ss):
                 raise ValueError(
-                    "no residue numbers are specified in color str, must match secondary structure length"
+                    "no residue numbers are specified in color str, must match "
+                    "secondary structure length"
                 )
         set_colors = np.zeros(len(self.ss))
 

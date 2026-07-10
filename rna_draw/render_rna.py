@@ -1,11 +1,7 @@
 import sys
-import re
-import random
 import math
-import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, ConnectionPatch
-from matplotlib.axes import Axes
 
 
 class RNATreeNode:
@@ -250,25 +246,17 @@ class RNARenderer:
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
 
-        dangling_start = 0
-        dangling_end = 0
         bi_pairs = get_pairmap_from_secstruct(secstruct)
 
         self.NODE_R = NODE_R
         self.root_ = None
 
-        for ii in range(0, len(bi_pairs)):
-            if bi_pairs[ii] < 0:
-                dangling_start += 1
-            else:
-                break
-
-        for ii in (len(bi_pairs) - 1, -1, -1):
-            if bi_pairs[ii] < 0:
-                dangling_end += 1
-            else:
-                break
-
+        # NOTE: a dangling_start/dangling_end counting block previously lived
+        # here. Those variables were written but never read anywhere (the
+        # second loop also used a malformed `for ii in (n, -1, -1)` tuple
+        # instead of `range(n, -1, -1)`), so it was deleted as dead code; this
+        # is a provable no-op on the coordinate output (see
+        # tests/test_layout_baseline.py).
         self.root_ = RNATreeNode()
 
         # for jj in range(0,len(bi_pairs)):
@@ -327,39 +315,28 @@ class RNARenderer:
         if self.xarray_ != None:
 
             if line:
-                for ii in range(len(self.xarray_) - 1):
-                    if colors == None:
-                        pass
-                    else:
-                        pass
+                # TODO(M1): 'line' backbone-drawing mode is unimplemented and
+                # currently unreachable (draw() is only ever called with the
+                # default line=False in the shipped pipeline). Fail loudly
+                # instead of silently drawing nothing.
+                raise NotImplementedError("line rendering mode not implemented")
             else:
 
                 if pairs:
+                    # NOTE: endpoints verified from->to; geometry intentionally
+                    # unchanged in M1 (no pixel baseline exists yet).
                     for pair in pairs:
-                        x1, y1 = (
-                            [
-                                offset_x + self.xarray_[pair["from"]],
-                                offset_y + self.yarray_[pair["from"]],
-                            ],
-                            [
-                                offset_x + self.xarray_[pair["to"]],
-                                offset_y + self.yarray_[pair["to"]],
-                            ],
-                        )
-                    for pair in pairs:
-                        x1, y1 = (
-                            [
-                                offset_x + self.xarray_[pair["from"]],
-                                offset_y + self.yarray_[pair["from"]],
-                            ],
-                            [
-                                offset_x + self.xarray_[pair["to"]],
-                                offset_y + self.yarray_[pair["to"]],
-                            ],
-                        )
+                        from_xy = [
+                            offset_x + self.xarray_[pair["from"]],
+                            offset_y + self.yarray_[pair["from"]],
+                        ]
+                        to_xy = [
+                            offset_x + self.xarray_[pair["to"]],
+                            offset_y + self.yarray_[pair["to"]],
+                        ]
                         rec = ConnectionPatch(
-                            (x1[0], x1[1]),
-                            (y1[0], y1[1]),
+                            (from_xy[0], from_xy[1]),
+                            (to_xy[0], to_xy[1]),
                             coordsA="data",
                             linewidth=15,
                             edgecolor="#969696",

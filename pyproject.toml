@@ -32,11 +32,21 @@ line-length = 100
 select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
-"rna_draw/render_rna.py" = ["C901", "E501"]
-"rna_draw/draw.py" = ["F403", "F405"]
+# Legacy renderer: complexity/line-length plus pre-existing style debt
+# (== None/False comparisons, an unused local) in RNARenderer.draw()/
+# setup_coords_recursive, which are explicitly out of refactor scope for M1.
+"rna_draw/render_rna.py" = ["C901", "E501", "E711", "E712", "F841", "I001"]
+# `from ...colorer import *` star-imports plus pre-existing import ordering.
+"rna_draw/draw.py" = ["F403", "F405", "I001"]
+"rna_draw/colorer.py" = ["I001"]
+"generate_readme.py" = ["E741", "F401", "I001"]
+"tests/test_colorer.py" = ["F401", "F841", "I001"]
+"tests/test_data.py" = ["F841", "I001"]
+"tests/test_render.py" = ["I001"]
 
 [tool.mypy]
 python_version = "3.9"
+files = ["rna_draw", "tests"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -45,5 +55,14 @@ module = [
     "rna_draw.colorer",
     "rna_draw.data",
     "rna_draw.parameters",
+    "rna_draw.settings",
+    "test_colorer",
+    "test_data",
+    "test_draw",
+    "test_render",
 ]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["seaborn", "seaborn.*"]
+ignore_missing_imports = true
