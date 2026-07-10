@@ -8,14 +8,6 @@ from matplotlib.patches import Circle, ConnectionPatch
 from matplotlib.axes import Axes
 
 
-class Test:
-    def __init__(self, something):
-        self.something = something
-
-
-test_1 = Test("something")
-
-
 class RNATreeNode:
     def __init__(self):
         self.children_ = []
