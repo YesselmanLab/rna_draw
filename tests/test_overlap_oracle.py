@@ -188,6 +188,11 @@ class TestPuzzlerIsMuchCleaner:
         pair_map, _, (puzzler_x, puzzler_y) = _fold_and_layout(seed)
         min_sep = _min_nonadjacent_disk_separation(puzzler_x, puzzler_y, pair_map)
         clearance_node_r = 0.5 * min_sep - 1e-6
+        # NOTE: the disk-disk part of this is definitional -- min_sep is measured
+        # over exactly the checker's disk-disk exclusion set, so 2*node_r < min_sep
+        # guarantees zero disk flags by construction. The real disk-disk
+        # completeness guarantee is carried by the hash==brute and known-bad tests;
+        # this test's independent value is the zero-width disk-vs-capsule-axis check.
         # Half-widths zeroed: min_sep is a disk-only measurement, so the
         # matching clearance check must isolate the disk-disk relationship.
         params = OverlapParams(

@@ -378,7 +378,11 @@ def _hash_cell_size(params: OverlapParams) -> float:
         `SpatialHash`'s correctness argument.
     """
     max_half_width = max(params.backbone_half_width, params.pair_half_width)
-    return 2 * (params.node_r + max_half_width)
+    size = 2 * (params.node_r + max_half_width)
+    # Guard the degenerate all-zero-geometry call: cell_size must stay positive
+    # so SpatialHash never divides by zero. Correctness is unaffected (the value
+    # is a performance knob only), so any positive fallback is valid.
+    return size if size > 0 else 1.0
 
 
 def check_overlaps(
