@@ -83,11 +83,17 @@ class TestLayoutGuaranteedFallback:
         assert result.engine_name == "fallback"
         assert result.report.passed is True
 
+    @pytest.mark.parametrize("engine_factory", [FakeEngine, LegacyEngine])
     @pytest.mark.parametrize("seed", range(15))
     @pytest.mark.parametrize("n", [2, 5, 20, 60])
-    def test_never_silent_overlap_property(self, seed: int, n: int) -> None:
+    def test_never_silent_overlap_property(
+        self, engine_factory: type, seed: int, n: int
+    ) -> None:
+        # FakeEngine always overlaps (exercises the fallback branch); LegacyEngine
+        # yields clean layouts on many small structures (exercises the passed,
+        # not-flagged branch). The honest contract must hold for both.
         secstruct = random_structure(seed, n)
-        result = layout_guaranteed(secstruct, engine=FakeEngine())
+        result = layout_guaranteed(secstruct, engine=engine_factory())
         assert result.flagged or result.report.passed
 
 

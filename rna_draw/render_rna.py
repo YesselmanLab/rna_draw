@@ -287,7 +287,7 @@ class RNARenderer:
         min_x = xarray[0] - NODE_R
         min_y = yarray[0] - NODE_R
         max_x = xarray[0] + NODE_R
-        max_y = xarray[0] + NODE_R
+        max_y = yarray[0] + NODE_R
 
         for x in xarray:
             if x - NODE_R < min_x:
