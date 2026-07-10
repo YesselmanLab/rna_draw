@@ -56,13 +56,11 @@ def get_pairmap_from_secstruct(secstruct):
 
 
 def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
-
     if start_index > end_index:
         print("Error occured while drawing RNA %d %d" % (start_index, end_index))
         sys.exit(0)
 
     if bi_pairs[start_index] == end_index:
-
         newnode = RNATreeNode()
         newnode.is_pair_ = True
         newnode.index_a_ = start_index
@@ -71,7 +69,6 @@ def add_nodes_recursive(bi_pairs, rootnode, start_index, end_index):
         add_nodes_recursive(bi_pairs, newnode, start_index + 1, end_index - 1)
 
     else:
-
         newnode = RNATreeNode()
         jj = start_index
         while jj <= end_index:
@@ -99,7 +96,6 @@ def setup_coords_recursive(
     PRIMARY_SPACE,
     PAIR_SPACE,
 ):
-
     cross_x = -go_y
     cross_y = go_x
 
@@ -124,10 +120,7 @@ def setup_coords_recursive(
                 PRIMARY_SPACE,
                 PAIR_SPACE,
             )
-        elif (
-            rootnode.children_[0].is_pair_ == False
-            and rootnode.children_[0].index_a_ < 0
-        ):
+        elif rootnode.children_[0].is_pair_ == False and rootnode.children_[0].index_a_ < 0:
             setup_coords_recursive(
                 rootnode.children_[0],
                 rootnode,
@@ -153,15 +146,12 @@ def setup_coords_recursive(
             )
 
     elif len(rootnode.children_) > 1:
-
         npairs = 0
         for ii in range(0, len(rootnode.children_)):
             if rootnode.children_[ii].is_pair_:
                 npairs += 1
 
-        circle_length = (len(rootnode.children_) + 1) * PRIMARY_SPACE + (
-            npairs + 1
-        ) * PAIR_SPACE
+        circle_length = (len(rootnode.children_) + 1) * PRIMARY_SPACE + (npairs + 1) * PAIR_SPACE
         circle_radius = circle_length / (2 * math.pi)
         length_walker = PAIR_SPACE / 2.0
 
@@ -173,7 +163,6 @@ def setup_coords_recursive(
             rootnode.y_ = parentnode.y_ + go_y * circle_radius
 
         for ii in range(0, len(rootnode.children_)):
-
             length_walker += PRIMARY_SPACE
 
             if rootnode.children_[ii].is_pair_:
@@ -230,9 +219,7 @@ def get_coords_recursive(rootnode, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
         yarray[rootnode.index_a_] = rootnode.y_
 
     for ii in range(0, len(rootnode.children_)):
-        get_coords_recursive(
-            rootnode.children_[ii], xarray, yarray, PRIMARY_SPACE, PAIR_SPACE
-        )
+        get_coords_recursive(rootnode.children_[ii], xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
 
 
 class RNARenderer:
@@ -245,7 +232,6 @@ class RNARenderer:
         self.ax = self.fig.add_subplot(111, aspect="equal")
 
     def setup_tree(self, secstruct, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
-
         bi_pairs = get_pairmap_from_secstruct(secstruct)
 
         self.NODE_R = NODE_R
@@ -281,6 +267,23 @@ class RNARenderer:
         self.setup_coords(NODE_R, PRIMARY_SPACE, PAIR_SPACE)
         self.get_coords(xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
 
+        self.set_coords(xarray, yarray, NODE_R)
+
+    def set_coords(self, xarray, yarray, NODE_R):
+        """Inject externally computed coords; compute bounds/shift/size like setup_tree does.
+
+        Lets an external `rna_draw.layout` engine feed its own
+        coordinates through this renderer without going through
+        `setup_tree`'s tree-recursion layout.
+
+        Args:
+            xarray: Nucleotide x-coordinates, one per nucleotide.
+            yarray: Nucleotide y-coordinates, one per nucleotide.
+            NODE_R: Nucleotide disk radius (also the padding used when
+                computing the shifted bounding box).
+        """
+        self.NODE_R = NODE_R
+
         min_x = xarray[0] - NODE_R
         min_y = yarray[0] - NODE_R
         max_x = xarray[0] + NODE_R
@@ -309,11 +312,8 @@ class RNARenderer:
     def get_size(self):
         return self.size_
 
-    def draw(
-        self, offset_x, offset_y, colors, pairs, sequence, render_in_letter, line=False
-    ):
+    def draw(self, offset_x, offset_y, colors, pairs, sequence, render_in_letter, line=False):
         if self.xarray_ != None:
-
             if line:
                 # TODO(M1): 'line' backbone-drawing mode is unimplemented and
                 # currently unreachable (draw() is only ever called with the
@@ -321,7 +321,6 @@ class RNARenderer:
                 # instead of silently drawing nothing.
                 raise NotImplementedError("line rendering mode not implemented")
             else:
-
                 if pairs:
                     # NOTE: endpoints verified from->to; geometry intentionally
                     # unchanged in M1 (no pixel baseline exists yet).
@@ -348,9 +347,7 @@ class RNARenderer:
                         if colors == None:
                             x = self.xarray_[ii] + offset_x
                             y = self.yarray_[ii] + offset_y
-                            cir = Circle(
-                                (x, y), radius=self.NODE_R, facecolor="k", edgecolor="k"
-                            )
+                            cir = Circle((x, y), radius=self.NODE_R, facecolor="k", edgecolor="k")
                             self.ax.add_patch(cir)
                         else:
                             x = self.xarray_[ii] + offset_x
@@ -363,7 +360,6 @@ class RNARenderer:
                             )
                             self.ax.add_patch(cir)
                 if sequence:
-
                     for ii in range(0, len(self.xarray_)):
                         if not render_in_letter:
                             text_size = 20
@@ -392,7 +388,6 @@ class RNARenderer:
                         )
 
     def get_coords(self, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
-
         if self.root_ != None:
             get_coords_recursive(self.root_, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE)
         else:
@@ -402,6 +397,4 @@ class RNARenderer:
 
     def setup_coords(self, NODE_R, PRIMARY_SPACE, PAIR_SPACE):
         if self.root_ != None:
-            setup_coords_recursive(
-                self.root_, None, 0, 0, 0, 1, NODE_R, PRIMARY_SPACE, PAIR_SPACE
-            )
+            setup_coords_recursive(self.root_, None, 0, 0, 0, 1, NODE_R, PRIMARY_SPACE, PAIR_SPACE)

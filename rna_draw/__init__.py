@@ -1,6 +1,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from .draw import rna_draw
+from .layout import LayoutEngine, LayoutResult, layout_guaranteed
 from .overlap import OverlapKind, OverlapParams, OverlapReport, Witness, check_overlaps
 
 try:
@@ -16,4 +17,7 @@ __all__ = [
     "OverlapParams",
     "Witness",
     "OverlapKind",
+    "layout_guaranteed",
+    "LayoutResult",
+    "LayoutEngine",
 ]

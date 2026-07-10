@@ -19,7 +19,7 @@ dev = ["pytest", "pytest-cov", "ruff", "mypy"]
 rna_draw = "rna_draw.draw:main"
 
 [tool.setuptools]
-packages = ["rna_draw"]
+packages = ["rna_draw", "rna_draw.layout"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

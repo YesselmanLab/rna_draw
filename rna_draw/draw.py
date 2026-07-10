@@ -3,6 +3,8 @@ import argparse
 from rna_draw import render_rna, parameters, colorer
 from rna_draw.colorer import *
 from rna_draw.data import Data
+from rna_draw.layout import layout_guaranteed, resolve_engine
+from rna_draw.overlap import OverlapParams
 
 # Figure-size model fit once from four reference (area, figsize) points -- see
 # git history for the original per-render scipy.optimize.curve_fit call this
@@ -17,13 +19,9 @@ _FIGSIZE_C = 0.08504100128169866
 
 def get_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-ss", help="secondary structure in dot bracket notation", required=True
-    )
+    parser.add_argument("-ss", help="secondary structure in dot bracket notation", required=True)
     parser.add_argument("-seq", help="rna sequence", required=False)
-    parser.add_argument(
-        "-out", help="output png file", required=False, default="secstruct"
-    )
+    parser.add_argument("-out", help="output png file", required=False, default="secstruct")
     parser.add_argument(
         "-color_str",
         help="description of coloring, see docs for options",
@@ -34,17 +32,11 @@ def get_parser():
         help="scheme to color by: res_type,paired,motif,none",
         required=False,
     )
-    parser.add_argument(
-        "-default_color", help="the color used when no other color is supplied"
-    )
+    parser.add_argument("-default_color", help="the color used when no other color is supplied")
 
-    parser.add_argument(
-        "-data_str", help="data values by res seperated by ;", required=False
-    )
+    parser.add_argument("-data_str", help="data values by res seperated by ;", required=False)
     parser.add_argument("-data_file", help="path to data to color by", required=False)
-    parser.add_argument(
-        "-data_palette", help="matplotlib color palette", required=False
-    )
+    parser.add_argument("-data_palette", help="matplotlib color palette", required=False)
     parser.add_argument(
         "-data_vmin",
         help="min data value everything lower than this will be set to this value",
@@ -58,6 +50,12 @@ def get_parser():
     parser.add_argument(
         "-data_ignore_restype",
         help="data values will be ignored for these restypes, e.g. G and U for DMS",
+        required=False,
+    )
+    parser.add_argument(
+        "-engine",
+        default="auto",
+        help="layout engine: auto|legacy|puzzler",
         required=False,
     )
     return parser
@@ -84,8 +82,8 @@ class RNADrawer(object):
         default_color=None,
         data=None,
         draw_params=None,
+        engine="auto",
     ):
-
         self.__setup(draw_params)
 
         if seq is None:
@@ -95,24 +93,24 @@ class RNADrawer(object):
             seq, ss, color_str, data, render_type, default_color
         )
 
-        return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params)
+        return self.__render(seq, ss, final_color_rbgs, filename, self.__draw_params, engine)
 
     def __setup(self, draw_params):
         if draw_params is not None:
             self.__draw_params = draw_params
 
-    def __render(self, seq, ss, colors, filename, params):
+    def __render(self, seq, ss, colors, filename, params, engine="auto"):
         r = render_rna.RNARenderer()
 
         pairmap = render_rna.get_pairmap_from_secstruct(ss)
         pairs = []
         for i in range(len(pairmap)):
             if pairmap[i] > i:
-                pairs.append(
-                    {"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]}
-                )
+                pairs.append({"from": i, "to": pairmap[i], "p": 1.0, "color": COLORS["e"]})
 
-        r.setup_tree(ss, params.NODE_R, params.PRIMARY_SPACE, params.PAIR_SPACE)
+        gate = OverlapParams(node_r=params.NODE_R)  # target radius; adaptive search may shrink it
+        result = layout_guaranteed(ss, engine=resolve_engine(engine), params=gate)
+        r.set_coords(result.x, result.y, result.node_r)
 
         r.ax.axis("off")
         r.ax.set_xlim([min(r.xarray_) + 40 - 15, max(r.xarray_) + 40 + 15])
@@ -174,7 +172,14 @@ def __rna_draw_from_args(args):
 
     rd = RNADrawer()
     return rd.draw(
-        args.ss, args.seq, args.out, args.color_str, render_type, default_color, data
+        args.ss,
+        args.seq,
+        args.out,
+        args.color_str,
+        render_type,
+        default_color,
+        data,
+        engine=args.engine,
     )
 
 
