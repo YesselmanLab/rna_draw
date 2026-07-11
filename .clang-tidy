@@ -1,0 +1,32 @@
+---
+# Checks enabled: bugprone/performance/modernize/clang-analyzer, the
+# practical core of clang-tidy for a small C++ core.
+#
+# Checks explicitly disabled, with reasons (not just silenced noise):
+# - cppcoreguidelines-no-malloc / -owning-memory: `src/vienna_layout/
+#   bindings.cpp`'s whole job is wrapping a C library's malloc'd buffers
+#   (`vrna_plot_coords_*`) in an RAII guard (`MallocBuffer`) -- this IS the
+#   Core Guidelines' own sanctioned pattern for owning a C allocation
+#   (R.3/R.11), not a violation of it.
+# - cppcoreguidelines-pro-bounds-pointer-arithmetic: unavoidable when
+#   copying a malloc'd C buffer (`float*`/`double*` + length) into a
+#   `std::vector`; there is no bounds-checked view over foreign memory to
+#   use instead.
+# - cppcoreguidelines-pro-type-vararg: fires on pybind11's own
+#   `PYBIND11_MODULE` macro expansion (Python C API internals), not our
+#   code.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-no-malloc,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -modernize-use-trailing-return-type
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/vienna_layout/.*'

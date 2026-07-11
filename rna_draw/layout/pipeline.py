@@ -11,13 +11,38 @@ from __future__ import annotations
 from rna_draw.overlap import OverlapParams, OverlapReport, check_overlaps
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
-from .base import EngineError, LayoutEngine, LayoutResult, empty_report, is_pseudoknot_free
+from .base import (
+    EngineError,
+    LayoutEngine,
+    LayoutResult,
+    empty_report,
+    is_pseudoknot_free,
+)
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
 from .puzzler import PuzzlerEngine
+from .vienna import (
+    EXPECTED_PUZZLER_OPTIONS_SIZEOF,
+    EXPECTED_VIENNA_ABI_VERSION,
+    ViennaNaviewEngine,
+    ViennaPuzzlerEngine,
+    ViennaTurtleEngine,
+)
+
+# Re-exported from `.vienna` (where the ABI guard now lives, so it runs on
+# every engine construction, not just the `resolve_engine` path). Kept
+# importable here for back-compat with callers/tests using
+# `pipeline.EXPECTED_*`.
+__all__ = ["EXPECTED_PUZZLER_OPTIONS_SIZEOF", "EXPECTED_VIENNA_ABI_VERSION"]
 
 MIN_NODE_R_FRACTION = 0.8  # never shrink readable disks below 80% of target
 NODE_R_STEP = 0.25  # search granularity, in layout units
+
+_VIENNA_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
+    "vienna_puzzler": ViennaPuzzlerEngine,
+    "naview": ViennaNaviewEngine,
+    "turtle": ViennaTurtleEngine,
+}
 
 
 def default_engine() -> LayoutEngine:
@@ -36,14 +61,19 @@ def resolve_engine(name: str) -> LayoutEngine | None:
     """Resolve a CLI/API engine-selection string to an engine instance.
 
     Args:
-        name: One of `"auto"`, `"legacy"`, `"puzzler"`.
+        name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"vienna_puzzler"`,
+            `"naview"`, `"turtle"`.
 
     Returns:
         `None` for `"auto"` (the pipeline uses `default_engine()`), or a
-        fresh engine instance for `"legacy"`/`"puzzler"`.
+        fresh engine instance otherwise.
 
     Raises:
         ValueError: If `name` is none of the above.
+        EngineUnavailableError: If `name` selects an in-process ViennaRNA
+            engine and the compiled binding has drifted from the ABI this
+            was built against (the guard runs in the engine's `__init__`,
+            see `rna_draw.layout.vienna._assert_vienna_abi`).
     """
     if name == "auto":
         return None
@@ -51,6 +81,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
         return LegacyEngine()
     if name == "puzzler":
         return PuzzlerEngine()
+    if name in _VIENNA_ENGINE_FACTORIES:
+        return _VIENNA_ENGINE_FACTORIES[name]()
     raise ValueError(f"unknown layout engine: {name!r}")
 
 
@@ -176,4 +208,10 @@ def _fallback_result(secstruct: str, params: OverlapParams) -> LayoutResult:
     return LayoutResult(x, y, "fallback", report, flagged=True, node_r=params.node_r)
 
 
-__all__ = ["layout_guaranteed", "default_engine", "resolve_engine"]
+__all__ = [
+    "layout_guaranteed",
+    "default_engine",
+    "resolve_engine",
+    "EXPECTED_VIENNA_ABI_VERSION",
+    "EXPECTED_PUZZLER_OPTIONS_SIZEOF",
+]

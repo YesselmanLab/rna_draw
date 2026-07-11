@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.10", "pybind11>=3.0"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "rna_draw"
@@ -13,13 +13,24 @@ classifiers = ["Programming Language :: Python :: 3"]
 dependencies = ["matplotlib", "seaborn"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+# pytest-timeout: M5.1's `tests/test_vienna_binding.py` caps individual
+# `@pytest.mark.timeout(...)`-marked cases (a verified upstream RNApuzzler
+# hang on a degenerate empty-loop structure) so a regression fails fast
+# instead of hanging CI.
+dev = ["pytest", "pytest-cov", "pytest-timeout", "ruff", "mypy"]
 
 [project.scripts]
 rna_draw = "rna_draw.draw:main"
 
-[tool.setuptools]
-packages = ["rna_draw", "rna_draw.layout"]
+# M5.1: switched from setuptools to scikit-build-core + CMake so the growing
+# C++ core (this milestone's ViennaRNA bindings, later M6/M7) has a proper
+# CMake/ctest home; see .claude/plans/current-plan.md's build-system decision.
+[tool.scikit-build]
+cmake.source-dir = "."
+# The whole `rna_draw/` tree (including the `layout` subpackage) is packaged
+# as-is; the compiled `_vienna_layout` extension is installed alongside it
+# by CMakeLists.txt's `install(TARGETS ... DESTINATION rna_draw)`.
+wheel.packages = ["rna_draw"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
