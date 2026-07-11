@@ -17,8 +17,47 @@
 
 #define EXTERIOR_Y 100.0
 
-#define epsilonRecognize 14 // font size
-#define epsilonFix 19       // font size + 5 @ resolveIntersections.c
+/*
+ * rna_draw M5 lever (NOT upstream), env-gated, INERT by default (factor
+ * 1.0 == stock 14/19). epsilonRecognize/epsilonFix ARE puzzler's
+ * intersection clearance (each loop/stem box is grown by ~epsilonRecognize
+ * before the overlap test, and epsilonFix is the gap it resolves TO).
+ * KEY FINDING: puzzler resolves to this clearance, but rna_draw's frozen
+ * M2 checker (disks r=10, capsules 7.5) needs MORE, so puzzler declares
+ * near-touches clean that the checker flags. $RNAPUZZLER_CLEARANCE scales
+ * both so puzzler resolves to the checker's standard (trades compactness).
+ */
+#include <stdlib.h>
+
+/*
+ * Per-call clearance override (set by the binding before each layout, via
+ * rnadraw_set_clearance); 0 => fall back to $RNAPUZZLER_CLEARANCE, else 1.
+ * Defined once in RNApuzzler.c so all TUs share it; process-global, and the
+ * layout code is single-threaded per process (naview reentrancy already
+ * forces a process pool), so a plain global is safe.
+ */
+extern double rnadraw_clearance_value;
+
+static double
+_rnadraw_clearance(void)
+{
+  if (rnadraw_clearance_value > 0.0)
+    return rnadraw_clearance_value;
+
+  static double envf = -1.0;
+
+  if (envf < 0.0) {
+    const char  *s = getenv("RNAPUZZLER_CLEARANCE");
+    double      v  = (s != NULL) ? atof(s) : 0.0;
+    envf = (v > 0.0) ? v : 1.0;
+  }
+
+  return envf;
+}
+
+
+#define epsilonRecognize (14.0 * _rnadraw_clearance()) // font size
+#define epsilonFix (19.0 * _rnadraw_clearance())       // font size + 5 @ resolveIntersections.c
 #define EPSILON_0 1.0
 #define EPSILON_3 1e-3
 #define EPSILON_7 1e-7

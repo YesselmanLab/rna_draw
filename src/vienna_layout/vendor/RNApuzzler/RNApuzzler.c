@@ -26,6 +26,19 @@
 
 #define DEBUG   0
 
+/*
+ * rna_draw M5: per-call intersection-clearance override (see
+ * definitions.inc). 0 => use $RNAPUZZLER_CLEARANCE or stock 1.0. The
+ * binding sets this before each layout call and resets it after.
+ */
+double rnadraw_clearance_value = 0.0;
+
+void
+rnadraw_set_clearance(double factor)
+{
+  rnadraw_clearance_value = (factor > 0.0) ? factor : 0.0;
+}
+
 /* ---------------------------------------------------------------------------- */
 PUBLIC vrna_plot_options_puzzler_t *
 vrna_plot_options_puzzler()

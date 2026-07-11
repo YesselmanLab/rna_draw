@@ -89,10 +89,16 @@ class PuzzlerOptsEngine:
     `ViennaPuzzlerEngine` so the checker geometry matches the other engines.
     """
 
-    def __init__(self, allow_flipping: bool, max_config_changes: int) -> None:
-        self.name = f"puzzler_opts(flip={int(allow_flipping)},budget={max_config_changes})"
+    def __init__(
+        self, allow_flipping: bool, max_config_changes: int, clearance: float = 0.0
+    ) -> None:
+        self.name = (
+            f"puzzler_opts(flip={int(allow_flipping)},"
+            f"budget={max_config_changes},clearance={clearance})"
+        )
         self._flip = allow_flipping
         self._budget = max_config_changes
+        self._clearance = clearance
         self._primary = DrawParameters().PRIMARY_SPACE
 
     def layout(self, structure: str):
@@ -101,15 +107,59 @@ class PuzzlerOptsEngine:
             return [], []
         if n < 2:
             return [0.0] * n, [0.0] * n
-        x, y = _vienna_layout.plot_coords_puzzler_opts(structure, self._flip, self._budget)
+        x, y = _vienna_layout.plot_coords_puzzler_opts(
+            structure, self._flip, self._budget, self._clearance
+        )
         return rescale_coords(x, y, self._primary)
 
 
-def _parse_opts(name: str) -> tuple[bool, int]:
-    """`puzzler_opts:flip,budget` e.g. `puzzler_opts:1,1000000`."""
-    spec = name.split(":", 1)[1] if ":" in name else "0,0"
-    flip_s, _, budget_s = spec.partition(",")
-    return bool(int(flip_s or 0)), int(budget_s or 0)
+class EscalatingClearanceEngine:
+    """Per-structure escalating clearance (M5). Lay out at the cheapest
+    clearance first; if the checker still finds overlaps, retry at higher
+    clearance, keeping the fewest-overlap result. Spends expensive high
+    clearance only on structures that need it -- most of the cost of a flat
+    high clearance is on large structures that stay dirty anyway, so
+    escalating cleans the many small/mid dirty structures without paying
+    that cost everywhere.
+    """
+
+    name = "escalating_clearance"
+
+    # Default tops out at 1.5x: clearance >= 2.0 can send puzzler's C
+    # resolver into a very long loop that Python's SIGALRM timeout cannot
+    # interrupt (it only fires between C calls), hanging the whole gate.
+    # Higher levels are opt-in via `escalating_clearance:...` once the
+    # harness gains a hard worker-kill timeout.
+    def __init__(self, levels: tuple[float, ...] = (1.0, 1.5)) -> None:
+        self._levels = levels
+        self._primary = DrawParameters().PRIMARY_SPACE
+
+    def layout(self, structure: str):
+        n = len(structure)
+        if n == 0:
+            return [], []
+        if n < 2:
+            return [0.0] * n, [0.0] * n
+        pair_map = get_pairmap_from_secstruct(structure)
+        best_coords = None
+        best_count = None
+        for level in self._levels:
+            rx, ry = _vienna_layout.plot_coords_puzzler_opts(structure, False, 0, level)
+            x, y = rescale_coords(rx, ry, self._primary)
+            count = _best_witnesses(x, y, pair_map)
+            if best_count is None or count < best_count:
+                best_count, best_coords = count, (x, y)
+            if best_count == 0:
+                break
+        assert best_coords is not None
+        return best_coords
+
+
+def _parse_opts(name: str) -> tuple[bool, int, float]:
+    """`puzzler_opts:flip,budget[,clearance]` e.g. `puzzler_opts:0,0,1.5`."""
+    spec = name.split(":", 1)[1] if ":" in name else "0,0,0"
+    parts = (spec.split(",") + ["0", "0", "0"])[:3]
+    return bool(int(parts[0] or 0)), int(parts[1] or 0), float(parts[2] or 0.0)
 
 
 def build_engine(name: str):
@@ -117,7 +167,12 @@ def build_engine(name: str):
         return _SIMPLE[name]()
     if name == "portfolio":
         return PortfolioEngine()
+    if name == "escalating_clearance":
+        return EscalatingClearanceEngine()
+    if name.startswith("escalating_clearance:"):
+        levels = tuple(float(x) for x in name.split(":", 1)[1].split(","))
+        return EscalatingClearanceEngine(levels)
     if name.startswith("puzzler_opts"):
-        flip, budget = _parse_opts(name)
-        return PuzzlerOptsEngine(flip, budget)
+        flip, budget, clearance = _parse_opts(name)
+        return PuzzlerOptsEngine(flip, budget, clearance)
     raise ValueError(f"unknown gate engine: {name!r}")

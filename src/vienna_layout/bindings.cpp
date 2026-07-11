@@ -203,14 +203,20 @@ struct PuzzlerOptions {
   PuzzlerOptions& operator=(PuzzlerOptions&&) = delete;
 };
 
+extern "C" void rnadraw_set_clearance(double factor);
+
 /// Call `vrna_plot_coords_puzzler(structure, &x, &y, NULL, options)` with an
-/// explicit options struct exposing the two resolver levers:
-/// `allow_flipping` (RNApuzzler's exterior-branch flip heuristic) and
+/// explicit options struct exposing the resolver levers:
+/// `allow_flipping` (RNApuzzler's exterior-branch flip heuristic),
 /// `max_config_changes` (the config-change search budget; <= 0 falls back
 /// to the engine's 25000 default -- see the vendored `RNApuzzler.c` edit
-/// that makes this budget caller-respectable instead of hardcoded).
+/// that makes this budget caller-respectable instead of hardcoded), and
+/// `clearance` (>1 scales puzzler's intersection clearance so it resolves
+/// near-touches that rna_draw's stricter M2 checker flags; <= 0 or 1.0 ==
+/// stock). Clearance is a process-global set for the duration of this call
+/// and reset after (single-threaded per process -- see definitions.inc).
 CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_flipping,
-                                      int max_config_changes) {
+                                      int max_config_changes, double clearance) {
   validate_nonempty(structure);
   validate_well_nested(structure);
   validate_no_empty_loop(structure);
@@ -219,7 +225,9 @@ CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_f
   options.ptr->maximumNumberOfConfigChangesAllowed = max_config_changes;
   MallocBuffer<float> x;
   MallocBuffer<float> y;
+  rnadraw_set_clearance(clearance);
   int n = vrna_plot_coords_puzzler(structure.c_str(), &x.ptr, &y.ptr, nullptr, options.ptr);
+  rnadraw_set_clearance(0.0);
   if (n == 0 || static_cast<size_t>(n) != structure.size()) {
     throw std::runtime_error("vrna_plot_coords_puzzler_opts failed on structure of length " +
                              std::to_string(structure.size()));
@@ -260,11 +268,14 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "Lay out a dot-bracket structure with RNApuzzler; returns (x, y).");
   m.def("plot_coords_puzzler_opts", &plot_coords_puzzler_opts, py::arg("structure"),
         py::arg("allow_flipping") = false, py::arg("max_config_changes") = 0,
-        "Lay out a dot-bracket structure with RNApuzzler, exposing two "
-        "resolver levers: allow_flipping (exterior-branch flip heuristic) "
-        "and max_config_changes (config-change search budget; <= 0 uses "
-        "the engine's default). Defaults match plot_coords_puzzler exactly. "
-        "Returns (x, y).");
+        py::arg("clearance") = 0.0,
+        "Lay out a dot-bracket structure with RNApuzzler, exposing resolver "
+        "levers: allow_flipping (exterior-branch flip heuristic), "
+        "max_config_changes (config-change search budget; <= 0 uses the "
+        "engine's default), and clearance (>1 scales the intersection "
+        "clearance so puzzler resolves near-touches rna_draw's checker "
+        "flags; <= 0 or 1.0 == stock). Defaults match plot_coords_puzzler "
+        "exactly. Returns (x, y).");
   m.def("plot_coords_naview", &plot_coords_naview, py::arg("structure"),
         "Lay out a dot-bracket structure with naview; returns (x, y). "
         "NOT reentrant -- see module docstring.");

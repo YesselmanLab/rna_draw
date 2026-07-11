@@ -238,6 +238,20 @@ class TestPuzzlerOptsResolverLevers:
         assert all(v == v and abs(v) < 1e8 for v in x)  # v == v excludes NaN
         assert all(v == v and abs(v) < 1e8 for v in y)
 
+    def test_clearance_default_matches_stock_and_is_finite_when_raised(self) -> None:
+        # clearance <= 1 is inert (stock); a raised clearance must still
+        # return finite coords of the right length (it grows puzzler's
+        # intersection margin so it resolves near-touches the M2 checker
+        # flags -- see the vendored definitions.inc lever).
+        dirty = DIRTY_STRUCTURES["bpRNA_CRW_9308"]
+        stock_x, stock_y = vienna_layout.plot_coords_puzzler(dirty)
+        same_x, same_y = vienna_layout.plot_coords_puzzler_opts(dirty, clearance=1.0)
+        assert same_x == pytest.approx(stock_x, abs=ATOL_COORD)
+        assert same_y == pytest.approx(stock_y, abs=ATOL_COORD)
+        wide_x, wide_y = vienna_layout.plot_coords_puzzler_opts(dirty, clearance=2.0)
+        assert len(wide_x) == len(dirty)
+        assert all(v == v and abs(v) < 1e8 for v in wide_x + wide_y)
+
     @pytest.mark.parametrize("secstruct", ["(", ")", "((", "))", ")(", "[.]"])
     def test_malformed_input_raises_value_error(self, secstruct: str) -> None:
         with pytest.raises(ValueError):
