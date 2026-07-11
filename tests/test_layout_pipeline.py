@@ -11,6 +11,7 @@ import pytest
 from conftest import random_structure
 
 from rna_draw.layout.base import empty_report, has_empty_loop, is_pseudoknot_free
+from rna_draw.layout.constructive import ConstructiveEngine
 from rna_draw.layout.legacy import LegacyEngine
 from rna_draw.layout.pipeline import (
     _production_available,
@@ -95,9 +96,7 @@ class TestLayoutGuaranteedFallback:
     @pytest.mark.parametrize("engine_factory", [FakeEngine, LegacyEngine])
     @pytest.mark.parametrize("seed", range(15))
     @pytest.mark.parametrize("n", [2, 5, 20, 60])
-    def test_never_silent_overlap_property(
-        self, engine_factory: type, seed: int, n: int
-    ) -> None:
+    def test_never_silent_overlap_property(self, engine_factory: type, seed: int, n: int) -> None:
         # FakeEngine always overlaps (exercises the fallback branch); LegacyEngine
         # yields clean layouts on many small structures (exercises the passed,
         # not-flagged branch). The honest contract must hold for both.
@@ -238,6 +237,9 @@ class TestResolveEngine:
 
     def test_legacy_returns_legacy_engine(self) -> None:
         assert isinstance(resolve_engine("legacy"), LegacyEngine)
+
+    def test_constructive_returns_constructive_engine(self) -> None:
+        assert isinstance(resolve_engine("constructive"), ConstructiveEngine)
 
     def test_bogus_raises_value_error(self) -> None:
         with pytest.raises(ValueError):

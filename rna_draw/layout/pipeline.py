@@ -19,6 +19,7 @@ from .base import (
     is_pseudoknot_free,
     iter_adaptive_params,
 )
+from .constructive import ConstructiveEngine
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
 from .production import production_engine
@@ -85,7 +86,7 @@ def resolve_engine(name: str) -> LayoutEngine | None:
 
     Args:
         name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"production"`,
-            `"vienna_puzzler"`, `"naview"`, `"turtle"`.
+            `"constructive"`, `"vienna_puzzler"`, `"naview"`, `"turtle"`.
 
     Returns:
         `None` for `"auto"` (the pipeline uses `default_engine()`), or a
@@ -106,6 +107,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
         return PuzzlerEngine()
     if name == "production":
         return production_engine()
+    if name == "constructive":
+        return ConstructiveEngine()
     if name in _VIENNA_ENGINE_FACTORIES:
         return _VIENNA_ENGINE_FACTORIES[name]()
     raise ValueError(f"unknown layout engine: {name!r}")

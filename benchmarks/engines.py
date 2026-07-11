@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import rna_draw._vienna_layout as _vienna_layout
 from rna_draw.layout.base import iter_adaptive_params
+from rna_draw.layout.constructive import ConstructiveEngine
 from rna_draw.layout.production import (
     POSTPASS_MAX_WITNESSES,
     EscalatingClearanceEngine,
@@ -137,6 +138,8 @@ __all__ = [
 def build_engine(name: str):
     if name in _SIMPLE:
         return _SIMPLE[name]()
+    if name == "constructive":
+        return ConstructiveEngine()
     if name == "portfolio":
         return PortfolioEngine()
     if name == "escalating_clearance":
