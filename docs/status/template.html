@@ -1,0 +1,290 @@
+<title>RNA Layout: Never-Overlap Rebuild</title>
+<style>
+  :root{
+    --bg:#eef1f0; --surface:#ffffff; --raised:#f7f9f8;
+    --ink:#152420; --muted:#54655f; --faint:#8a9a94;
+    --hair:#dbe3e0; --hair-2:#e8edeb;
+    --accent:#0c8f79; --accent-2:#0a7160; --accent-soft:#e0f0ec;
+    --win:#2f8a4d; --win-soft:#e2f1e6;
+    --bad:#bb5a20; --bad-soft:#f6e7db;
+    --shadow:0 1px 2px rgba(20,40,35,.05),0 8px 24px rgba(20,40,35,.06);
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0d1210; --surface:#151d19; --raised:#1a231f;
+      --ink:#e6efeb; --muted:#96a8a1; --faint:#6d7e78;
+      --hair:#26302c; --hair-2:#202824;
+      --accent:#2fc4ab; --accent-2:#54d6c0; --accent-soft:#13322c;
+      --win:#57c07a; --win-soft:#153322; --bad:#d98040; --bad-soft:#331e11;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f0; --surface:#ffffff; --raised:#f7f9f8; --ink:#152420; --muted:#54655f; --faint:#8a9a94;
+    --hair:#dbe3e0; --hair-2:#e8edeb; --accent:#0c8f79; --accent-2:#0a7160; --accent-soft:#e0f0ec;
+    --win:#2f8a4d; --win-soft:#e2f1e6; --bad:#bb5a20; --bad-soft:#f6e7db;
+    --shadow:0 1px 2px rgba(20,40,35,.05),0 8px 24px rgba(20,40,35,.06);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1210; --surface:#151d19; --raised:#1a231f; --ink:#e6efeb; --muted:#96a8a1; --faint:#6d7e78;
+    --hair:#26302c; --hair-2:#202824; --accent:#2fc4ab; --accent-2:#54d6c0; --accent-soft:#13322c;
+    --win:#57c07a; --win-soft:#153322; --bad:#d98040; --bad-soft:#331e11;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+    -webkit-font-smoothing:antialiased;margin:0}
+  .wrap{max-width:960px;margin:0 auto;padding:clamp(28px,5vw,72px) clamp(18px,4vw,40px) 96px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent-2);font-weight:600}
+  h1{font-family:var(--serif);font-weight:700;font-size:clamp(30px,5.4vw,50px);line-height:1.08;
+    letter-spacing:-.01em;text-wrap:balance;margin:.5rem 0 .5rem}
+  .lede{font-size:clamp(16px,2.2vw,19px);color:var(--muted);max-width:60ch;margin:0}
+  h2{font-family:var(--sans);font-weight:700;font-size:clamp(19px,2.6vw,23px);letter-spacing:-.01em;
+    margin:0 0 4px;text-wrap:balance}
+  .sec{margin-top:clamp(40px,6vw,68px)}
+  .sec-head{border-top:2px solid var(--ink);padding-top:14px;margin-bottom:24px}
+  .sec-head .n{font-family:var(--mono);font-size:12px;color:var(--faint);letter-spacing:.1em}
+  .sec-note{color:var(--muted);font-size:14.5px;margin:2px 0 0;max-width:66ch}
+
+  /* stat tiles */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:30px}
+  .tile{background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:20px 20px 18px;
+    box-shadow:var(--shadow)}
+  .tile .k{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+  .tile .v{font-family:var(--serif);font-weight:700;font-size:clamp(26px,4.4vw,38px);line-height:1.05;
+    margin-top:8px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .tile .v .from{color:var(--faint);font-weight:400}
+  .tile .v em{color:var(--accent);font-style:normal}
+  .tile .sub{font-size:13px;color:var(--muted);margin-top:6px}
+
+  /* milestone progression */
+  .ms{display:flex;flex-direction:column;gap:2px;background:var(--surface);border:1px solid var(--hair);
+    border-radius:14px;padding:8px;box-shadow:var(--shadow)}
+  .ms-row{display:grid;grid-template-columns:1fr;gap:6px;padding:14px 14px;border-radius:9px}
+  .ms-row+.ms-row{border-top:1px solid var(--hair-2)}
+  .ms-name{font-family:var(--mono);font-size:13.5px;font-weight:600}
+  .ms-track{position:relative;height:30px;background:var(--raised);border-radius:7px;overflow:hidden;
+    border:1px solid var(--hair-2)}
+  .ms-fill{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--accent-2),var(--accent));
+    border-radius:7px 0 0 7px;transition:width .9s cubic-bezier(.2,.7,.2,1)}
+  .ms-pct{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);
+    font-size:13px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+  .ms-delta{color:var(--win);margin-left:8px;font-size:11.5px}
+  .ms-meta{display:flex;gap:14px;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .ms-ov{color:var(--faint)}
+
+  /* algorithm stages */
+  .stages{display:flex;flex-direction:column;gap:12px}
+  .stage{display:grid;grid-template-columns:auto 1fr;gap:18px;background:var(--surface);
+    border:1px solid var(--hair);border-radius:14px;padding:20px 22px;box-shadow:var(--shadow)}
+  .stage-n{font-family:var(--serif);font-weight:700;font-size:30px;color:var(--accent);line-height:1;
+    width:38px;height:38px;display:grid;place-items:center;border:1.5px solid var(--accent-soft);
+    border-radius:10px;background:var(--accent-soft)}
+  .stage-b h3{margin:2px 0 6px;font-size:17px;font-weight:700}
+  .stage-b p{margin:0;color:var(--muted);font-size:14.5px;max-width:64ch}
+  .stage-tag{display:inline-block;margin-top:12px;font-family:var(--mono);font-size:11px;
+    letter-spacing:.06em;color:var(--accent-2);background:var(--accent-soft);border-radius:6px;padding:3px 9px}
+
+  /* showcase */
+  .shots{display:flex;flex-direction:column;gap:20px}
+  .shot{margin:0;background:var(--surface);border:1px solid var(--hair);border-radius:14px;
+    padding:16px 16px 18px;box-shadow:var(--shadow)}
+  .shot-cap{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+  .shot-name{font-family:var(--mono);font-size:13.5px;font-weight:600}
+  .shot-len{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .shot-pair{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}
+  .shot-cell{background:var(--raised);border:1px solid var(--hair-2);border-radius:10px;padding:10px;
+    display:flex;flex-direction:column;gap:8px}
+  .shot-cell img{width:100%;height:auto;max-height:260px;object-fit:contain;border-radius:6px;
+    background:#fff;display:block}
+  .shot-tag{font-family:var(--mono);font-size:11.5px;font-weight:600;text-align:center;
+    border-radius:6px;padding:4px 8px;letter-spacing:.02em}
+  .tag-bad{background:var(--bad-soft);color:var(--bad)}
+  .tag-good{background:var(--win-soft);color:var(--win)}
+  .shot-arrow{font-size:22px;color:var(--faint);font-family:var(--mono)}
+
+  /* attempts table */
+  .tbl-scroll{overflow-x:auto;border:1px solid var(--hair);border-radius:14px;background:var(--surface);
+    box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;min-width:640px}
+  thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);text-align:left;padding:14px 16px;border-bottom:1.5px solid var(--hair);font-weight:600}
+  tbody td{padding:16px;border-bottom:1px solid var(--hair-2);vertical-align:top;font-size:14px}
+  tbody tr:last-child td{border-bottom:none}
+  .a-num{font-family:var(--mono);color:var(--faint);font-size:12.5px;font-variant-numeric:tabular-nums;width:42px}
+  .a-lever-t{font-weight:600;margin-bottom:4px}
+  .a-hyp{color:var(--muted);font-size:13px;line-height:1.5}
+  .a-res{color:var(--ink);max-width:34ch}
+  .a-verd{width:96px}
+  .verd{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.03em;padding:4px 9px;
+    border-radius:20px;white-space:nowrap;display:inline-block}
+  .v-bad{background:var(--bad-soft);color:var(--bad)}
+  .v-win{background:var(--win-soft);color:var(--win)}
+  .v-big{background:var(--accent-soft);color:var(--accent-2)}
+  .v-ship{background:var(--accent);color:#fff}
+  :root[data-theme="dark"] .v-ship,@media (prefers-color-scheme:dark){.v-ship{color:#08201c}}
+
+  /* frontier */
+  .front{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .fcard{background:var(--surface);border:1px solid var(--hair);border-radius:14px;padding:18px 20px;
+    box-shadow:var(--shadow)}
+  .fcard h4{margin:0 0 6px;font-size:15px;font-weight:700}
+  .fcard p{margin:0;color:var(--muted);font-size:13.5px}
+  .fcard .stat{font-family:var(--mono);font-size:12px;color:var(--accent-2);margin-top:10px;display:block}
+
+  footer{margin-top:56px;border-top:1px solid var(--hair);padding-top:22px;
+    font-family:var(--mono);font-size:12px;color:var(--muted);line-height:1.9}
+  footer b{color:var(--ink);font-weight:600}
+  .foot-grid{display:flex;flex-wrap:wrap;gap:8px 26px}
+
+  @media (max-width:680px){
+    .stats{grid-template-columns:1fr}
+    .front{grid-template-columns:1fr}
+    .shot-pair{grid-template-columns:1fr}
+    .shot-arrow{transform:rotate(90deg);justify-self:center}
+  }
+  @media (prefers-reduced-motion:reduce){.ms-fill{transition:none}}
+
+  /* build-trend chart */
+  .chart-card{background:var(--surface);border:1px solid var(--hair);border-radius:14px;
+    padding:20px 18px 14px;box-shadow:var(--shadow);margin-bottom:22px}
+  .chart-legend{display:flex;gap:20px;flex-wrap:wrap;margin:0 4px 6px;font-family:var(--mono);font-size:12px}
+  .chart-legend span{display:inline-flex;align-items:center;gap:7px;color:var(--muted)}
+  .lg-swatch{width:22px;height:3px;border-radius:2px;display:inline-block}
+  .lg-ov{background:var(--accent)}
+  .lg-cl{background:var(--win);height:0;border-top:2px dashed var(--win)}
+  .chart svg{width:100%;height:auto;display:block;overflow:visible}
+  .chart .grid{stroke:var(--hair-2);stroke-width:1}
+  .chart .axis{stroke:var(--hair);stroke-width:1.5}
+  .chart .ytick{fill:var(--faint);font-family:var(--mono);font-size:11px}
+  .chart .ytick-ov{fill:var(--accent-2)}
+  .chart .ytick-cl{fill:var(--win)}
+  .chart .xtick{fill:var(--muted);font-family:var(--mono);font-size:11px;font-weight:600}
+  .chart .area{fill:var(--accent);opacity:.12}
+  .chart .line-ov{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+  .chart .line-cl{fill:none;stroke:var(--win);stroke-width:2;stroke-dasharray:5 4;stroke-linejoin:round}
+  .chart .dot-ov{fill:var(--surface);stroke:var(--accent);stroke-width:2.5}
+  .chart .dot-cl{fill:var(--win)}
+  .chart .val{fill:var(--accent-2);font-family:var(--mono);font-size:11px;font-weight:700;
+    font-variant-numeric:tabular-nums}
+  .chart .axlabel{fill:var(--faint);font-family:var(--mono);font-size:10.5px;letter-spacing:.05em}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">rna_draw · layout engine · status report</div>
+    <h1>Making RNA structures never overlap</h1>
+    <p class="lede">The old layout put nucleotides on top of each other. Here is the rebuild — every
+      lever tried, what it taught us, and the algorithm now shipping as the default. Measured on a frozen
+      set of the 450 hardest large structures from the bpRNA corpus.</p>
+
+    <div class="stats">
+      <div class="tile">
+        <div class="k">Clean conventional layouts</div>
+        <div class="v"><span class="from">30%</span> → <em>88%</em></div>
+        <div class="sub">of the hardest 450 structures, overlap-free in the classic look</div>
+      </div>
+      <div class="tile">
+        <div class="k">Total overlaps</div>
+        <div class="v"><em>−68%</em></div>
+        <div class="sub">2,943 → 945 across the set</div>
+      </div>
+      <div class="tile">
+        <div class="k">Silent overlaps</div>
+        <div class="v"><em>0</em></div>
+        <div class="sub">every output is checker-clean or explicitly flagged</div>
+      </div>
+    </div>
+  </header>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">01 — the climb</span>
+      <h2>Overlaps per build, and the clean rate it bought</h2>
+      <p class="sec-note">Total overlaps across the 450 hard structures, build by build (this updates as new
+        builds land). Clean rate is the fraction drawn overlap-free in the conventional style; the deep-rRNA
+        remainder gets a guaranteed-clean fallback in production.</p>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-legend">
+        <span><i class="lg-swatch lg-ov"></i>total overlaps (left axis)</span>
+        <span><i class="lg-swatch lg-cl"></i>clean rate (right axis)</span>
+      </div>
+      <div class="chart"><!--CHART--></div>
+    </div>
+
+    <div class="ms"><!--MILES--></div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">02 — current best algorithm</span>
+      <h2>What ships as the default engine today</h2>
+      <p class="sec-note">A three-stage pipeline behind rna_draw's checker-gated <code>layout_guaranteed</code>.
+        It reuses ViennaRNA's RNApuzzler (vendored, in-process) and never trusts it blindly — an independent
+        overlap checker is the arbiter at every step.</p>
+    </div>
+    <div class="stages"><!--STAGES--></div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">03 — before / after</span>
+      <h2>Same structures, stock puzzler vs. the new default</h2>
+      <p class="sec-note">Base-pair connectors drawn in the accent colour. Left: what stock RNApuzzler produced,
+        with the checker's overlap count. Right: the production engine, overlap-free — at essentially the same
+        footprint (median bounding box 1.00× stock).</p>
+    </div>
+    <div class="shots"><!--SHOW--></div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">04 — every attempt</span>
+      <h2>The levers, including the ones that failed</h2>
+      <p class="sec-note">The wins only made sense after the dead ends: they proved the overlaps were not a
+        resolver-power problem but a clearance-model mismatch, then a small-loop-crowding problem — which is what
+        the two diagnoses in bold below unlocked.</p>
+    </div>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>#</th><th>Lever &amp; hypothesis</th><th>Result</th><th>Verdict</th></tr></thead>
+        <tbody><!--ATT--></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-head"><span class="n">05 — what's left</span>
+      <h2>The remaining frontier</h2>
+      <p class="sec-note">The core goal is met: rna_draw's default never draws a silent overlap. What remains is
+        making the hardest tail <em>prettier</em>, not correct.</p>
+    </div>
+    <div class="front">
+      <div class="fcard">
+        <h4>The deep-rRNA tail</h4>
+        <p>~37 giant structures mix local crowding with distant branch collisions that local rigid moves can't
+          coordinate away. They get the guaranteed-clean circle fallback today.</p>
+        <span class="stat">next: constructive envelope engine → compact clean layouts by construction</span>
+      </div>
+      <div class="fcard">
+        <h4>Empty-loop inputs</h4>
+        <p>14 structures contain a degenerate <code>()</code> loop that hangs RNApuzzler unconditionally. They are
+          guarded and routed to the safe fallback — correct, but not conventional.</p>
+        <span class="stat">next: handle the zero-length loop in the vendored resolver</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="foot-grid">
+      <span><b>branch</b> modernize-nonoverlap-layout</span>
+      <span><b>tests</b> 596 passing · 95% coverage</span>
+      <span><b>engine</b> in-process pybind11 + editable vendored RNApuzzler</span>
+      <span><b>checker</b> independent, frozen — the arbiter</span>
+    </div>
+  </footer>
+</div>
