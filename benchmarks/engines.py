@@ -8,6 +8,7 @@ against the same frozen structure set and checker.
 from __future__ import annotations
 
 import rna_draw._vienna_layout as _vienna_layout
+from rna_draw.layout.postpass import POSTPASS_PARAMS, remove_overlaps
 from rna_draw.layout.vienna import (
     ViennaNaviewEngine,
     ViennaPuzzlerEngine,
@@ -16,6 +17,13 @@ from rna_draw.layout.vienna import (
 from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
+
+# Cap on how dirty a base layout may be, *measured at POSTPASS_PARAMS's floor
+# radius* (see that constant's docstring), before the post-pass even attempts
+# it. Deep (>6-overlap) rRNA-scale structures are out of scope (constructive
+# engine territory, not local rigid moves) and would otherwise burn many
+# candidate rechecks for no realistic payoff; see the post-pass plan's R1.
+POSTPASS_MAX_WITNESSES = 6
 
 _SIMPLE = {
     "puzzler": ViennaPuzzlerEngine,
@@ -155,6 +163,44 @@ class EscalatingClearanceEngine:
         return best_coords
 
 
+class PostPassEngine:
+    """Wrap a base engine with the rigid local post-pass (M5.2).
+
+    Lays out with `base`, then -- only when the result is dirty and not
+    too dirty to be worth it (`report_before.num_overlaps <=
+    POSTPASS_MAX_WITNESSES`; see that constant's docstring) -- hands the
+    coordinates to `rna_draw.layout.postpass.remove_overlaps`, which is
+    guaranteed to never increase the overlap count. Deep dirty structures
+    (rRNA-scale, >`POSTPASS_MAX_WITNESSES` overlaps) short-circuit straight
+    to the base coordinates: they are out of scope for local rigid moves
+    and would only spend candidate rechecks for no realistic payoff.
+
+    The gate/skip decision is made at `POSTPASS_PARAMS`'s floor radius, the
+    same radius the pass's own acceptance checks use (`PostPassConfig`'s
+    default), because the hard gate scores a structure by the minimum
+    overlap count over its adaptive radius range -- checking at the
+    renderer's default radius instead would see a near-clean structure as
+    far dirtier than the gate does and wrongly skip it (see
+    `rna_draw.layout.postpass`'s module docstring).
+    """
+
+    name = "postpass"
+
+    def __init__(self, base=None) -> None:
+        self._base = base if base is not None else EscalatingClearanceEngine()
+
+    def layout(self, structure: str):
+        x, y = self._base.layout(structure)
+        if len(structure) < 2:
+            return x, y
+        pair_map = get_pairmap_from_secstruct(structure)
+        report_before = check_overlaps(x, y, pair_map, POSTPASS_PARAMS)
+        if report_before.passed or report_before.num_overlaps > POSTPASS_MAX_WITNESSES:
+            return x, y
+        result = remove_overlaps(x, y, pair_map)
+        return result.x, result.y
+
+
 def _parse_opts(name: str) -> tuple[bool, int, float]:
     """`puzzler_opts:flip,budget[,clearance]` e.g. `puzzler_opts:0,0,1.5`."""
     spec = name.split(":", 1)[1] if ":" in name else "0,0,0"
@@ -172,6 +218,11 @@ def build_engine(name: str):
     if name.startswith("escalating_clearance:"):
         levels = tuple(float(x) for x in name.split(":", 1)[1].split(","))
         return EscalatingClearanceEngine(levels)
+    if name == "postpass":
+        return PostPassEngine()
+    if name.startswith("postpass:"):
+        levels = tuple(float(x) for x in name.split(":", 1)[1].split(","))
+        return PostPassEngine(base=EscalatingClearanceEngine(levels))
     if name.startswith("puzzler_opts"):
         flip, budget, clearance = _parse_opts(name)
         return PuzzlerOptsEngine(flip, budget, clearance)
