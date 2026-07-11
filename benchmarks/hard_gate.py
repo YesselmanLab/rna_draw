@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import signal
-from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -156,37 +156,24 @@ def _min_witnesses(x, y, pair_map) -> tuple[int, float]:
     return (best_count if best_count is not None else 0), best_radius
 
 
-# Per-worker engine, built once in the initializer (not per structure).
-_ENGINE = None
-_ENGINE_NAME = ""
+def _run_one_in_proc(engine_name: str, struct: str, q) -> None:
+    """Child-process body: lay out one structure, put (witnesses, radius).
 
-
-def _init_worker(engine_name: str) -> None:
-    global _ENGINE, _ENGINE_NAME
+    Runs in its own process so the parent can HARD-KILL it on timeout --
+    puzzler's C resolver can enter a long loop that a Python SIGALRM cannot
+    interrupt (the signal only fires between C calls), so the previous
+    in-worker alarm approach let one structure stall the whole run. Here a
+    stuck child is `terminate()`d by the parent and recorded as an error.
+    """
     from benchmarks.engines import build_engine
 
-    _ENGINE = build_engine(engine_name)
-    _ENGINE_NAME = engine_name
-    signal.signal(signal.SIGALRM, _raise_timeout)
-
-
-def _raise_timeout(signum, frame):
-    raise TimeoutError
-
-
-def _measure_one(item: dict) -> StructResult:
-    struct = item["structure"]
-    n = len(struct)
-    signal.alarm(PER_STRUCT_TIMEOUT_S)
     try:
-        x, y = _ENGINE.layout(struct)
-        pair_map = get_pairmap_from_secstruct(struct)
-        witnesses, best_radius = _min_witnesses(x, y, pair_map)
+        engine = build_engine(engine_name)
+        x, y = engine.layout(struct)
+        witnesses, best_radius = _min_witnesses(x, y, get_pairmap_from_secstruct(struct))
+        q.put((witnesses, best_radius))
     except Exception:
-        return StructResult(item["name"], item["bucket"], n, -1, 0.0, _ENGINE_NAME)
-    finally:
-        signal.alarm(0)
-    return StructResult(item["name"], item["bucket"], n, witnesses, best_radius, _ENGINE_NAME)
+        q.put((-1, 0.0))
 
 
 def build_worst_set(from_result: Path, n: int) -> None:
@@ -207,17 +194,61 @@ def build_worst_set(from_result: Path, n: int) -> None:
 
 
 def run_gate(engine_name: str, workers: int, set_path: Path) -> None:
-    items = json.loads(set_path.read_text())
-    results: list[StructResult] = []
-    with ProcessPoolExecutor(
-        max_workers=workers, initializer=_init_worker, initargs=(engine_name,)
-    ) as pool:
-        for i, res in enumerate(pool.map(_measure_one, items, chunksize=4), 1):
-            results.append(res)
-            if i % 50 == 0:
-                print(f"  {i}/{len(items)}")
+    """Measure every structure in `set_path` with a HARD per-structure kill.
 
-    _report(engine_name, results)
+    One process per structure, at most `workers` concurrent. A child still
+    running after `PER_STRUCT_TIMEOUT_S` is terminated and recorded as an
+    error -- the only way to bound puzzler's uninterruptible C hangs at high
+    clearance. Process-based (never threads) also satisfies naview's
+    non-reentrancy.
+    """
+    items = json.loads(set_path.read_text())
+    ctx = mp.get_context("fork")
+    results: list[StructResult | None] = [None] * len(items)
+    active: dict = {}  # proc -> (index, queue, deadline)
+    next_i = 0
+    done = 0
+
+    while next_i < len(items) or active:
+        while len(active) < workers and next_i < len(items):
+            q = ctx.Queue()
+            proc = ctx.Process(
+                target=_run_one_in_proc, args=(engine_name, items[next_i]["structure"], q)
+            )
+            proc.start()
+            active[proc] = (next_i, q, time.monotonic() + PER_STRUCT_TIMEOUT_S)
+            next_i += 1
+
+        for proc in list(active):
+            idx, q, deadline = active[proc]
+            item = items[idx]
+            n = len(item["structure"])
+            finished = not proc.is_alive()
+            timed_out = time.monotonic() > deadline
+            if not finished and not timed_out:
+                continue
+            if finished:
+                proc.join()
+                try:
+                    witnesses, best_radius = q.get_nowait()
+                except Exception:
+                    witnesses, best_radius = -1, 0.0
+            else:  # hard-kill the stuck child
+                proc.terminate()
+                proc.join()
+                witnesses, best_radius = -1, 0.0
+            results[idx] = StructResult(
+                item["name"], item["bucket"], n, witnesses, best_radius, engine_name
+            )
+            del active[proc]
+            done += 1
+            if done % 50 == 0:
+                print(f"  {done}/{len(items)}")
+
+        if active:
+            time.sleep(0.02)
+
+    _report(engine_name, [r for r in results if r is not None])
 
 
 def _report(engine_name: str, results: list[StructResult]) -> None:
