@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.15...3.27)
 # configures cleanly for a standalone `cmake -B build && cmake --build
 # build && ctest --test-dir build` invocation, not only through
 # scikit-build-core's `pip install -e .`.
-project(rna_draw LANGUAGES CXX)
+project(rna_draw LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,11 +27,39 @@ if(NOT DEFINED ENV{CONDA_PREFIX})
 endif()
 set(VIENNA_PREFIX "$ENV{CONDA_PREFIX}")
 
-pybind11_add_module(_vienna_layout src/vienna_layout/bindings.cpp)
+# Vendored (editable) copy of RNApuzzler/RNAturtle -- see
+# src/vienna_layout/vendor/README.md. Compiled directly into this target
+# (hybrid build) instead of relying on the prebuilt libRNA.a for these two
+# algorithms, so their source can be edited in-tree. Static archives only
+# pull an object for a symbol that is still undefined at link time, so
+# these compiled-in definitions of vrna_plot_coords_puzzler[_pt],
+# vrna_plot_options_puzzler[_free], and vrna_plot_coords_turtle[_pt]
+# pre-empt (and are never overridden by) the stock objects in libRNA.a --
+# libRNA.a is still linked below, but only for symbols this vendored code
+# does not define.
+set(VENDOR_PUZZLER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vienna_layout/vendor/RNApuzzler")
+set(VENDOR_PUZZLER_SOURCES
+  "${VENDOR_PUZZLER_DIR}/RNApuzzler.c"
+  "${VENDOR_PUZZLER_DIR}/RNAturtle.c"
+)
+
+pybind11_add_module(_vienna_layout
+  src/vienna_layout/bindings.cpp
+  ${VENDOR_PUZZLER_SOURCES}
+)
 
 target_include_directories(_vienna_layout PRIVATE
   "${VIENNA_PREFIX}/include"
   "${VIENNA_PREFIX}/include/ViennaRNA"
+  "${VENDOR_PUZZLER_DIR}"
+)
+
+# Vendored third-party C: relaxed warnings, and excluded from this
+# project's clang-format/clang-tidy passes (see vendor/README.md) -- do
+# not reformat it to this repo's C++ style.
+set_source_files_properties(${VENDOR_PUZZLER_SOURCES} PROPERTIES
+  LANGUAGE C
+  COMPILE_OPTIONS "-w"
 )
 
 # The archive was built without LTO (see RNAlib2.pc: `-fno-lto -Wl,-fno-lto`);

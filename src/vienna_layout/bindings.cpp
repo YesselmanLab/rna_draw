@@ -189,6 +189,44 @@ CoordVectors plot_coords_turtle(const std::string& structure) {
   return to_vectors(x, y, n);
 }
 
+/// RAII owner for a `vrna_plot_options_puzzler_t*` allocated by
+/// `vrna_plot_options_puzzler()`, freed via `vrna_plot_options_puzzler_free`.
+struct PuzzlerOptions {
+  vrna_plot_options_puzzler_t* ptr = vrna_plot_options_puzzler();
+
+  ~PuzzlerOptions() { vrna_plot_options_puzzler_free(ptr); }
+  PuzzlerOptions() = default;
+  PuzzlerOptions(const PuzzlerOptions&) = delete;
+  PuzzlerOptions& operator=(const PuzzlerOptions&) = delete;
+  // Scope-local RAII guard only -- see MallocBuffer's rationale above.
+  PuzzlerOptions(PuzzlerOptions&&) = delete;
+  PuzzlerOptions& operator=(PuzzlerOptions&&) = delete;
+};
+
+/// Call `vrna_plot_coords_puzzler(structure, &x, &y, NULL, options)` with an
+/// explicit options struct exposing the two resolver levers:
+/// `allow_flipping` (RNApuzzler's exterior-branch flip heuristic) and
+/// `max_config_changes` (the config-change search budget; <= 0 falls back
+/// to the engine's 25000 default -- see the vendored `RNApuzzler.c` edit
+/// that makes this budget caller-respectable instead of hardcoded).
+CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_flipping,
+                                      int max_config_changes) {
+  validate_nonempty(structure);
+  validate_well_nested(structure);
+  validate_no_empty_loop(structure);
+  PuzzlerOptions options;
+  options.ptr->allowFlipping = allow_flipping ? 1 : 0;
+  options.ptr->maximumNumberOfConfigChangesAllowed = max_config_changes;
+  MallocBuffer<float> x;
+  MallocBuffer<float> y;
+  int n = vrna_plot_coords_puzzler(structure.c_str(), &x.ptr, &y.ptr, nullptr, options.ptr);
+  if (n == 0 || static_cast<size_t>(n) != structure.size()) {
+    throw std::runtime_error("vrna_plot_coords_puzzler_opts failed on structure of length " +
+                             std::to_string(structure.size()));
+  }
+  return to_vectors(x, y, n);
+}
+
 /// The compiled-against ViennaRNA version, as a string (e.g. `"2.7.0"`).
 std::string version() { return VRNA_VERSION; }
 
@@ -220,6 +258,13 @@ PYBIND11_MODULE(_vienna_layout, m) {
 
   m.def("plot_coords_puzzler", &plot_coords_puzzler, py::arg("structure"),
         "Lay out a dot-bracket structure with RNApuzzler; returns (x, y).");
+  m.def("plot_coords_puzzler_opts", &plot_coords_puzzler_opts, py::arg("structure"),
+        py::arg("allow_flipping") = false, py::arg("max_config_changes") = 0,
+        "Lay out a dot-bracket structure with RNApuzzler, exposing two "
+        "resolver levers: allow_flipping (exterior-branch flip heuristic) "
+        "and max_config_changes (config-change search budget; <= 0 uses "
+        "the engine's default). Defaults match plot_coords_puzzler exactly. "
+        "Returns (x, y).");
   m.def("plot_coords_naview", &plot_coords_naview, py::arg("structure"),
         "Lay out a dot-bracket structure with naview; returns (x, y). "
         "NOT reentrant -- see module docstring.");

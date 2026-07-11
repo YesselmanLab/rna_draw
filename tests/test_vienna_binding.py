@@ -198,6 +198,60 @@ class TestEmptyLoopGuard:
         assert result.engine_name == "naview"
 
 
+class TestPuzzlerOptsResolverLevers:
+    """`plot_coords_puzzler_opts` exposes two resolver levers on top of the
+    vendored (editable) RNApuzzler: `allow_flipping` and
+    `max_config_changes`. Its defaults must reproduce `plot_coords_puzzler`
+    exactly -- see the vendored `RNApuzzler.c` edit that makes the
+    25000-change budget caller-respectable (only a fallback for <= 0)
+    instead of hardcoded, which this binding's default (0) still triggers.
+    """
+
+    STRUCTURES = [
+        CLEAN_STRUCTURES["hairpin"],
+        CLEAN_STRUCTURES["two_helix"],
+        CLEAN_STRUCTURES["curated_puzzler_clean"],
+        DIRTY_STRUCTURES["bpRNA_CRW_9308"],
+    ]
+
+    @pytest.mark.parametrize("secstruct", STRUCTURES)
+    def test_defaults_match_plot_coords_puzzler(self, secstruct: str) -> None:
+        want_x, want_y = vienna_layout.plot_coords_puzzler(secstruct)
+        got_x, got_y = vienna_layout.plot_coords_puzzler_opts(secstruct)
+        assert got_x == pytest.approx(want_x, abs=ATOL_COORD)
+        assert got_y == pytest.approx(want_y, abs=ATOL_COORD)
+
+    def test_large_budget_does_not_change_small_clean_structure(self) -> None:
+        secstruct = CLEAN_STRUCTURES["hairpin"]
+        default_x, default_y = vienna_layout.plot_coords_puzzler_opts(secstruct)
+        big_budget_x, big_budget_y = vienna_layout.plot_coords_puzzler_opts(
+            secstruct, max_config_changes=1_000_000
+        )
+        assert big_budget_x == pytest.approx(default_x, abs=ATOL_COORD)
+        assert big_budget_y == pytest.approx(default_y, abs=ATOL_COORD)
+
+    def test_allow_flipping_returns_valid_finite_coords(self) -> None:
+        secstruct = CLEAN_STRUCTURES["curated_puzzler_clean"]
+        x, y = vienna_layout.plot_coords_puzzler_opts(secstruct, allow_flipping=True)
+        assert len(x) == len(secstruct)
+        assert len(y) == len(secstruct)
+        assert all(v == v and abs(v) < 1e8 for v in x)  # v == v excludes NaN
+        assert all(v == v and abs(v) < 1e8 for v in y)
+
+    @pytest.mark.parametrize("secstruct", ["(", ")", "((", "))", ")(", "[.]"])
+    def test_malformed_input_raises_value_error(self, secstruct: str) -> None:
+        with pytest.raises(ValueError):
+            vienna_layout.plot_coords_puzzler_opts(secstruct)
+
+    def test_empty_structure_raises_runtime_error(self) -> None:
+        with pytest.raises(RuntimeError):
+            vienna_layout.plot_coords_puzzler_opts("")
+
+    def test_empty_loop_raises_value_error_not_hangs(self) -> None:
+        with pytest.raises(ValueError, match="empty loop"):
+            vienna_layout.plot_coords_puzzler_opts("().()")
+
+
 class TestMalformedInputEngineLevel:
     """The `LayoutEngine` wrappers guard with `is_pseudoknot_free` first."""
 
