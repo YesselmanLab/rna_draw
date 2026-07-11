@@ -89,9 +89,7 @@ def _rnaplot_version() -> str:
     """The `RNAplot --version` string, or `""` if the binary is absent."""
     if shutil.which("RNAplot") is None:
         return ""
-    result = subprocess.run(
-        ["RNAplot", "--version"], capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["RNAplot", "--version"], capture_output=True, text=True, check=True)
     return result.stdout.strip()
 
 
@@ -171,9 +169,7 @@ class TestEmptyLoopGuard:
         assert len(y) == 5
 
     @pytest.mark.timeout(5)
-    @pytest.mark.parametrize(
-        "engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine]
-    )
+    @pytest.mark.parametrize("engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine])
     def test_engine_layout_raises_engine_error(self, engine_factory: type) -> None:
         # `is_pseudoknot_free` (well-nested check) does not reject "().()"
         # -- it IS well-nested -- so this exercises the binding's
@@ -183,13 +179,17 @@ class TestEmptyLoopGuard:
             engine_factory().layout("().()")
 
     @pytest.mark.timeout(5)
-    @pytest.mark.parametrize(
-        "engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine]
-    )
+    @pytest.mark.parametrize("engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine])
     def test_pipeline_falls_back_instead_of_hanging(self, engine_factory: type) -> None:
+        # The primary engine raises `EngineError` on this empty-hairpin-loop
+        # input, so the pipeline falls through the chain -- landing on the
+        # compact `ConstructiveEngine` tier (well within its scope for a
+        # structure this small), not all the way to the circle. Either way
+        # the honest contract holds: flagged, checker-clean, never a hang.
         result = layout_guaranteed("().()", engine=engine_factory())
         assert result.flagged is True
-        assert result.engine_name == "fallback"
+        assert result.engine_name == "constructive"
+        assert result.report.passed is True
 
     @pytest.mark.timeout(5)
     def test_naview_pipeline_succeeds_directly(self) -> None:

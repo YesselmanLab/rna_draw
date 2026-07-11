@@ -121,6 +121,16 @@ def layout_guaranteed(
 ) -> LayoutResult:
     """Lay out `secstruct`, guaranteeing a checker-clean or flagged result.
 
+    Three-tier chain, each tier checker-gated (never a silent overlap):
+    1. `engine` (the compact production primary by default) -- if
+       checker-clean, `flagged=False`.
+    2. `ConstructiveEngine` -- a compact, conventional-looking layout that
+       is clean by construction and checker-verified again here; tried
+       only because tier 1 was not clean, so it is reported `flagged=True`
+       even though `report.passed` is also `True`.
+    3. The circle `SafeFallbackEngine` -- the guaranteed-terminating last
+       resort, `flagged=True`.
+
     Args:
         secstruct: Dot-bracket secondary structure.
         engine: Engine to try first; `None` uses `default_engine()`.
@@ -128,9 +138,10 @@ def layout_guaranteed(
             `OverlapParams()`.
 
     Returns:
-        A `LayoutResult` that is either checker-clean (`flagged is False`)
-        or the safe fallback (`flagged is True`) -- never a silent
-        overlap.
+        A `LayoutResult` that is either the checker-clean primary
+        (`flagged is False`) or a checker-verified fallback tier
+        (`flagged is True`, `engine_name` is `"constructive"` or
+        `"fallback"`) -- never a silent overlap.
     """
     params = params or OverlapParams()
     if len(secstruct) == 0:
@@ -140,6 +151,9 @@ def layout_guaranteed(
     primary = _try_primary(engine, secstruct, params)
     if primary is not None:
         return primary
+    constructive = _try_constructive_fallback(secstruct, params)
+    if constructive is not None:
+        return constructive
     return _fallback_result(secstruct, params)
 
 
@@ -205,8 +219,41 @@ def _largest_clean_node_r(
     return None
 
 
+def _try_constructive_fallback(secstruct: str, params: OverlapParams) -> LayoutResult | None:
+    """Attempt the compact `ConstructiveEngine` as the middle fallback tier.
+
+    Checker-gated exactly like `_try_primary` (same pseudoknot guard and
+    `_largest_clean_node_r` search) -- the only difference is that the
+    result, even though checker-clean, is honestly reported as a fallback
+    (`flagged=True`): it is only ever tried because the compact production
+    primary was NOT checker-clean, so it is more compact and conventional
+    than the circle `SafeFallbackEngine`, but it is still not the primary.
+
+    Args:
+        secstruct: Dot-bracket secondary structure.
+        params: Target geometry to search for a clean radius within.
+
+    Returns:
+        A `flagged=True` `LayoutResult` with `engine_name="constructive"`,
+        or `None` if the constructive engine also can't produce a
+        checker-clean layout (a pseudoknot, `EngineError` -- e.g. over its
+        node-count guard -- or no clean radius in range) -- the pipeline
+        should fall through to the circle `SafeFallbackEngine`.
+    """
+    result = _try_primary(ConstructiveEngine(), secstruct, params)
+    if result is None:
+        return None
+    return LayoutResult(
+        result.x, result.y, result.engine_name, result.report, flagged=True, node_r=result.node_r
+    )
+
+
 def _fallback_result(secstruct: str, params: OverlapParams) -> LayoutResult:
-    """Lay out `secstruct` with the always-clean `SafeFallbackEngine`.
+    """Lay out `secstruct` with the always-clean `SafeFallbackEngine` (last resort).
+
+    Only reached once both the primary engine AND `ConstructiveEngine` have
+    failed to produce a checker-clean layout (`_try_constructive_fallback`
+    returned `None`) -- the final, guaranteed-terminating backstop.
 
     Args:
         secstruct: Dot-bracket secondary structure.

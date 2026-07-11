@@ -68,12 +68,13 @@ class LayoutResult:
         x: Nucleotide x-coordinates.
         y: Nucleotide y-coordinates.
         engine_name: Which engine actually produced `x`/`y` (`"legacy"`,
-            `"puzzler"`, `"fallback"`, or `"empty"` for a zero-length
-            structure).
+            `"puzzler"`, `"production"`, `"constructive"`, `"fallback"`, or
+            `"empty"` for a zero-length structure).
         report: The overlap report computed at `node_r`.
-        flagged: True if the result is the safe fallback (or an
-            empty/pseudoknot special case) rather than a checker-clean
-            primary-engine layout.
+        flagged: True if the result is a fallback tier (the compact but
+            non-primary `ConstructiveEngine`, the circle `SafeFallbackEngine`,
+            or an empty/pseudoknot special case) rather than the checker-clean
+            primary engine's own layout.
         node_r: The disk radius the report was computed at -- the renderer
             MUST draw disks at this same radius (gate radius == render
             radius), so a clean report can never describe a differently

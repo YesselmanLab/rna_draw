@@ -87,7 +87,25 @@ class TestLayoutGuaranteedLegacyClean:
 
 
 class TestLayoutGuaranteedFallback:
-    def test_bad_fake_engine_falls_back_and_stays_clean(self) -> None:
+    def test_bad_fake_engine_falls_back_to_constructive_clean(self) -> None:
+        # A small, well-formed hairpin: the primary FakeEngine dumps every nt
+        # on the origin (always dirty), but ConstructiveEngine is well within
+        # its scope for a structure this small, so the pipeline should land
+        # on the middle, compact-conventional fallback tier -- not the circle.
+        result = layout_guaranteed("((((....))))", engine=FakeEngine())
+        assert result.flagged is True
+        assert result.engine_name == "constructive"
+        assert result.report.passed is True
+
+    def test_bad_engines_at_every_tier_fall_back_to_circle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Force BOTH the primary and the constructive tier to fail, so the
+        # chain must reach the final, guaranteed-clean circle backstop.
+        monkeypatch.setattr(
+            "rna_draw.layout.pipeline.ConstructiveEngine",
+            lambda: FakeEngine(),
+        )
         result = layout_guaranteed("((((....))))", engine=FakeEngine())
         assert result.flagged is True
         assert result.engine_name == "fallback"
@@ -97,9 +115,11 @@ class TestLayoutGuaranteedFallback:
     @pytest.mark.parametrize("seed", range(15))
     @pytest.mark.parametrize("n", [2, 5, 20, 60])
     def test_never_silent_overlap_property(self, engine_factory: type, seed: int, n: int) -> None:
-        # FakeEngine always overlaps (exercises the fallback branch); LegacyEngine
-        # yields clean layouts on many small structures (exercises the passed,
-        # not-flagged branch). The honest contract must hold for both.
+        # FakeEngine always overlaps at the primary tier (exercises the
+        # fallback chain -- constructive or circle, whichever goes clean
+        # first); LegacyEngine yields clean layouts on many small structures
+        # (exercises the passed, not-flagged branch). The honest contract
+        # must hold for both.
         secstruct = random_structure(seed, n)
         result = layout_guaranteed(secstruct, engine=engine_factory())
         assert result.flagged or result.report.passed
@@ -139,7 +159,7 @@ class TestEngineSelection:
         monkeypatch.setattr("rna_draw.layout.pipeline._production_available", lambda: False)
         monkeypatch.setattr(PuzzlerEngine, "is_available", staticmethod(lambda: False))
         result = layout_guaranteed("((((....))))")
-        assert result.engine_name in {"legacy", "fallback"}
+        assert result.engine_name in {"legacy", "constructive", "fallback"}
 
     @requires_production
     def test_resolve_engine_production_has_production_name(self) -> None:
@@ -216,6 +236,46 @@ class TestProductionCleansAStockDirtyStructure:
     def test_production_engine_is_clean_and_unflagged(self) -> None:
         result = layout_guaranteed(self.STOCK_DIRTY_PRODUCTION_CLEAN, engine=production_engine())
         assert result.flagged is False
+        assert result.report.passed
+
+
+class TestConstructiveRescuesAProductionDirtyStructure:
+    """Regression (M5): a concrete real-corpus structure the production
+    engine cannot lay out checker-clean (over the adaptive radius range),
+    but the middle `ConstructiveEngine` fallback tier can -- so the pipeline
+    must return `flagged=True, engine_name="constructive"`, NOT fall
+    through to the circle `SafeFallbackEngine`.
+
+    Found by scanning `benchmarks/hard_set.json`'s 300-600nt bucket for the
+    first structure where `_try_primary(production_engine(), ...)` fails
+    but `_try_primary(ConstructiveEngine(), ...)` succeeds
+    (`bpRNA_CRW_11829.dbn`, 361nt).
+    """
+
+    PRODUCTION_DIRTY_CONSTRUCTIVE_CLEAN = (
+        "..(((((((.((((....(((((((....))))))).....)))).....((((((((((....)))))))))).."
+        "...(((((....))))).)))))))............(((..(.(((..((((((((.......))))))))))). "
+        "....))))..((((((((....))))...))))....((((((..........)))))).((((....))))...."
+        "............(.(((...(((((....))))).))))............((((......((((....)))). "
+        "....)))).............(.....((((((((.......)))))))).....)..."
+    ).replace(" ", "")  # bpRNA_CRW_11829.dbn, benchmarks/hard_set.json (361nt)
+
+    @requires_production
+    @pytest.mark.timeout(20)
+    def test_production_engine_cannot_go_clean(self) -> None:
+        result = _try_primary(
+            production_engine(), self.PRODUCTION_DIRTY_CONSTRUCTIVE_CLEAN, OverlapParams()
+        )
+        assert result is None
+
+    @requires_production
+    @pytest.mark.timeout(20)
+    def test_pipeline_returns_flagged_constructive_not_circle(self) -> None:
+        result = layout_guaranteed(
+            self.PRODUCTION_DIRTY_CONSTRUCTIVE_CLEAN, engine=production_engine()
+        )
+        assert result.flagged is True
+        assert result.engine_name == "constructive"
         assert result.report.passed
 
 
