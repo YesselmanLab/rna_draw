@@ -125,12 +125,12 @@ class EscalatingClearanceEngine:
 
     name = "escalating_clearance"
 
-    # Default tops out at 1.5x: clearance >= 2.0 can send puzzler's C
-    # resolver into a very long loop that Python's SIGALRM timeout cannot
-    # interrupt (it only fires between C calls), hanging the whole gate.
-    # Higher levels are opt-in via `escalating_clearance:...` once the
-    # harness gains a hard worker-kill timeout.
-    def __init__(self, levels: tuple[float, ...] = (1.0, 1.5)) -> None:
+    # Finer ladder (measured best on the 450 hard set: 52.2% clean vs 48.0%
+    # for the 3-step ladder). The 2.0x top can send puzzler's C resolver
+    # into a long loop, so this engine REQUIRES the gate's hard worker-kill
+    # timeout (hard_gate.py runs one process per structure and terminate()s
+    # a stuck child) -- do not use it under a plain thread/pool without one.
+    def __init__(self, levels: tuple[float, ...] = (1.0, 1.25, 1.5, 1.75, 2.0)) -> None:
         self._levels = levels
         self._primary = DrawParameters().PRIMARY_SPACE
 
