@@ -385,6 +385,27 @@ def _hash_cell_size(params: OverlapParams) -> float:
     return size if size > 0 else 1.0
 
 
+def _insert_primitive(grid: SpatialHash, index: int, primitive: Primitive) -> None:
+    """Insert one primitive into the spatial hash.
+
+    Capsules are inserted as tiled segment pieces (`SpatialHash.insert_segment`)
+    so a long diagonal chord (e.g. a base pair on a circle layout) doesn't
+    blow up to one huge AABB covering `O((length / cell_size) ** 2)` cells;
+    disks keep their single small AABB.
+
+    Args:
+        grid: Spatial hash to insert into.
+        index: The primitive's index in the primitives list.
+        primitive: The disk or capsule to insert.
+    """
+    if isinstance(primitive, Capsule):
+        grid.insert_segment(
+            index, primitive.x0, primitive.y0, primitive.x1, primitive.y1, primitive.half_width
+        )
+    else:
+        grid.insert(index, primitive.aabb)
+
+
 def check_overlaps(
     x: Sequence[float],
     y: Sequence[float],
@@ -410,7 +431,7 @@ def check_overlaps(
 
     grid = SpatialHash(_hash_cell_size(params))
     for index, primitive in enumerate(primitives):
-        grid.insert(index, primitive.aabb)
+        _insert_primitive(grid, index, primitive)
 
     witnesses = _collect_witnesses(primitives, grid.candidate_pairs(), pair_map, params.tol)
     return _build_report(witnesses)

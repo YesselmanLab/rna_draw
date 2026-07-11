@@ -4,12 +4,17 @@ equivalence, and performance.
 
 from __future__ import annotations
 
+import json
 import random
 import time
+from pathlib import Path
 
 import pytest
 
 from rna_draw.geometry import Capsule, Disk, PrimitiveId
+from rna_draw.layout.fallback import SafeFallbackEngine
+from rna_draw.layout.pipeline import _production_available
+from rna_draw.layout.production import production_engine
 from rna_draw.overlap import (
     OverlapKind,
     OverlapParams,
@@ -27,6 +32,20 @@ from rna_draw.overlap import (
 from rna_draw.overlap import test_pair as _test_pair
 from rna_draw.render_rna import RNARenderer, get_pairmap_from_secstruct
 from rna_draw.spatial_hash import SpatialHash
+
+HARD_SET_JSON = Path(__file__).parent.parent / "benchmarks" / "hard_set.json"
+WORST_SET_JSON = Path(__file__).parent.parent / "benchmarks" / "worst_set.json"
+requires_production = pytest.mark.skipif(
+    not _production_available(), reason="rna_draw._vienna_layout not importable/ABI-matched"
+)
+
+
+def _named_structure(set_path: Path, name: str) -> str:
+    """Look up one structure's dot-bracket string from a benchmark set file."""
+    with set_path.open() as handle:
+        structures = json.load(handle)
+    return next(entry["structure"] for entry in structures if entry["name"] == name)
+
 
 NODE_R = 10
 PRIMARY_SPACE = 20
@@ -256,6 +275,75 @@ class TestHashEqualsBruteforce:
         hashed = check_overlaps(x, y, pair_map)
         brute = check_overlaps_bruteforce(x, y, pair_map)
         assert set(hashed.witnesses) == set(brute.witnesses)
+
+    def test_witness_sets_match_across_a_long_diagonal_pair_capsule(self) -> None:
+        # A direct, deterministic regression for the spatial-hash perf bug:
+        # nucleotides 0 and 1 are paired far apart on a near-diagonal, so
+        # their pair capsule spans many grid cells (`insert_segment`
+        # territory). A third, unrelated nucleotide sits squarely on that
+        # diagonal's midpoint, close enough to be a genuine overlap.
+        x = [0.0, 950.0, 475.0]
+        y = [0.0, 940.0, 470.0]
+        pair_map = [1, 0, -1]
+        params = OverlapParams(node_r=10.0, backbone_half_width=1.0, pair_half_width=5.0)
+        hashed = check_overlaps(x, y, pair_map, params)
+        brute = check_overlaps_bruteforce(x, y, pair_map, params)
+        assert set(hashed.witnesses) == set(brute.witnesses)
+        assert hashed.num_overlaps > 0
+
+
+class TestHashEqualsBruteforceOnRealStructures:
+    """`check_overlaps` (spatial hash) must match `check_overlaps_bruteforce`
+    (the O(n^2) oracle) on real structures, including `SafeFallbackEngine`'s
+    circle layout -- the long-diagonal-chord case that exposed the spatial
+    hash's broad-phase perf bug (a base-pair capsule drawn as a diagonal
+    chord touching ~(length / cell_size) ** 2 cells via one big AABB).
+    """
+
+    @pytest.mark.parametrize(
+        "name", ["bpRNA_CRW_5083.dbn", "bpRNA_SRP_476.dbn", "bpRNA_RFAM_3401.dbn"]
+    )
+    def test_safe_fallback_circle_matches_bruteforce(self, name: str) -> None:
+        struct = _named_structure(HARD_SET_JSON, name)
+        x, y = SafeFallbackEngine().layout(struct)
+        pair_map = get_pairmap_from_secstruct(struct)
+        hashed = check_overlaps(x, y, pair_map)
+        brute = check_overlaps_bruteforce(x, y, pair_map)
+        assert set(hashed.witnesses) == set(brute.witnesses)
+
+    def test_safe_fallback_circle_matches_bruteforce_on_worst_set_structure(self) -> None:
+        struct = _named_structure(WORST_SET_JSON, "bpRNA_RFAM_35409.dbn")  # 684nt
+        x, y = SafeFallbackEngine().layout(struct)
+        pair_map = get_pairmap_from_secstruct(struct)
+        hashed = check_overlaps(x, y, pair_map)
+        brute = check_overlaps_bruteforce(x, y, pair_map)
+        assert set(hashed.witnesses) == set(brute.witnesses)
+
+    @requires_production
+    def test_production_engine_matches_bruteforce_on_worst_set_structure(self) -> None:
+        struct = _named_structure(WORST_SET_JSON, "bpRNA_RFAM_35409.dbn")  # 684nt
+        x, y = production_engine().layout(struct)
+        pair_map = get_pairmap_from_secstruct(struct)
+        hashed = check_overlaps(x, y, pair_map)
+        brute = check_overlaps_bruteforce(x, y, pair_map)
+        assert set(hashed.witnesses) == set(brute.witnesses)
+
+    def test_1465nt_safe_fallback_circle_layout_is_fast(self) -> None:
+        # This is the exact structure/engine combination that took >115s
+        # (never finished) before the spatial-hash tiling fix: a 1465nt
+        # structure's `SafeFallbackEngine` circle has base-pair capsules
+        # drawn as long diagonal chords. 60s is a generous bound (measured
+        # ~25s after the fix) that still fails loudly on a perf regression.
+        # Correctness (hash == brute-force) at this exact scale is O(n^2)
+        # expensive to re-check here; it is covered by the smaller real
+        # structures above and the deterministic long-diagonal case in
+        # `TestHashEqualsBruteforce`, all exercising the same
+        # `insert_segment` tiling path.
+        struct = _named_structure(HARD_SET_JSON, "bpRNA_RFAM_37013.dbn")
+        start = time.perf_counter()
+        SafeFallbackEngine().layout(struct)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 60.0
 
 
 class TestReportApi:
