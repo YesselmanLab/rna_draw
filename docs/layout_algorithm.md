@@ -35,10 +35,26 @@ run behind the checker-gated `layout_guaranteed`. Three stages:
    applied only if the frozen checker reports **strictly fewer** overlaps, so the pass is monotone
    (never worse) and wall-clock bounded. Engine-agnostic; operates on coordinates + a pair map.
 
-3. **Checker-gated adaptive radius + guaranteed fallback.** Render at the largest disk radius in
-   `[0.8×, 1.0×]target` that passes the checker. If no conventional layout clears, fall back to a
-   guaranteed-clean circle, `flagged=True`. The honest contract: every result is checker-clean or
-   explicitly flagged — never a silent overlap.
+3. **Checker-gated adaptive radius + 3-tier fallback.** Render at the largest disk radius in
+   `[0.8×, 1.0×]target` that passes the checker. If the production primary can't clear, the pipeline
+   falls through two more tiers, all checker-gated: (a) the **constructive engine** — an overlap-free-
+   *by-construction* layout (bounding-disk envelope tree, see below), which now catches most of what
+   used to hit the circle; (b) a guaranteed-clean **circle** as the final backstop. The honest
+   contract holds at every tier: every result is checker-clean or explicitly `flagged` — never a
+   silent overlap.
+
+## The constructive engine (the fallback tier)
+
+A second, independent engine that lays a structure out overlap-free *by construction* rather than by
+repair — used when the compact production primary can't clear. It builds bottom-up over the loop/stem
+tree: each subtree is bounded by a **disk**, children are packed around a loop at angular half-widths
+`asin(r/d)` (provably disjoint, so siblings can't overlap), single-child bulges/internal loops are
+placed as straight continuations, and a checker-gated compaction pass tightens the result. It lays
+out **436/450 hard structures clean-by-construction (0 silent overlaps), including the deep-rRNA tail**
+production leaves to fallback. It is ~21× less compact than the production primary (so it stays a
+fallback, not a primary) but ~1600× *more* compact than the circle it replaces, and conventional in
+style. On the 450 hard set the pipeline now resolves as **86% production-primary (compact) + 11%
+constructive-fallback (clean, conventional-style) + 2% circle**, 0 silent overlaps.
 
 ## Every attempt
 
@@ -57,6 +73,8 @@ problem but first a *clearance-model mismatch*, then a *small-loop-crowding* pro
 | 8 | Raise post-pass cap 6 → 20, moves 12 → 40 | Most 7–20-overlap structures are the same crowding | Clean 73% → 87% | win |
 | 9 | Productionize as the default engine | Make the stack rna_draw's real output | Default renders stock-dirty structures clean; honest contract | shipped |
 | 10 | Spatial-hash O(L²) → O(L) for long chords | Fallback renders took minutes | Checker ~14× faster on the fallback circle; output byte-identical (proven vs brute force) | shipped |
+| 11 | **Constructive engine** (bounding-disk envelope tree) | Lay out overlap-free *by construction*, not by repair | 96.9% clean-by-construction incl. the deep tail, 0 silent overlaps; but ~21× less compact than the primary | **win** |
+| 12 | Wire constructive as the middle fallback tier | Give the deep tail a clean conventional layout instead of a circle | Pipeline now 86% primary + 11% constructive-fallback + 2% circle; ~1600× more compact than the circle it replaces | shipped |
 
 ## Clean-rate progression (450 hard structures)
 
@@ -70,13 +88,18 @@ Stock puzzler                 30.4%  (137/450)   2943 overlaps
 
 ## What's left
 
-- **Deep-rRNA tail** (~37 giant structures): mix local crowding with distant branch collisions that
-  local rigid moves can't coordinate away. They get the guaranteed-clean circle fallback today. The
-  planned fix is a bottom-up **constructive envelope engine** (overlap-free by construction), which
-  would also replace the slow circle fallback with a compact one.
+- **Constructive engine → compact *primary*.** The constructive engine is overlap-free by
+  construction on 96.9% of the hard set but ~21× less compact than the production primary, so it
+  serves as the fallback tier, not a primary. Closing that gap (to ~1–3×) — which would raise the
+  compact-clean rate from 87% toward 97% — hits a diagnosed floor (deep subtree rotations redirect
+  content past the local compaction check on the largest many-branch structures) and needs per-branch
+  envelope-aware verification: a larger follow-on effort, not a quick tune.
+- **Deep-rRNA tail** (~13% of the hard set): production can't lay these out compactly; they now get a
+  clean constructive-engine fallback (conventional style) instead of a circle. The ~2% largest
+  (>2900 nt) still fall to the circle (the constructive reach guard rejects them).
 - **Empty-loop inputs** (14 structures): contain a degenerate `()` loop that hangs RNApuzzler
-  unconditionally; guarded and routed to the safe fallback. Fix is to handle the zero-length loop in
-  the vendored resolver.
+  unconditionally; guarded and now routed to the constructive engine (which handles them) or the
+  circle. Fix for a compact result is to handle the zero-length loop in the vendored resolver.
 
 ## Infrastructure
 
@@ -86,4 +109,4 @@ Stock puzzler                 30.4%  (137/450)   2943 overlaps
   every post-pass move.
 - A frozen benchmark gate (`benchmarks/hard_gate.py`) with a hard per-structure kill, so a slow or
   hanging structure is a bounded error, not a stall.
-- 596 tests, 95% coverage; ruff + mypy clean.
+- ~990 tests, ~96% coverage; ruff + mypy clean. Full-suite runs use pytest-xdist (`-n auto`).
