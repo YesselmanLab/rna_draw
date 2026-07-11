@@ -17,7 +17,7 @@ dependencies = ["matplotlib", "seaborn"]
 # `@pytest.mark.timeout(...)`-marked cases (a verified upstream RNApuzzler
 # hang on a degenerate empty-loop structure) so a regression fails fast
 # instead of hanging CI.
-dev = ["pytest", "pytest-cov", "pytest-timeout", "ruff", "mypy"]
+dev = ["pytest", "pytest-cov", "pytest-timeout", "pytest-xdist", "ruff", "mypy"]
 
 [project.scripts]
 rna_draw = "rna_draw.draw:main"

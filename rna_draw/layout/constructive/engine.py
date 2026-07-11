@@ -48,8 +48,9 @@ from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
-from . import envelope
+from . import compaction, envelope
 from .geometry_helpers import (
+    EXTERIOR_AXIS,
     Point,
     StemLadder,
     loop_member_point,
@@ -78,19 +79,6 @@ from .geometry_helpers import (
 # (well under the benchmark harness's 30s per-structure kill). No structure
 # past 4000nt has been measured -- do not raise further without new evidence.
 _MAX_NUCLEOTIDES = 4000
-
-# Fixed reference direction every top-level exterior branch opens along
-# (straight "down" from the backbone line) -- see `_place_exterior`. The
-# SIGN matters, not just the axis: `stem_base_for_attachment` always offsets
-# a branch's OTHER strand (`closing_pair[1]`) toward `rotate90_ccw(axis_dir)`
-# from its attachment point, which for this axis points toward INCREASING
-# exterior position (the same "toward whatever comes next" convention a
-# loop's own radially-outward axis_dir gives via its CCW tangent) -- so an
-# incoming backbone edge from an EARLIER (lower-position) sibling, which
-# always approaches from the opposite (`-rotate90_ccw`) side, never grazes
-# it. Using `(0.0, 1.0)` here instead would put that offset on the
-# EARLIER-sibling side, exactly where the incoming edge travels.
-_EXTERIOR_AXIS: Point = (0.0, -1.0)
 
 # `_place_branch`/`_place_loop_members` recurse one Python stack frame per
 # structural nesting level (not per nucleotide); this is a generous
@@ -145,7 +133,7 @@ _MAX_REACH = 5_000_000.0
 # lopsided loops leaving their radius-fitting slack entirely on one side
 # (`geometry_helpers._angles_at` now splits it), and an exterior branch's
 # own "return" strand landing on the same side as an incoming backbone edge
-# (`_EXTERIOR_AXIS`'s sign). What's left is a DIFFERENT, more diffuse risk:
+# (`EXTERIOR_AXIS`'s sign). What's left is a DIFFERENT, more diffuse risk:
 # a branch's own near-seam interior content sitting close enough to its
 # OUTERMOST rung's far strand that the backbone edge continuing PAST that
 # strand (to whatever comes next, outside this branch's own subtree) can
@@ -273,13 +261,51 @@ def _build_verified(
             ) from exc
         report = check_overlaps(state.x, state.y, pair_map, OverlapParams())
         if report.passed:
-            return state.x, state.y
+            return _compact_or_keep(tree, pair_map, state)
         last_overlaps = report.num_overlaps
     raise EngineError(
         f"ConstructiveEngine produced a dirty layout for {secstruct!r} after "
         f"{len(_MARGIN_SCALES)} attempt(s) ({last_overlaps} overlaps on the last) "
         "-- refusing to return it silently"
     )
+
+
+def _compact_or_keep(
+    tree: StructureTree, pair_map: list[int], state: _LayoutState
+) -> tuple[list[float], list[float]]:
+    """Try the M3 checker-gated compaction pass; keep it only if still clean.
+
+    `state.x`/`state.y` are already checker-clean (the "sound" layout).
+    `compaction.compact_layout` only ever applies a move it has itself
+    locally verified against the frozen checker, so this whole-structure
+    re-check is belt-and-suspenders, not the primary safety mechanism --
+    but it is what makes the never-silent-overlap contract airtight even if
+    a local check's scope assumption ever turns out to be wrong.
+
+    Args:
+        tree: The structure tree the sound layout was built from.
+        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
+            `-1` if unpaired.
+        state: The just-verified sound `_LayoutState` (its `cache` holds
+            the sound `loop_packing` the compaction pass compares against).
+
+    Returns:
+        The compacted `(x, y)` if it stays checker-clean, else the
+        pre-compaction sound `(x, y)`.
+    """
+    compact_x, compact_y = compaction.compact_layout(
+        tree,
+        state.x,
+        state.y,
+        pair_map,
+        state.params,
+        OverlapParams(),
+        state.cache,
+        state.margin_scale,
+    )
+    if check_overlaps(compact_x, compact_y, pair_map, OverlapParams()).passed:
+        return compact_x, compact_y
+    return state.x, state.y
 
 
 def _ensure_recursion_headroom(n: int) -> None:
@@ -348,7 +374,7 @@ def _place_exterior(state: _LayoutState) -> None:
         if branch is None:
             state.x[member], state.y[member] = anchor
             continue
-        _place_branch(state, branch, anchor, _EXTERIOR_AXIS)
+        _place_branch(state, branch, anchor, EXTERIOR_AXIS)
 
 
 def _check_reach_bounded(extents: list[float]) -> None:

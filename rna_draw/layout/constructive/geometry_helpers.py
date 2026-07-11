@@ -15,6 +15,21 @@ from dataclasses import dataclass
 
 Point = tuple[float, float]
 
+# Fixed reference direction every top-level exterior branch opens along
+# (straight "down" from the backbone line) -- see `engine._place_exterior`
+# and `compaction._compact_exterior_spacing`, the two places that place/
+# re-place exterior branches and need to agree on this convention. The SIGN
+# matters, not just the axis: `stem_base_for_attachment` always offsets a
+# branch's OTHER strand (`closing_pair[1]`) toward `rotate90_ccw(axis_dir)`
+# from its attachment point, which for this axis points toward INCREASING
+# exterior position (the same "toward whatever comes next" convention a
+# loop's own radially-outward axis_dir gives via its CCW tangent) -- so an
+# incoming backbone edge from an EARLIER (lower-position) sibling, which
+# always approaches from the opposite (`-rotate90_ccw`) side, never grazes
+# it. Using `(0.0, 1.0)` here instead would put that offset on the
+# EARLIER-sibling side, exactly where the incoming edge travels.
+EXTERIOR_AXIS: Point = (0.0, -1.0)
+
 
 def rotate90_ccw(vec: Point) -> Point:
     """Rotate a 2D vector 90 degrees counterclockwise.
@@ -472,6 +487,7 @@ def pack_line_positions(extents: list[float], primary_space: float) -> list[floa
 
 __all__ = [
     "Point",
+    "EXTERIOR_AXIS",
     "StemLadder",
     "LoopPacking",
     "BulgePacking",
