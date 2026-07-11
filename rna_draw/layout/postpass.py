@@ -108,7 +108,7 @@ class PostPassConfig:
     """
 
     params: OverlapParams = field(default_factory=_default_postpass_params)
-    max_moves: int = 12
+    max_moves: int = 40
     angle_steps_deg: tuple[float, ...] = (10, -10, 20, -20, 5, -5, 30, -30)
     translate_fractions: tuple[float, ...] = (0.5, 1.0)
     exterior_translate_steps: tuple[float, ...] = (0.5, 1.0)

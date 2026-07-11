@@ -20,10 +20,13 @@ from rna_draw.render_rna import get_pairmap_from_secstruct
 
 # Cap on how dirty a base layout may be, *measured at POSTPASS_PARAMS's floor
 # radius* (see that constant's docstring), before the post-pass even attempts
-# it. Deep (>6-overlap) rRNA-scale structures are out of scope (constructive
-# engine territory, not local rigid moves) and would otherwise burn many
-# candidate rechecks for no realistic payoff; see the post-pass plan's R1.
-POSTPASS_MAX_WITNESSES = 6
+# it. Raised 6->20 after measuring: most 7-20-overlap structures are also
+# small-loop crowding that loop inflation clears, so attempting them lifts the
+# hard-set clean rate 72.9%->87.3%. Above ~20 the residual is the deep rRNA
+# tail (constructive-engine territory), where the pass only burns candidate
+# rechecks -- and can exceed the gate's 30s hard-kill (a few such structures
+# become timeouts rather than stalls). See the post-pass plan's R1.
+POSTPASS_MAX_WITNESSES = 20
 
 _SIMPLE = {
     "puzzler": ViennaPuzzlerEngine,
