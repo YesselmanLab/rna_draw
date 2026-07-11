@@ -54,7 +54,9 @@ from .geometry_helpers import (
     StemLadder,
     loop_member_point,
     midpoint,
+    pack_bulge_linear,
     pack_line_positions,
+    place_bulge_geometry,
     place_stem,
     stem_base_for_attachment,
 )
@@ -64,7 +66,18 @@ from .geometry_helpers import (
 # length -- larger structures should route to a faster fallback engine
 # instead (runbook Risk R2). Checked FIRST in `layout`, before any other
 # work, so the engine never even starts on a giant structure.
-_MAX_NUCLEOTIDES = 1200
+#
+# RAISED 1200 -> 4000 after the bulge-chain straight-continuation fix
+# (`_place_bulge`/`envelope._bulge_branch_reach`) removed the dominant cause
+# of slow/huge constructions on real rRNA: measured on the FULL
+# `benchmarks/hard_set.json` 1200-4000nt bucket (100 structures, guard
+# bypassed for the measurement) -- 89/100 checker-clean by construction, the
+# other 11 a fast (<0.01s) `_MAX_REACH` bail on a DIFFERENT, still-circular
+# cause (long chains of degree-2 multiloops -- out of this fix's scope, see
+# `_MAX_REACH`'s docstring), 0 timeouts, 0 dirty, worst-case wall clock 7.3s
+# (well under the benchmark harness's 30s per-structure kill). No structure
+# past 4000nt has been measured -- do not raise further without new evidence.
+_MAX_NUCLEOTIDES = 4000
 
 # Fixed reference direction every top-level exterior branch opens along
 # (straight "down" from the backbone line) -- see `_place_exterior`. The
@@ -88,32 +101,42 @@ _RECURSION_FRAMES_PER_NT = 4
 _RECURSION_HEADROOM = 1000
 
 # A hard cap on `envelope.branch_reach`, checked BEFORE any coordinate is
-# written or the checker runs (see `_place_exterior`). A long CHAIN of
-# single-child bulge/interior loops -- extremely common in real rRNA
-# "irregular helix" runs -- makes `envelope.branch_reach` compound roughly
-# 3x PER NESTING LEVEL (each level's loop radius must be at least as large
-# as its one dominant child's own reach, by the soundness proof's own
-# `radius_floor` requirement, then adds that child's reach again on top of
-# TWICE that radius): sound at every step (the disjointness proof still
-# holds), but for real structures with dozens of such levels this reaches
-# astronomical magnitudes (observed: ~6.6e9 units on a real 920nt bpRNA
-# structure) well before `_MAX_NUCLEOTIDES` would reject it on length
-# alone. At that scale placement itself is cheap, but `check_overlaps`'s
-# spatial hash (frozen, tuned for ordinary RNA-diagram coordinate ranges)
-# degrades badly, turning a should-be-instant construction into a
-# multi-minute one -- a real (if not literally infinite) hang risk this
-# guard closes by raising promptly instead. See the M2 diagnosis for the
-# honest limitation this reveals: fixing it for real needs either a
-# bulge-specific placement (collapsing small bulges into the straight stem
-# with a kink, sidestepping the full circular envelope machinery) or a
-# genuinely tighter reach bound than the current isotropic-disk one.
+# written or the checker runs (see `_place_exterior`). ORIGINALLY this
+# guarded a long CHAIN of single-child bulge/interior loops, which made
+# `envelope.branch_reach` compound ~3x PER NESTING LEVEL via the circular
+# envelope (radius >= dominant child's own reach, by `radius_floor`, then
+# +2x that radius on top) -- FIXED by `_place_bulge`/
+# `envelope._bulge_branch_reach`: a single-child loop is now placed as a
+# straight continuation of the parent stem's axis instead of a fresh
+# circular envelope, so a bulge CHAIN's reach grows LINEARLY (one constant
+# term per level), not exponentially. Measured impact on
+# `benchmarks/hard_set.json`'s <=1200nt buckets: clean-by-construction
+# 37.7% -> 99.1% (347/350), the 3 residual failures NOT bulge chains (see
+# below).
+#
+# This guard still exists because a DIFFERENT, still-circular cause
+# remains IN SCOPE for the circular envelope (deliberately unchanged --
+# see `_loop_branch_reach`'s docstring): a long CHAIN of small (often
+# degree-2) MULTIloops -- e.g. one big continuing branch plus a tiny
+# hairpin side branch, repeated many nesting levels deep in real rRNA --
+# still compounds `2 * packing.radius` per level the same way a bulge
+# chain used to. Diagnosed directly on 3 real hard-set structures that
+# still trip this guard (~750-810nt, reach ~9e6-1.5e7): each has 30+ nested
+# degree-2 multiloop levels. Fixing THAT is out of this fix's scope (the
+# task keeps circular packing for genuine multiloops); it would need its
+# own straight/tighter treatment for degree-2 loops specifically.
 #
 # THRESHOLD, calibrated against `benchmarks/hard_set.json` (bypassing this
 # guard and timing construction+check directly): time scales with
 # log(reach), staying well under a second up to ~2e6, ~2s at ~5e6, and
-# crossing 6-8s by ~1.5e7-3e7 -- `5e6` keeps every admitted structure comfortably
+# crossing 10-19s by ~1.5e7-3e7 (now dominated by `_build_verified`'s
+# checker re-runs at huge coordinate magnitudes, not construction itself,
+# which stays cheap) -- `5e6` keeps every admitted structure comfortably
 # fast (a couple of seconds, worst case) while still rejecting the
-# multi-second-to-minutes tail before it ever starts.
+# multi-second tail before it ever starts. Raising it to ~3e7 (measured)
+# would rescue the 3 residual <=1200nt failures above at ~11-13s each --
+# not done here (bounded value for a real per-structure cost increase; see
+# the handoff report for the full tradeoff).
 _MAX_REACH = 5_000_000.0
 
 # S8's bounded re-inflation schedule: the construction is clean BY PROOF for
@@ -450,15 +473,14 @@ def _write_ladder(
 def _place_loop_members(
     state: _LayoutState, loop: Loop, tip_a: Point, tip_b: Point, axis_dir: Point
 ) -> None:
-    """Place a loop's interior members (unpaired nts + child stem bases) on
-    a circle beyond its own closing-pair rung, reusing the packing already
-    computed by S5's envelope pass (`envelope.loop_packing`) -- so the
-    radius/angles here are guaranteed identical to the ones every child's
-    `envelope.branch_reach` was measured against.
-
-    Recurses into every child branch (`_place_branch`), so this handles a
-    hairpin's plain terminal loop (no children), a bulge/interior loop (one
-    child), and a multiloop of any degree, all uniformly.
+    """Place a loop's interior members (unpaired nts + child stem bases),
+    dispatching on child count: a genuine multiloop (2+ children) or a
+    terminal hairpin loop (0 children) packs them on a circle
+    (`_place_circular_loop_members`); a bulge/interior loop (exactly 1
+    child) places them as a straight continuation of the stem's own axis
+    instead (`_place_bulge`) -- see `envelope.branch_reach`'s module
+    docstring for why the circular case compounds `~3x` per nesting level
+    on a long bulge chain while the straight case only adds a constant.
 
     Args:
         state: Layout accumulators; mutated in place.
@@ -468,6 +490,31 @@ def _place_loop_members(
         tip_b: The closing pair's far-strand coordinate.
         axis_dir: Unit vector pointing from the stem base toward this loop
             (the direction the loop opens away from its parent).
+    """
+    if len(loop.children) == 1:
+        _place_bulge(state, loop, tip_a, tip_b, axis_dir)
+    else:
+        _place_circular_loop_members(state, loop, tip_a, tip_b, axis_dir)
+
+
+def _place_circular_loop_members(
+    state: _LayoutState, loop: Loop, tip_a: Point, tip_b: Point, axis_dir: Point
+) -> None:
+    """Place a multiloop's (2+ children) or hairpin's (0 children) interior
+    members on a circle beyond its own closing-pair rung, reusing the
+    packing already computed by S5's envelope pass (`envelope.loop_packing`)
+    -- so the radius/angles here are guaranteed identical to the ones every
+    child's `envelope.branch_reach` was measured against.
+
+    Recurses into every child branch (`_place_branch`).
+
+    Args:
+        state: Layout accumulators; mutated in place.
+        loop: The loop to place; `tip_a`/`tip_b` (its own closing pair) are
+            already placed by the caller's stem.
+        tip_a: The closing pair's near-strand coordinate.
+        tip_b: The closing pair's far-strand coordinate.
+        axis_dir: Unit vector pointing from the stem base toward this loop.
     """
     params = state.params
     interior = loop.members[1:-1]
@@ -488,6 +535,40 @@ def _place_loop_members(
             state.x[member], state.y[member] = anchor
             continue
         _place_branch(state, branch, anchor, _radial_dir(loop_center, anchor))
+
+
+def _place_bulge(
+    state: _LayoutState, loop: Loop, tip_a: Point, tip_b: Point, axis_dir: Point
+) -> None:
+    """Place a bulge/interior loop (exactly 1 child) as a straight
+    continuation of the parent stem's own axis (`envelope.py`'s module
+    docstring): the unpaired members form a short kink/offset to either
+    side, and the child continues along the SAME `axis_dir`, so a whole
+    CHAIN of such loops lays out as one straight run instead of a fresh
+    circular envelope per level.
+
+    Args:
+        state: Layout accumulators; mutated in place.
+        loop: The loop to place (`len(loop.children) == 1`); `tip_a`/`tip_b`
+            (its own closing pair) are already placed by the caller's stem.
+        tip_a: The closing pair's near-strand coordinate.
+        tip_b: The closing pair's far-strand coordinate.
+        axis_dir: Unit vector pointing from the stem base toward this loop.
+    """
+    child = loop.children[0]
+    n_before, n_after = envelope.bulge_split(loop, child)
+    packing = pack_bulge_linear(n_before, n_after)
+    interior = loop.members[1:-1]
+    unpaired_before, unpaired_after = interior[:n_before], interior[n_before + 1 :]
+
+    near_points, far_points, attachment = place_bulge_geometry(
+        tip_a, tip_b, axis_dir, packing, state.params.PRIMARY_SPACE, state.params.PAIR_SPACE
+    )
+    for member, point in zip(unpaired_before, near_points):
+        state.x[member], state.y[member] = point
+    for member, point in zip(unpaired_after, far_points):
+        state.x[member], state.y[member] = point
+    _place_branch(state, child, attachment, axis_dir)
 
 
 def _radial_dir(center: Point, point: Point) -> Point:

@@ -12,6 +12,7 @@ requirement: the pure-Python engine must never hang the suite).
 from __future__ import annotations
 
 import math
+import time
 
 import pytest
 from conftest import random_structure
@@ -68,6 +69,100 @@ class TestBulgesAndInteriorLoops:
         assert depth == 2
         assert loop.closing_pair == (1, 8)
         assert len(loop.children) == 1
+
+
+def make_bulge_chain(levels: int, n_before: int = 1, n_after: int = 0, loop_size: int = 3) -> str:
+    """A chain of `levels` nested single-child bulge/interior loops.
+
+    Each level has `n_before` unpaired nts before its child stem opens and
+    `n_after` after it closes, ending in a `loop_size`-nt hairpin.
+
+    Args:
+        levels: Number of nested bulge/interior loops in the chain.
+        n_before: Unpaired count on the near (5') strand at every level.
+        n_after: Unpaired count on the far (3') strand at every level.
+        loop_size: Unpaired nucleotide count in the terminal hairpin loop.
+
+    Returns:
+        A dot-bracket structure.
+    """
+    open_part = ("." * n_before + "(") * levels
+    close_part = (")" + "." * n_after) * levels
+    return "(" + open_part + "." * loop_size + close_part + ")"
+
+
+class TestBulgeChainStraightPlacement:
+    """The bulge-chain envelope-compounding fix: a single-child bulge or
+    interior loop is placed as a straight continuation of the parent
+    stem's axis (`engine._place_bulge`) instead of a fresh circular
+    envelope, so a CHAIN of such loops has LINEAR (not exponential) reach.
+    """
+
+    @pytest.mark.timeout(TIMEOUT)
+    @pytest.mark.parametrize(
+        ("n_before", "n_after"),
+        [(1, 0), (0, 1), (2, 2), (1, 4), (4, 1), (3, 0), (0, 3)],
+    )
+    def test_asymmetric_bulge_chain_is_clean(self, n_before: int, n_after: int) -> None:
+        _assert_clean(make_bulge_chain(15, n_before, n_after))
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_bulge_chain_feeding_a_multiloop_is_clean(self) -> None:
+        """A bulge chain that terminates in a multiloop (not a hairpin)."""
+        chain = make_bulge_chain(10, n_before=2, n_after=1, loop_size=0)
+        secstruct = chain[:-1] + "(...)(...)" + chain[-1]
+        _assert_clean(secstruct)
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_reach_grows_linearly_not_exponentially(self) -> None:
+        """`envelope.branch_reach` on a bulge chain of length `2N` must stay
+        within a small constant factor of length `N`'s reach -- the OLD
+        circular-envelope compounding grew ~3x PER LEVEL (so doubling chain
+        length would blow the ratio up astronomically); the FIXED
+        straight-continuation reach only adds a constant per level, so the
+        ratio stays close to 2 (bounded generously at 3 to allow for the
+        formula's other additive terms).
+        """
+        from rna_draw.parameters import DrawParameters
+
+        params = DrawParameters()
+        short_secstruct = make_bulge_chain(10)
+        long_secstruct = make_bulge_chain(20)
+
+        short_tree = build_structure_tree(get_pairmap_from_secstruct(short_secstruct))
+        long_tree = build_structure_tree(get_pairmap_from_secstruct(long_secstruct))
+        short_branch = short_tree.exterior.children[0]
+        long_branch = long_tree.exterior.children[0]
+
+        short_reach = envelope.branch_reach(
+            short_tree, short_branch.closing_pair, params, envelope.ReachCache()
+        )
+        long_reach = envelope.branch_reach(
+            long_tree, long_branch.closing_pair, params, envelope.ReachCache()
+        )
+        assert long_reach / short_reach < 3.0, (
+            f"reach ratio {long_reach / short_reach:.2f} for doubled chain length "
+            "-- suggests exponential compounding is back"
+        )
+
+    @pytest.mark.timeout(30)
+    def test_deep_tail_length_lays_out_without_hanging(self) -> None:
+        """A large (~3000nt) random well-nested structure -- representative
+        of the deep-tail structures `_MAX_NUCLEOTIDES` now admits (raised
+        1200 -> 4000 after this fix; see `engine.py`'s docstring) -- must
+        complete well inside the benchmark harness's 30s per-structure kill,
+        clean-or-flagged (S8's never-silent-overlap contract), never hang.
+        """
+        secstruct = random_structure(0, 3000)
+        start = time.monotonic()
+        try:
+            x, y = ConstructiveEngine().layout(secstruct)
+        except EngineError:
+            return
+        elapsed = time.monotonic() - start
+        assert elapsed < 15.0, f"took {elapsed:.2f}s -- too slow for the deep tail"
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, PARAMS_OVERLAP).passed
 
 
 class TestTwoLevelNesting:
@@ -228,15 +323,23 @@ class TestNeverSilentOverlap:
             ConstructiveEngine().layout(secstruct)
 
     @pytest.mark.timeout(TIMEOUT)
-    def test_long_bulge_chain_raises_fast_not_slow(self) -> None:
+    def test_long_bulge_chain_is_clean_and_fast(self) -> None:
         """A long run of single-child bulge/interior loops -- common in real
-        rRNA -- compounds `envelope.branch_reach` ~3x per level; well under
-        `_MAX_NUCLEOTIDES` in length, this must still raise `EngineError`
-        PROMPTLY (the `_MAX_REACH` guard) rather than spend minutes building
-        astronomical coordinates the checker then grinds through (a real
-        near-hang found while measuring on `benchmarks/hard_set.json`).
+        rRNA -- used to compound `envelope.branch_reach` ~3x PER LEVEL
+        (circular envelope on every loop), reaching astronomical magnitudes
+        well under `_MAX_NUCLEOTIDES` in length and forcing the `_MAX_REACH`
+        guard to bail out (see the git history around this test for the
+        prior "raises fast, not slow" contract). The straight-continuation
+        bulge placement (`engine._place_bulge`) fixes the root cause: reach
+        grows LINEARLY with chain length, so this now lays out fast AND
+        checker-clean, no guard needed.
         """
         secstruct = "(" + ".(" * 40 + "." * 3 + ")." * 40 + ")"
         assert len(secstruct) < 200
-        with pytest.raises(EngineError, match="envelope reach"):
-            ConstructiveEngine().layout(secstruct)
+        start = time.monotonic()
+        x, y = ConstructiveEngine().layout(secstruct)
+        elapsed = time.monotonic() - start
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        report = check_overlaps(x, y, pair_map, PARAMS_OVERLAP)
+        assert report.passed, f"left {report.num_overlaps} overlaps: {report.witnesses}"
+        assert elapsed < 1.0, f"took {elapsed:.3f}s -- should be near-instant now"

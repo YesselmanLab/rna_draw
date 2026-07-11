@@ -38,10 +38,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rna_draw.layout.structure_tree import Loop, StructureTree, collapse_stem
+from rna_draw.layout.structure_tree import Branch, Loop, StructureTree, collapse_stem
 from rna_draw.parameters import DrawParameters
 
-from .geometry_helpers import LoopPacking, pack_loop_angles
+from .geometry_helpers import LoopPacking, pack_bulge_linear, pack_loop_angles
 
 # node_r + max(backbone_half_width, pair_half_width) at the checker's
 # target geometry (`OverlapParams()`'s defaults: 10 + 7.5) -- the runbook's
@@ -128,16 +128,14 @@ def branch_reach(
     `PAIR_SPACE / 2` off to one side of it (see that function's docstring
     for why the distinction is load-bearing).
 
-    By triangle inequality: any point on the collapsed stem's far strand is
-    within `PAIR_SPACE` of the near strand at the same rung, so within
-    `PAIR_SPACE / 2` of the attachment point BEYOND the near strand's own
-    on-axis distance; the loop this stem closes sits `packing.radius`
-    beyond the stem's tip along that same axis, and its own members (or a
-    child's own attachment point) lie within another `packing.radius` of
-    that loop's center; and a child's own subtree is bounded, recursively,
-    within `branch_reach(child)` of ITS attachment point. Summing every
-    term (a safe, deliberately non-tight over-approximation) gives the
-    formula below.
+    Dispatches on the branch point at the bottom of `closing_pair`'s
+    collapsed stem run: a genuine multiloop (2+ children) or a terminal
+    hairpin loop (0 children) uses the circular bounding-disk envelope
+    (`_loop_branch_reach`); a bulge/interior loop (exactly 1 child) uses a
+    tighter, LINEAR straight-continuation bound (`_bulge_branch_reach`) --
+    the circular formula compounds `~3x` per nesting level on a long bulge
+    CHAIN (see `engine.py`'s `_MAX_REACH` docstring for the blow-up this
+    fixes), while the straight bound only adds a constant per level.
 
     Args:
         tree: The structure tree containing `closing_pair`.
@@ -157,6 +155,47 @@ def branch_reach(
     if cached is not None:
         return cached
     depth, loop = collapse_stem(tree, closing_pair)
+    if len(loop.children) == 1:
+        reach = _bulge_branch_reach(tree, loop, depth, params, cache, margin_scale)
+    else:
+        reach = _loop_branch_reach(tree, loop, depth, params, cache, margin_scale)
+    cache.branch_reach[closing_pair] = reach
+    return reach
+
+
+def _loop_branch_reach(
+    tree: StructureTree,
+    loop: Loop,
+    depth: int,
+    params: DrawParameters,
+    cache: ReachCache,
+    margin_scale: float,
+) -> float:
+    """`branch_reach`'s circular case: a multiloop (2+ children) or a
+    terminal hairpin loop (0 children), packed on `loop_packing`'s circle.
+
+    By triangle inequality: any point on the collapsed stem's far strand is
+    within `PAIR_SPACE` of the near strand at the same rung, so within
+    `PAIR_SPACE / 2` of the attachment point BEYOND the near strand's own
+    on-axis distance; the loop this stem closes sits `packing.radius`
+    beyond the stem's tip along that same axis, and its own members (or a
+    child's own attachment point) lie within another `packing.radius` of
+    that loop's center; and a child's own subtree is bounded, recursively,
+    within `branch_reach(child)` of ITS attachment point. Summing every
+    term (a safe, deliberately non-tight over-approximation) gives the
+    formula below.
+
+    Args:
+        tree: The structure tree containing `loop`.
+        loop: The loop at the bottom of the collapsed stem run.
+        depth: The collapsed stem's stacked-pair count.
+        params: Target geometry.
+        cache: Memoization; mutated in place.
+        margin_scale: Multiplier on every additive clearance margin.
+
+    Returns:
+        The branch's reach.
+    """
     packing = loop_packing(tree, loop, params, cache, margin_scale)
     child_reach = max(
         (
@@ -165,15 +204,74 @@ def branch_reach(
         ),
         default=0.0,
     )
-    reach = (
+    return (
         (depth - 1) * params.PRIMARY_SPACE
         + params.PAIR_SPACE / 2.0
         + 2.0 * packing.radius
         + child_reach
         + RHO_MARGIN * margin_scale
     )
-    cache.branch_reach[closing_pair] = reach
-    return reach
+
+
+def bulge_split(loop: Loop, child: Branch) -> tuple[int, int]:
+    """Split a single-child loop's interior into `(n_before, n_after)`.
+
+    Args:
+        loop: A loop with exactly one child branch.
+        child: That one child branch.
+
+    Returns:
+        `(n_before, n_after)`: unpaired member counts before and after
+        `child.start` in `loop.members[1:-1]` (structure order).
+    """
+    interior = loop.members[1:-1]
+    index = interior.index(child.start)
+    return index, len(interior) - index - 1
+
+
+def _bulge_branch_reach(
+    tree: StructureTree,
+    loop: Loop,
+    depth: int,
+    params: DrawParameters,
+    cache: ReachCache,
+    margin_scale: float,
+) -> float:
+    """`branch_reach`'s straight-continuation case: a bulge/interior loop
+    (exactly 1 child), placed by `geometry_helpers.place_bulge_geometry`
+    instead of a circular envelope.
+
+    Same triangle-inequality style as `_loop_branch_reach`, but the "beyond
+    the tip" term is `packing.steps * PRIMARY_SPACE + PAIR_SPACE / 2`
+    (the straight-line axial reach of the bulge's own unpaired content,
+    from `geometry_helpers.pack_bulge_linear`) instead of `2 *
+    packing.radius` -- LINEAR in the bulge's own size, not compounded by a
+    circular `radius_floor`. Composed over a chain of `N` such loops, total
+    reach is `O(N)` instead of the circular formula's `O(3^N)`.
+
+    Args:
+        tree: The structure tree containing `loop`.
+        loop: The loop at the bottom of the collapsed stem run (exactly 1 child).
+        depth: The collapsed stem's stacked-pair count.
+        params: Target geometry.
+        cache: Memoization; mutated in place.
+        margin_scale: Multiplier on every additive clearance margin.
+
+    Returns:
+        The branch's reach.
+    """
+    child = loop.children[0]
+    n_before, n_after = bulge_split(loop, child)
+    packing = pack_bulge_linear(n_before, n_after)
+    child_reach = branch_reach(tree, child.closing_pair, params, cache, margin_scale)
+    return (
+        (depth - 1) * params.PRIMARY_SPACE
+        + params.PAIR_SPACE / 2.0
+        + packing.steps * params.PRIMARY_SPACE
+        + params.PAIR_SPACE / 2.0
+        + child_reach
+        + RHO_MARGIN * margin_scale
+    )
 
 
 def loop_packing(
@@ -252,5 +350,6 @@ __all__ = [
     "stem_rung_half_width",
     "unpaired_half_width",
     "branch_reach",
+    "bulge_split",
     "loop_packing",
 ]

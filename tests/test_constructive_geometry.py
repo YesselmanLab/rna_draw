@@ -15,7 +15,9 @@ import pytest
 from rna_draw.layout.base import EngineError
 from rna_draw.layout.constructive import ConstructiveEngine
 from rna_draw.layout.constructive.geometry_helpers import (
+    pack_bulge_linear,
     pack_loop_angles,
+    place_bulge_geometry,
     place_stem,
 )
 from rna_draw.overlap import OverlapParams, check_overlaps
@@ -139,6 +141,73 @@ class TestPackLoopAngles:
     def test_rejects_nonpositive_radius_step(self) -> None:
         with pytest.raises(ValueError):
             pack_loop_angles([10.0], 5.0, radius_floor=1.0, radius_step=0.0)
+
+
+class TestPackBulgeLinear:
+    """`pack_bulge_linear`'s axial plan for a single-child bulge/interior loop."""
+
+    @pytest.mark.parametrize(
+        ("n_before", "n_after"),
+        [(0, 0), (1, 0), (0, 1), (3, 0), (0, 3), (2, 2), (1, 5), (5, 1)],
+    )
+    def test_steps_is_max_plus_one(self, n_before: int, n_after: int) -> None:
+        packing = pack_bulge_linear(n_before, n_after)
+        assert packing.steps == max(n_before, n_after) + 1
+
+    @pytest.mark.parametrize(("n_before", "n_after"), [(0, 0), (1, 0), (0, 1), (3, 2), (4, 4)])
+    def test_axials_stay_strictly_below_steps(self, n_before: int, n_after: int) -> None:
+        """Both rails' bulge content must sit strictly closer to the closing
+        rung than the child's own attachment (`steps`), so the child's own
+        subtree never lands on the same axial slot as this loop's own
+        unpaired content (see `BulgePacking`'s docstring).
+        """
+        packing = pack_bulge_linear(n_before, n_after)
+        for axial in packing.near_axials + packing.far_axials:
+            assert 1 <= axial < packing.steps
+
+    def test_near_axials_ascend_far_axials_descend(self) -> None:
+        packing = pack_bulge_linear(3, 3)
+        assert packing.near_axials == [1, 2, 3]
+        assert packing.far_axials == [3, 2, 1]
+
+
+class TestPlaceBulgeGeometry:
+    """`place_bulge_geometry`'s straight-continuation placement."""
+
+    def test_near_rail_collinear_with_far_rail_offset(self) -> None:
+        tip_a, tip_b = (0.0, -11.5), (0.0, 11.5)
+        axis_dir = (1.0, 0.0)
+        packing = pack_bulge_linear(2, 2)
+        near, far, attach = place_bulge_geometry(
+            tip_a, tip_b, axis_dir, packing, PARAMS.PRIMARY_SPACE, PARAMS.PAIR_SPACE
+        )
+        for point in [*near, attach]:
+            assert math.isclose(point[1], -11.5, abs_tol=COLLINEAR_ATOL)
+        for point in far:
+            assert math.isclose(point[1], 11.5, abs_tol=COLLINEAR_ATOL)
+
+    def test_rail_separation_is_pair_space(self) -> None:
+        tip_a, tip_b = (0.0, -11.5), (0.0, 11.5)
+        assert math.isclose(math.hypot(tip_a[0] - tip_b[0], tip_a[1] - tip_b[1]), PARAMS.PAIR_SPACE)
+
+    def test_attachment_at_steps_axial_on_near_rail(self) -> None:
+        tip_a, tip_b = (0.0, -11.5), (0.0, 11.5)
+        axis_dir = (1.0, 0.0)
+        packing = pack_bulge_linear(0, 4)
+        _near, _far, attach = place_bulge_geometry(
+            tip_a, tip_b, axis_dir, packing, PARAMS.PRIMARY_SPACE, PARAMS.PAIR_SPACE
+        )
+        assert math.isclose(attach[0], packing.steps * PARAMS.PRIMARY_SPACE, abs_tol=1e-9)
+        assert math.isclose(attach[1], -11.5, abs_tol=1e-9)
+
+    def test_zero_before_gives_no_near_points(self) -> None:
+        tip_a, tip_b = (0.0, -11.5), (0.0, 11.5)
+        packing = pack_bulge_linear(0, 3)
+        near, far, _attach = place_bulge_geometry(
+            tip_a, tip_b, (1.0, 0.0), packing, PARAMS.PRIMARY_SPACE, PARAMS.PAIR_SPACE
+        )
+        assert near == []
+        assert len(far) == 3
 
 
 class TestConstructiveEngineSingleMultiloopOfHairpins:

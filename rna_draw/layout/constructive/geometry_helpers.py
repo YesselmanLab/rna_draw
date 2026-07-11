@@ -329,6 +329,104 @@ def loop_member_point(center: Point, zero_dir: Point, radius: float, angle: floa
     return translate(center, direction, radius)
 
 
+@dataclass(frozen=True)
+class BulgePacking:
+    """Straight-line placement plan for a single-child bulge/interior loop.
+
+    A loop with exactly one child branch (a bulge -- unpaired bases on one
+    strand -- or an interior loop -- unpaired bases on both strands) is
+    placed as a near-straight continuation of the parent stem's axis
+    instead of a full circular envelope (see `pack_loop_angles`): the
+    reach of a CHAIN of such loops then grows linearly with chain length
+    instead of compounding a fresh circular envelope (and its
+    `radius_floor`-driven blow-up) at every nesting level.
+
+    Args:
+        steps: Axial step count (in `primary_space` units) from the
+            closing rung to the child branch's own attachment rung --
+            `max(n_before, n_after) + 1`, so BOTH rails' bulge content sits
+            strictly closer to the closing rung than the child's own
+            attachment, leaving it clear of the child's own subtree.
+        near_axials: Axial step index (`1..n_before`) for each
+            `unpaired_before` member, in structure order.
+        far_axials: Axial step index for each `unpaired_after` member, in
+            structure order -- descending (`n_after` down to `1`), since
+            the first `unpaired_after` member (structurally adjacent to the
+            child) sits closest to the child's attachment, and the last
+            (structurally adjacent to the loop's far closing-pair index)
+            sits closest to the closing rung.
+    """
+
+    steps: int
+    near_axials: list[int]
+    far_axials: list[int]
+
+
+def pack_bulge_linear(n_before: int, n_after: int) -> BulgePacking:
+    """Compute a single-child bulge/interior loop's straight-line axial plan.
+
+    Args:
+        n_before: Unpaired member count on the near (5') strand, before the
+            child branch's own start.
+        n_after: Unpaired member count on the far (3') strand, after the
+            child branch's own end.
+
+    Returns:
+        The `BulgePacking` `place_bulge_geometry` places from.
+    """
+    steps = max(n_before, n_after) + 1
+    near_axials = list(range(1, n_before + 1))
+    far_axials = [n_after - k for k in range(n_after)]
+    return BulgePacking(steps=steps, near_axials=near_axials, far_axials=far_axials)
+
+
+def place_bulge_geometry(
+    tip_a: Point,
+    tip_b: Point,
+    axis_dir: Point,
+    packing: BulgePacking,
+    primary_space: float,
+    pair_space: float,
+) -> tuple[list[Point], list[Point], Point]:
+    """Place a bulge/interior loop's unpaired members + child attachment.
+
+    Both rails run parallel to `axis_dir`, `pair_space` apart across the
+    (virtual) rung at each axial step -- the SAME near/far offset
+    convention `place_stem` uses (near = `-pair_space/2`, far =
+    `+pair_space/2`), so a bulge chain composes with an ordinary stem
+    ladder as one continuous pair of parallel rails.
+
+    Args:
+        tip_a: The loop's own closing pair near-strand coordinate (the
+            parent stem's innermost rung, near side).
+        tip_b: The loop's own closing pair far-strand coordinate.
+        axis_dir: Unit vector the bulge continues along (unchanged from
+            the parent stem's own axis -- the near-straight-continuation
+            approach this function implements).
+        packing: The axial plan from `pack_bulge_linear`.
+        primary_space: Backbone step per axial unit.
+        pair_space: Center-to-center rail separation.
+
+    Returns:
+        `(near_points, far_points, attachment)`: one point per
+        `packing.near_axials` entry, one per `packing.far_axials` entry,
+        and the point the child branch's own attachment
+        (`closing_pair[0]`) must land at exactly.
+    """
+    perp = rotate90_ccw(axis_dir)
+    half_pair = pair_space / 2.0
+    center0 = midpoint(tip_a, tip_b)
+
+    def axial_point(step: int, side: float) -> Point:
+        rung_center = translate(center0, axis_dir, step * primary_space)
+        return translate(rung_center, perp, side * half_pair)
+
+    near_points = [axial_point(step, -1.0) for step in packing.near_axials]
+    far_points = [axial_point(step, 1.0) for step in packing.far_axials]
+    attachment = axial_point(packing.steps, -1.0)
+    return near_points, far_points, attachment
+
+
 def pack_line_positions(extents: list[float], primary_space: float) -> list[float]:
     """Place `len(extents)` slots along an open line, disjoint by construction.
 
@@ -376,6 +474,7 @@ __all__ = [
     "Point",
     "StemLadder",
     "LoopPacking",
+    "BulgePacking",
     "rotate90_ccw",
     "rotate",
     "midpoint",
@@ -383,6 +482,8 @@ __all__ = [
     "stem_base_for_attachment",
     "place_stem",
     "pack_loop_angles",
+    "pack_bulge_linear",
+    "place_bulge_geometry",
     "pack_line_positions",
     "loop_member_point",
 ]
