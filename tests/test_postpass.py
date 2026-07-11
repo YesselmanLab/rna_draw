@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from pathlib import Path
 
 import pytest
@@ -289,6 +290,34 @@ class TestRemoveOverlapsMonotone:
 
         result = remove_overlaps(x, y, pair_map)
         assert result.report_after.num_overlaps <= before
+
+    @pytest.mark.parametrize("time_budget_s", [0.0, 1e-6])
+    def test_tiny_time_budget_never_worsens_and_returns_quickly(
+        self, time_budget_s: float
+    ) -> None:
+        # A tiny budget should cut the move loop off almost immediately --
+        # the monotone guarantee holds regardless (see docstring): every
+        # accepted move already strictly reduced the count, so best-so-far
+        # is at most the input's overlap count even if the loop exits after
+        # zero or one moves.
+        x, y, pair_map = _nudged_multiloop(0.5)
+        before = check_overlaps(x, y, pair_map, POSTPASS_PARAMS).num_overlaps
+        assert before > 0, "fixture expected to be dirty before the post-pass"
+
+        start = time.monotonic()
+        result = remove_overlaps(x, y, pair_map, PostPassConfig(time_budget_s=time_budget_s))
+        elapsed = time.monotonic() - start
+
+        assert result.report_after.num_overlaps <= before
+        assert elapsed < 2.0
+
+    def test_time_budget_none_reproduces_prior_unbounded_behavior(self) -> None:
+        x, y, pair_map = _nudged_multiloop(0.15)
+        unbounded = remove_overlaps(x, y, pair_map, PostPassConfig(time_budget_s=None))
+        default = remove_overlaps(x, y, pair_map, PostPassConfig())
+        assert unbounded.x == default.x
+        assert unbounded.y == default.y
+        assert unbounded.moves_applied == default.moves_applied
 
 
 class TestRemoveOverlapsEfficacy:

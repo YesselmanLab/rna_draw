@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import math
 import statistics
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
@@ -105,6 +106,18 @@ class PostPassConfig:
             witnesses (see module docstring).
         inflate_factors: Candidate radial scale factors tried for
             `inflate_loop` (see that function and the module docstring).
+        time_budget_s: Wall-clock budget, in seconds, for the move loop in
+            `remove_overlaps`; `None` (default) means unbounded, so the
+            benchmark (which has its own hard per-structure kill, see
+            `benchmarks/hard_gate.py`) and existing tests are unaffected.
+            The production pipeline (`rna_draw.layout.production`) passes
+            a finite budget so a large, many-overlap structure cannot grind
+            past a caller's patience -- the move loop returns the best
+            layout found so far when the budget expires. This preserves
+            the never-worse guarantee: every accepted move already
+            strictly reduced the overlap count (see module docstring), so
+            best-so-far is always <= the input's overlap count regardless
+            of when the loop exits.
     """
 
     params: OverlapParams = field(default_factory=_default_postpass_params)
@@ -113,6 +126,7 @@ class PostPassConfig:
     translate_fractions: tuple[float, ...] = (0.5, 1.0)
     exterior_translate_steps: tuple[float, ...] = (0.5, 1.0)
     inflate_factors: tuple[float, ...] = (1.1, 1.2, 1.35, 1.5, 1.75, 2.0)
+    time_budget_s: float | None = None
 
 
 @dataclass
@@ -725,6 +739,22 @@ def _degenerate_report(
     return check_overlaps(x, y, pair_map, params)
 
 
+def _budget_exceeded(start: float, config: PostPassConfig) -> bool:
+    """Whether `remove_overlaps`'s move loop has run past its time budget.
+
+    Args:
+        start: `time.monotonic()` value recorded when the loop began.
+        config: Supplies `time_budget_s` (`None` means unbounded).
+
+    Returns:
+        True iff `config.time_budget_s` is set and that many seconds have
+        elapsed since `start`.
+    """
+    if config.time_budget_s is None:
+        return False
+    return time.monotonic() - start >= config.time_budget_s
+
+
 def remove_overlaps(
     x: Sequence[float],
     y: Sequence[float],
@@ -737,9 +767,12 @@ def remove_overlaps(
     under the move budget, picks a witness, builds candidate rigid moves
     for the branches it implicates, and applies the first one that
     strictly reduces the overlap count. Stops at zero overlaps, at
-    `config.max_moves` accepted moves, or when no witness's candidates
-    improve on the current count. Never returns a layout worse than the
-    input (see module docstring).
+    `config.max_moves` accepted moves, when no witness's candidates
+    improve on the current count, or when `config.time_budget_s` elapses
+    (returning the best-so-far layout). Never returns a layout worse than
+    the input (see module docstring) -- every accepted move already
+    strictly reduced the count, so a time-budget exit is as safe as any
+    other stopping point.
 
     Args:
         x: Nucleotide x-coordinates.
@@ -768,7 +801,10 @@ def remove_overlaps(
     cur_count = report_before.num_overlaps
     witnesses = report_before.witnesses
     moves = 0
+    start = time.monotonic()
     while cur_count > 0 and moves < config.max_moves:
+        if _budget_exceeded(start, config):
+            break
         applied = _try_witnesses(tree, witnesses, cur_x, cur_y, pair_map, config, cur_count)
         if applied is None:
             break

@@ -3,12 +3,23 @@
 `build_engine(name)` returns an object with `layout(structure) -> (x, y)`.
 Successive M5 levers are added here so each is measured by `hard_gate`
 against the same frozen structure set and checker.
+
+`EscalatingClearanceEngine`, `PostPassEngine`, and `POSTPASS_MAX_WITNESSES`
+live in `rna_draw.layout.production` (the real pipeline's default engine
+composition) and are re-imported here rather than duplicated, so the
+benchmark and the production pipeline measure/run the exact same code (see
+that module's docstring for the composition and hang-safety rationale).
 """
 
 from __future__ import annotations
 
 import rna_draw._vienna_layout as _vienna_layout
-from rna_draw.layout.postpass import POSTPASS_PARAMS, remove_overlaps
+from rna_draw.layout.base import iter_adaptive_params
+from rna_draw.layout.production import (
+    POSTPASS_MAX_WITNESSES,
+    EscalatingClearanceEngine,
+    PostPassEngine,
+)
 from rna_draw.layout.vienna import (
     ViennaNaviewEngine,
     ViennaPuzzlerEngine,
@@ -18,44 +29,26 @@ from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
-# Cap on how dirty a base layout may be, *measured at POSTPASS_PARAMS's floor
-# radius* (see that constant's docstring), before the post-pass even attempts
-# it. Raised 6->20 after measuring: most 7-20-overlap structures are also
-# small-loop crowding that loop inflation clears, so attempting them lifts the
-# hard-set clean rate 72.9%->87.3%. Above ~20 the residual is the deep rRNA
-# tail (constructive-engine territory), where the pass only burns candidate
-# rechecks -- and can exceed the gate's 30s hard-kill (a few such structures
-# become timeouts rather than stalls). See the post-pass plan's R1.
-POSTPASS_MAX_WITNESSES = 20
-
 _SIMPLE = {
     "puzzler": ViennaPuzzlerEngine,
     "naview": ViennaNaviewEngine,
     "turtle": ViennaTurtleEngine,
 }
 
-# Same adaptive radius range the gate scores on, used by the portfolio to
-# rank candidate engines by their best achievable witness count.
-_TARGET_R = 10.0
-_FLOOR_R = 8.0
-_STEP_R = 0.25
-
 
 def _best_witnesses(x, y, pair_map) -> int:
-    floor = _FLOOR_R
-    radius = _TARGET_R
+    """Minimum overlap-witness count over the adaptive radius range.
+
+    Delegates to `iter_adaptive_params(OverlapParams())` (the same [8, 10]
+    range at 0.25 steps this used to compute inline) so the portfolio's
+    engine ranking uses the one shared ladder implementation.
+    """
     best = None
-    while radius >= floor - 1e-9:
-        params = OverlapParams(
-            node_r=radius,
-            backbone_half_width=0.75 * radius,
-            pair_half_width=0.75 * radius,
-        )
+    for params in iter_adaptive_params(OverlapParams()):
         count = check_overlaps(x, y, pair_map, params).num_overlaps
         best = count if best is None else min(best, count)
         if best == 0:
             break
-        radius -= _STEP_R
     return best if best is not None else 0
 
 
@@ -124,91 +117,21 @@ class PuzzlerOptsEngine:
         return rescale_coords(x, y, self._primary)
 
 
-class EscalatingClearanceEngine:
-    """Per-structure escalating clearance (M5). Lay out at the cheapest
-    clearance first; if the checker still finds overlaps, retry at higher
-    clearance, keeping the fewest-overlap result. Spends expensive high
-    clearance only on structures that need it -- most of the cost of a flat
-    high clearance is on large structures that stay dirty anyway, so
-    escalating cleans the many small/mid dirty structures without paying
-    that cost everywhere.
-    """
-
-    name = "escalating_clearance"
-
-    # Finer ladder (measured best on the 450 hard set: 52.2% clean vs 48.0%
-    # for the 3-step ladder). The 2.0x top can send puzzler's C resolver
-    # into a long loop, so this engine REQUIRES the gate's hard worker-kill
-    # timeout (hard_gate.py runs one process per structure and terminate()s
-    # a stuck child) -- do not use it under a plain thread/pool without one.
-    def __init__(self, levels: tuple[float, ...] = (1.0, 1.25, 1.5, 1.75, 2.0)) -> None:
-        self._levels = levels
-        self._primary = DrawParameters().PRIMARY_SPACE
-
-    def layout(self, structure: str):
-        n = len(structure)
-        if n == 0:
-            return [], []
-        if n < 2:
-            return [0.0] * n, [0.0] * n
-        pair_map = get_pairmap_from_secstruct(structure)
-        best_coords = None
-        best_count = None
-        for level in self._levels:
-            rx, ry = _vienna_layout.plot_coords_puzzler_opts(structure, False, 0, level)
-            x, y = rescale_coords(rx, ry, self._primary)
-            count = _best_witnesses(x, y, pair_map)
-            if best_count is None or count < best_count:
-                best_count, best_coords = count, (x, y)
-            if best_count == 0:
-                break
-        assert best_coords is not None
-        return best_coords
-
-
-class PostPassEngine:
-    """Wrap a base engine with the rigid local post-pass (M5.2).
-
-    Lays out with `base`, then -- only when the result is dirty and not
-    too dirty to be worth it (`report_before.num_overlaps <=
-    POSTPASS_MAX_WITNESSES`; see that constant's docstring) -- hands the
-    coordinates to `rna_draw.layout.postpass.remove_overlaps`, which is
-    guaranteed to never increase the overlap count. Deep dirty structures
-    (rRNA-scale, >`POSTPASS_MAX_WITNESSES` overlaps) short-circuit straight
-    to the base coordinates: they are out of scope for local rigid moves
-    and would only spend candidate rechecks for no realistic payoff.
-
-    The gate/skip decision is made at `POSTPASS_PARAMS`'s floor radius, the
-    same radius the pass's own acceptance checks use (`PostPassConfig`'s
-    default), because the hard gate scores a structure by the minimum
-    overlap count over its adaptive radius range -- checking at the
-    renderer's default radius instead would see a near-clean structure as
-    far dirtier than the gate does and wrongly skip it (see
-    `rna_draw.layout.postpass`'s module docstring).
-    """
-
-    name = "postpass"
-
-    def __init__(self, base=None) -> None:
-        self._base = base if base is not None else EscalatingClearanceEngine()
-
-    def layout(self, structure: str):
-        x, y = self._base.layout(structure)
-        if len(structure) < 2:
-            return x, y
-        pair_map = get_pairmap_from_secstruct(structure)
-        report_before = check_overlaps(x, y, pair_map, POSTPASS_PARAMS)
-        if report_before.passed or report_before.num_overlaps > POSTPASS_MAX_WITNESSES:
-            return x, y
-        result = remove_overlaps(x, y, pair_map)
-        return result.x, result.y
-
-
 def _parse_opts(name: str) -> tuple[bool, int, float]:
     """`puzzler_opts:flip,budget[,clearance]` e.g. `puzzler_opts:0,0,1.5`."""
     spec = name.split(":", 1)[1] if ":" in name else "0,0,0"
     parts = (spec.split(",") + ["0", "0", "0"])[:3]
     return bool(int(parts[0] or 0)), int(parts[1] or 0), float(parts[2] or 0.0)
+
+
+__all__ = [
+    "POSTPASS_MAX_WITNESSES",
+    "EscalatingClearanceEngine",
+    "PostPassEngine",
+    "PortfolioEngine",
+    "PuzzlerOptsEngine",
+    "build_engine",
+]
 
 
 def build_engine(name: str):

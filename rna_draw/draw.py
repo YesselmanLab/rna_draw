@@ -55,7 +55,7 @@ def get_parser():
     parser.add_argument(
         "-engine",
         default="auto",
-        help="layout engine: auto|legacy|puzzler|vienna_puzzler|naview|turtle",
+        help="layout engine: auto|legacy|puzzler|production|vienna_puzzler|naview|turtle",
         required=False,
     )
     return parser

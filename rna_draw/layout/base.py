@@ -10,12 +10,20 @@ signature, so swapping backends never touches callers (`rna_draw/draw.py`,
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from rna_draw.overlap import OverlapKind, OverlapReport
+from rna_draw.overlap import OverlapKind, OverlapParams, OverlapReport
 
 PSEUDOKNOT_BRACKETS = "()."
+
+# Adaptive render-radius ladder shared by `pipeline._largest_clean_node_r`
+# and the benchmark's `_best_witnesses` (`iter_adaptive_params`, below):
+# never shrink readable disks below 80% of the target radius, searched in
+# 0.25-unit steps.
+MIN_NODE_R_FRACTION = 0.8
+NODE_R_STEP = 0.25
 
 
 @runtime_checkable
@@ -132,6 +140,43 @@ def has_empty_loop(secstruct: str) -> bool:
     return "()" in secstruct
 
 
+def iter_adaptive_params(params: OverlapParams) -> Iterator[OverlapParams]:
+    """Yield `OverlapParams` at a descending node-radius ladder.
+
+    The single source of truth for the adaptive-radius search duplicated
+    across `pipeline._largest_clean_node_r`, the benchmark's
+    `_best_witnesses`, and `hard_gate._min_witnesses`: start at
+    `params.node_r` (the target) and step down by `NODE_R_STEP` to
+    `MIN_NODE_R_FRACTION * params.node_r` (the floor), never shrinking
+    readable disks below 80% of the target. `backbone_half_width` and
+    `pair_half_width` scale with the radius, preserving their ratio to
+    `params.node_r`, and `params.tol` is carried through unchanged --
+    dropping `tol` would silently change the render/gate decision (see
+    callers).
+
+    Args:
+        params: Target geometry; `params.node_r` is the search ceiling.
+
+    Yields:
+        `OverlapParams` at each radius in `[floor, target]`, descending
+        from `target`, each carrying `params.tol` unchanged.
+    """
+    target = params.node_r
+    floor = target * MIN_NODE_R_FRACTION
+    bb_ratio = params.backbone_half_width / target if target else 0.75
+    pr_ratio = params.pair_half_width / target if target else 0.75
+
+    radius = target
+    while radius >= floor - 1e-9:
+        yield OverlapParams(
+            node_r=radius,
+            backbone_half_width=bb_ratio * radius,
+            pair_half_width=pr_ratio * radius,
+            tol=params.tol,
+        )
+        radius -= NODE_R_STEP
+
+
 def empty_report() -> OverlapReport:
     """Build a zero-witness `OverlapReport` for the length-0 short-circuit.
 
@@ -150,7 +195,10 @@ __all__ = [
     "LayoutResult",
     "EngineError",
     "EngineUnavailableError",
+    "MIN_NODE_R_FRACTION",
+    "NODE_R_STEP",
     "is_pseudoknot_free",
     "has_empty_loop",
     "empty_report",
+    "iter_adaptive_params",
 ]

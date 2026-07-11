@@ -13,12 +13,21 @@ from conftest import random_structure
 from rna_draw.layout.base import empty_report, has_empty_loop, is_pseudoknot_free
 from rna_draw.layout.legacy import LegacyEngine
 from rna_draw.layout.pipeline import (
+    _production_available,
+    _try_primary,
     default_engine,
     layout_guaranteed,
     resolve_engine,
 )
+from rna_draw.layout.production import production_engine
 from rna_draw.layout.puzzler import PuzzlerEngine
+from rna_draw.layout.vienna import ViennaPuzzlerEngine
 from rna_draw.overlap import OverlapParams
+
+HAVE_VIENNA_EXTENSION = _production_available()
+requires_production = pytest.mark.skipif(
+    not HAVE_VIENNA_EXTENSION, reason="rna_draw._vienna_layout not importable/ABI-matched"
+)
 
 
 class FakeEngine:
@@ -98,24 +107,117 @@ class TestLayoutGuaranteedFallback:
 
 
 class TestEngineSelection:
-    def test_default_engine_is_puzzler_when_available(
+    """`default_engine`'s 3-way precedence: production, then subprocess
+    puzzler, then legacy. `_production_available` is monkeypatched (rather
+    than the real ABI/import check) so both branches are exercised
+    regardless of whether this environment has the compiled extension.
+    """
+
+    def test_default_engine_is_production_when_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("rna_draw.layout.pipeline._production_available", lambda: True)
+        engine = default_engine()
+        assert engine.name == "production"
+
+    def test_default_engine_is_puzzler_when_production_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("rna_draw.layout.pipeline._production_available", lambda: False)
         monkeypatch.setattr(PuzzlerEngine, "is_available", staticmethod(lambda: True))
         assert isinstance(default_engine(), PuzzlerEngine)
 
-    def test_default_engine_is_legacy_when_puzzler_unavailable(
+    def test_default_engine_is_legacy_when_neither_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("rna_draw.layout.pipeline._production_available", lambda: False)
         monkeypatch.setattr(PuzzlerEngine, "is_available", staticmethod(lambda: False))
         assert isinstance(default_engine(), LegacyEngine)
 
-    def test_pipeline_falls_back_to_legacy_or_fallback_when_puzzler_absent(
+    def test_pipeline_falls_back_to_legacy_or_fallback_when_nothing_available(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setattr("rna_draw.layout.pipeline._production_available", lambda: False)
         monkeypatch.setattr(PuzzlerEngine, "is_available", staticmethod(lambda: False))
         result = layout_guaranteed("((((....))))")
         assert result.engine_name in {"legacy", "fallback"}
+
+    @requires_production
+    def test_resolve_engine_production_has_production_name(self) -> None:
+        engine = resolve_engine("production")
+        assert engine is not None
+        assert engine.name == "production"
+
+
+class TestProductionNeverSilentOverlap:
+    """The end-to-end honest contract with the new default: `layout_guaranteed`
+    using the real production engine must be checker-clean or flagged --
+    never a silent overlap. Mirrors
+    `tests/test_vienna_binding.py::TestEnginesNeverSilentlyOverlapInPipeline`.
+    """
+
+    @requires_production
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("seed", range(5))
+    @pytest.mark.parametrize("n", [5, 20, 60])
+    def test_never_silent_overlap(self, seed: int, n: int) -> None:
+        secstruct = random_structure(seed, n)
+        result = layout_guaranteed(secstruct, engine=production_engine())
+        assert result.flagged or result.report.passed
+
+    @requires_production
+    def test_default_engine_is_production_end_to_end(self) -> None:
+        # Not monkeypatched: in an env where the extension is importable
+        # and ABI-matched, `-engine auto` (default_engine()) really does
+        # select production.
+        assert default_engine().name == "production"
+
+
+class TestProductionCleansAStockDirtyStructure:
+    """Regression: a concrete real-corpus structure the stock in-process
+    puzzler cannot lay out checker-clean (over the adaptive radius range),
+    but the production engine (escalation + bounded post-pass) can.
+
+    Found by scanning `benchmarks/worst_set.json` smallest-first for the
+    first structure where `_try_primary(ViennaPuzzlerEngine(), ...)` fails
+    but `_try_primary(production_engine(), ...)` succeeds
+    (`bpRNA_RFAM_35409.dbn`, 684nt).
+
+    Uses `pipeline._try_primary` directly for the stock-side assertion
+    rather than the full `layout_guaranteed` -- `_try_primary(...) is
+    None` IS exactly "would be flagged", and this large, heavily
+    overlapping input makes `SafeFallbackEngine`'s doubling search (the
+    full pipeline's actual fallback path) slow; that cost is orthogonal to
+    what this test checks (production vs. stock at the primary-engine
+    stage) and is not exercised here.
+    """
+
+    STOCK_DIRTY_PRODUCTION_CLEAN = (
+        ".............................................((((((((...(((((((((....))))..("
+        "((.......)))...........................)))))....................(((((((....."
+        "..................(((((((((((.............................................(("
+        "(((....)))))........................................((((...................."
+        "...(((((((..............))))))).....(((((((................................."
+        "................................................)))))))....................."
+        "......................................................))))..........))))))))"
+        ")))......................................((((((......(((((((................"
+        "..............)))))))......))))))................)))))))...))))))))........."
+    )  # bpRNA_RFAM_35409.dbn, benchmarks/worst_set.json (684nt)
+
+    @requires_production
+    @pytest.mark.timeout(20)
+    def test_stock_vienna_puzzler_cannot_go_clean(self) -> None:
+        result = _try_primary(
+            ViennaPuzzlerEngine(), self.STOCK_DIRTY_PRODUCTION_CLEAN, OverlapParams()
+        )
+        assert result is None
+
+    @requires_production
+    @pytest.mark.timeout(20)
+    def test_production_engine_is_clean_and_unflagged(self) -> None:
+        result = layout_guaranteed(self.STOCK_DIRTY_PRODUCTION_CLEAN, engine=production_engine())
+        assert result.flagged is False
+        assert result.report.passed
 
 
 class TestPseudoknotAndEmpty:

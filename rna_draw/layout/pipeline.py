@@ -17,9 +17,11 @@ from .base import (
     LayoutResult,
     empty_report,
     is_pseudoknot_free,
+    iter_adaptive_params,
 )
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
+from .production import production_engine
 from .puzzler import PuzzlerEngine
 from .vienna import (
     EXPECTED_PUZZLER_OPTIONS_SIZEOF,
@@ -29,15 +31,6 @@ from .vienna import (
     ViennaTurtleEngine,
 )
 
-# Re-exported from `.vienna` (where the ABI guard now lives, so it runs on
-# every engine construction, not just the `resolve_engine` path). Kept
-# importable here for back-compat with callers/tests using
-# `pipeline.EXPECTED_*`.
-__all__ = ["EXPECTED_PUZZLER_OPTIONS_SIZEOF", "EXPECTED_VIENNA_ABI_VERSION"]
-
-MIN_NODE_R_FRACTION = 0.8  # never shrink readable disks below 80% of target
-NODE_R_STEP = 0.25  # search granularity, in layout units
-
 _VIENNA_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
     "vienna_puzzler": ViennaPuzzlerEngine,
     "naview": ViennaNaviewEngine,
@@ -45,13 +38,43 @@ _VIENNA_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
 }
 
 
-def default_engine() -> LayoutEngine:
-    """Pick the default engine: puzzler when available, else legacy.
+def _production_available() -> bool:
+    """Whether the in-process production engine can be constructed.
+
+    Checks that `rna_draw._vienna_layout` imports and its ABI matches what
+    `rna_draw.layout.vienna` was built against -- the same comparison
+    `vienna._assert_vienna_abi` makes, but returning a bool instead of
+    raising, so `default_engine()` can silently fall through to the
+    subprocess puzzler or legacy engine on drift instead. Kept as a
+    standalone, monkeypatchable module-level function so tests can force
+    either branch of `default_engine()`'s precedence.
 
     Returns:
-        A `PuzzlerEngine` if `RNAplot` is on `PATH`, else a `LegacyEngine`
-        (so installs without ViennaRNA keep working).
+        True iff the extension imports and neither `abi_version()` nor
+        `sizeof_puzzler_options()` has drifted from `EXPECTED_*`.
     """
+    try:
+        from rna_draw import _vienna_layout
+    except ImportError:
+        return False
+    return (
+        _vienna_layout.abi_version() == EXPECTED_VIENNA_ABI_VERSION
+        and _vienna_layout.sizeof_puzzler_options() == EXPECTED_PUZZLER_OPTIONS_SIZEOF
+    )
+
+
+def default_engine() -> LayoutEngine:
+    """Pick the default engine: production, else subprocess puzzler, else legacy.
+
+    Returns:
+        `production_engine()` (in-process clearance escalation + a
+        wall-clock-bounded local overlap post-pass, see
+        `rna_draw.layout.production`) if `_production_available()`; else a
+        `PuzzlerEngine` if `RNAplot` is on `PATH`; else a `LegacyEngine`
+        (so installs without a working ViennaRNA setup keep working).
+    """
+    if _production_available():
+        return production_engine()
     if PuzzlerEngine.is_available():
         return PuzzlerEngine()
     return LegacyEngine()
@@ -61,8 +84,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
     """Resolve a CLI/API engine-selection string to an engine instance.
 
     Args:
-        name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"vienna_puzzler"`,
-            `"naview"`, `"turtle"`.
+        name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"production"`,
+            `"vienna_puzzler"`, `"naview"`, `"turtle"`.
 
     Returns:
         `None` for `"auto"` (the pipeline uses `default_engine()`), or a
@@ -81,6 +104,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
         return LegacyEngine()
     if name == "puzzler":
         return PuzzlerEngine()
+    if name == "production":
+        return production_engine()
     if name in _VIENNA_ENGINE_FACTORIES:
         return _VIENNA_ENGINE_FACTORIES[name]()
     raise ValueError(f"unknown layout engine: {name!r}")
@@ -170,23 +195,10 @@ def _largest_clean_node_r(
         `(params_at_that_radius, report)` for the largest clean radius, or
         `None` if even the floor radius fails.
     """
-    target = params.node_r
-    floor = target * MIN_NODE_R_FRACTION
-    bb_ratio = params.backbone_half_width / target if target else 0.75
-    pr_ratio = params.pair_half_width / target if target else 0.75
-
-    radius = target
-    while radius >= floor - 1e-9:
-        candidate = OverlapParams(
-            node_r=radius,
-            backbone_half_width=bb_ratio * radius,
-            pair_half_width=pr_ratio * radius,
-            tol=params.tol,
-        )
+    for candidate in iter_adaptive_params(params):
         report = check_overlaps(x, y, pair_map, candidate)
         if report.passed:
             return candidate, report
-        radius -= NODE_R_STEP
     return None
 
 
@@ -208,6 +220,10 @@ def _fallback_result(secstruct: str, params: OverlapParams) -> LayoutResult:
     return LayoutResult(x, y, "fallback", report, flagged=True, node_r=params.node_r)
 
 
+# `EXPECTED_*` are re-exported from `.vienna` (where the ABI guard now
+# lives, so it runs on every engine construction, not just the
+# `resolve_engine` path). Kept importable here for back-compat with
+# callers/tests using `pipeline.EXPECTED_*`.
 __all__ = [
     "layout_guaranteed",
     "default_engine",
