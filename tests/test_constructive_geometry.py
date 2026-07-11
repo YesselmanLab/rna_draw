@@ -172,8 +172,11 @@ class TestConstructiveEngineSingleMultiloopOfHairpins:
 
 
 class TestConstructiveEngineScope:
-    """M1's explicit scope guardrails: unsupported shapes raise `EngineError`,
-    never a silently returned overlap.
+    """M1 scope guardrails that still hold in M2 (pseudoknots, size cap),
+    plus M1-era restrictions M2 deliberately LIFTS (dangling tails, multiple
+    top-level branches, all-unpaired, nested multiloop children -- see
+    `tests/test_constructive_engine.py` for their dedicated M2 coverage):
+    those now assert success, not `EngineError`.
     """
 
     def test_name_is_constructive(self) -> None:
@@ -189,21 +192,29 @@ class TestConstructiveEngineScope:
         with pytest.raises(EngineError):
             ConstructiveEngine().layout("([)]")
 
-    def test_dangling_tail_raises(self) -> None:
-        with pytest.raises(EngineError):
-            ConstructiveEngine().layout(".((...))")
+    def test_dangling_tail_is_clean(self) -> None:
+        secstruct = ".((...))"
+        x, y = ConstructiveEngine().layout(secstruct)
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, OverlapParams()).passed
 
-    def test_multiple_top_level_branches_raises(self) -> None:
-        with pytest.raises(EngineError):
-            ConstructiveEngine().layout("((...))((...))")
+    def test_multiple_top_level_branches_is_clean(self) -> None:
+        secstruct = "((...))((...))"
+        x, y = ConstructiveEngine().layout(secstruct)
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, OverlapParams()).passed
 
-    def test_all_unpaired_raises(self) -> None:
-        with pytest.raises(EngineError):
-            ConstructiveEngine().layout("....")
+    def test_all_unpaired_is_clean(self) -> None:
+        secstruct = "...."
+        x, y = ConstructiveEngine().layout(secstruct)
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, OverlapParams()).passed
 
-    def test_nested_multiloop_child_raises(self) -> None:
-        with pytest.raises(EngineError):
-            ConstructiveEngine().layout("((((...))(...)).(...))")
+    def test_nested_multiloop_child_is_clean(self) -> None:
+        secstruct = "((((...))(...)).(...))"
+        x, y = ConstructiveEngine().layout(secstruct)
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, OverlapParams()).passed
 
     def test_plain_hairpin_is_clean(self) -> None:
         secstruct = "(((...)))"

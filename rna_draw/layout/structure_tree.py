@@ -174,6 +174,37 @@ def build_structure_tree(pair_map: Sequence[int]) -> StructureTree:
     )
 
 
+def collapse_stem(tree: StructureTree, start_pair: tuple[int, int]) -> tuple[int, Loop]:
+    """Walk a run of consecutive stacked pairs to the loop that branches.
+
+    A loop is a pure "stack continuation" -- not a real branch point -- when
+    it has exactly one child and no unpaired members (`Loop.members` is then
+    just `[closing_pair[0], child.start, closing_pair[1]]`). A straight
+    helix in a real RNA drawing spans the whole stack, not one segment per
+    stacked pair, so the constructive layout engine (`rna_draw.layout.
+    constructive`) collapses the whole run into a single rigid ladder rather
+    than placing one degenerate "loop" per stacked pair.
+
+    Args:
+        tree: The structure tree containing `start_pair`.
+        start_pair: The outermost pair of the stem to walk.
+
+    Returns:
+        `(depth, loop)`: the total stacked-pair count, and the `Loop` at the
+        bottom of the stack (the first real branch point: a hairpin, an
+        interior loop/bulge, or a multiloop).
+    """
+    depth = 0
+    pair = start_pair
+    while True:
+        depth += 1
+        loop = tree.loop_by_closing_pair[pair]
+        is_stack_continuation = len(loop.children) == 1 and len(loop.members) == 3
+        if not is_stack_continuation:
+            return depth, loop
+        pair = loop.children[0].closing_pair
+
+
 def loop_center(
     members: Sequence[int], x: Sequence[float], y: Sequence[float]
 ) -> tuple[float, float]:

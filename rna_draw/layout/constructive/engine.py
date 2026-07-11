@@ -1,74 +1,162 @@
 """`ConstructiveEngine`: bottom-up, checker-clean-by-construction layout.
 
-M1 scope (see `.claude/plans/constructive-engine-runbook.md`): a single
-multiloop of hairpins. Concretely, the engine only handles an exterior loop
-with exactly one top-level branch (no dangling 5'/3' tails, no sibling
-branches), whose closing stem -- collapsed through any run of stacked pairs
--- leads to one loop (a plain hairpin, or a multiloop whose every child
-branch itself collapses straight to a plain hairpin). Every other shape
-(pseudoknots, multi-branch/tailed exterior loops, bulges/interior loops,
-nested multiloops) raises `EngineError`; those are later milestones (M2's
-S5-S7).
+M2 scope (see the constructive-engine runbook, milestone M2): ANY
+pseudoknot-free structure up to `_MAX_NUCLEOTIDES` nt (the pure-Python
+engine is too slow past that -- routes to the fallback engine until a
+future C++ port, runbook Risk R2). A general post-order recursion over
+`rna_draw.layout.structure_tree.StructureTree`: stems (collapsed through
+runs of stacked pairs, `structure_tree.collapse_stem`) plus the loop each
+one closes -- a hairpin, a bulge/interior loop, or a multiloop of ANY
+degree and ANY nesting depth, all packed by the same exact circular
+angular-interval packer (`geometry_helpers.pack_loop_angles`). The one
+loop with an OPEN boundary -- the exterior (dangling 5'/3' tails + any
+number of top-level branches, no closing pair) -- is packed along a line
+instead (`geometry_helpers.pack_line_positions`); see `_place_exterior`.
+
+The change from M1 that makes this general composition sound: a child
+branch's slot on its parent's loop/line is no longer a fixed constant --
+it is `envelope.branch_reach`, a topology-only bound (S5) on the child's
+WHOLE subtree, computed bottom-up BEFORE any placement happens (as a side
+effect of the top-level `envelope.branch_reach` calls in `_place_exterior`
+-- see `envelope.py`'s module docstring for the disjointness proof this
+composition relies on).
 
 Every produced layout is verified against the frozen checker
 (`rna_draw.overlap.check_overlaps`) before it is returned: a dirty result
 is never handed back silently, it raises `EngineError` instead (see
-`ConstructiveEngine.layout`).
+`ConstructiveEngine.layout`). `EngineError` is also the ONLY exception this
+module raises for a give-up path (never a bare `RuntimeError`), including
+converting a pathologically deep structure's `RecursionError` (see
+`_ensure_recursion_headroom`).
 """
 
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 
 from rna_draw.layout.base import EngineError, is_pseudoknot_free
-from rna_draw.layout.structure_tree import Branch, Loop, StructureTree, build_structure_tree
+from rna_draw.layout.structure_tree import (
+    Branch,
+    Loop,
+    StructureTree,
+    build_structure_tree,
+    collapse_stem,
+)
 from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
+from . import envelope
 from .geometry_helpers import (
     Point,
     StemLadder,
     loop_member_point,
     midpoint,
-    pack_loop_angles,
+    pack_line_positions,
     place_stem,
+    stem_base_for_attachment,
 )
 
-_RADIUS_STEP = 1.0
-_RADIUS_SEARCH_SLACK = 1.0
+# The pure-Python engine's recursive tree-DP is too slow (and grows Python
+# stack depth with structural nesting) to be worth attempting past this
+# length -- larger structures should route to a faster fallback engine
+# instead (runbook Risk R2). Checked FIRST in `layout`, before any other
+# work, so the engine never even starts on a giant structure.
+_MAX_NUCLEOTIDES = 1200
 
-# Clearance margins added on top of each slot's provably-sufficient minimum
-# chord half-width (see `_place_loop_members`'s docstring for the
-# `chord >= hw_i + hw_j` proof) before angular packing: just enough to clear
-# float noise and the small deviation a stem rung's actual disks have from
-# their anchor point (offset `PAIR_SPACE / 2` tangentially). M1 favors
-# correctness over maximal compactness -- see the runbook's M3 compactness
-# pass for tightening this further.
-_UNPAIRED_MARGIN = 0.5
-_STEM_RUNG_MARGIN = 9.0
+# Fixed reference direction every top-level exterior branch opens along
+# (straight "down" from the backbone line) -- see `_place_exterior`. The
+# SIGN matters, not just the axis: `stem_base_for_attachment` always offsets
+# a branch's OTHER strand (`closing_pair[1]`) toward `rotate90_ccw(axis_dir)`
+# from its attachment point, which for this axis points toward INCREASING
+# exterior position (the same "toward whatever comes next" convention a
+# loop's own radially-outward axis_dir gives via its CCW tangent) -- so an
+# incoming backbone edge from an EARLIER (lower-position) sibling, which
+# always approaches from the opposite (`-rotate90_ccw`) side, never grazes
+# it. Using `(0.0, 1.0)` here instead would put that offset on the
+# EARLIER-sibling side, exactly where the incoming edge travels.
+_EXTERIOR_AXIS: Point = (0.0, -1.0)
+
+# `_place_branch`/`_place_loop_members` recurse one Python stack frame per
+# structural nesting level (not per nucleotide); this is a generous
+# per-nucleotide upper bound on how deep that could plausibly go, used to
+# raise the recursion limit defensively (never lowers an already-higher
+# limit some other caller set).
+_RECURSION_FRAMES_PER_NT = 4
+_RECURSION_HEADROOM = 1000
+
+# A hard cap on `envelope.branch_reach`, checked BEFORE any coordinate is
+# written or the checker runs (see `_place_exterior`). A long CHAIN of
+# single-child bulge/interior loops -- extremely common in real rRNA
+# "irregular helix" runs -- makes `envelope.branch_reach` compound roughly
+# 3x PER NESTING LEVEL (each level's loop radius must be at least as large
+# as its one dominant child's own reach, by the soundness proof's own
+# `radius_floor` requirement, then adds that child's reach again on top of
+# TWICE that radius): sound at every step (the disjointness proof still
+# holds), but for real structures with dozens of such levels this reaches
+# astronomical magnitudes (observed: ~6.6e9 units on a real 920nt bpRNA
+# structure) well before `_MAX_NUCLEOTIDES` would reject it on length
+# alone. At that scale placement itself is cheap, but `check_overlaps`'s
+# spatial hash (frozen, tuned for ordinary RNA-diagram coordinate ranges)
+# degrades badly, turning a should-be-instant construction into a
+# multi-minute one -- a real (if not literally infinite) hang risk this
+# guard closes by raising promptly instead. See the M2 diagnosis for the
+# honest limitation this reveals: fixing it for real needs either a
+# bulge-specific placement (collapsing small bulges into the straight stem
+# with a kink, sidestepping the full circular envelope machinery) or a
+# genuinely tighter reach bound than the current isotropic-disk one.
+#
+# THRESHOLD, calibrated against `benchmarks/hard_set.json` (bypassing this
+# guard and timing construction+check directly): time scales with
+# log(reach), staying well under a second up to ~2e6, ~2s at ~5e6, and
+# crossing 6-8s by ~1.5e7-3e7 -- `5e6` keeps every admitted structure comfortably
+# fast (a couple of seconds, worst case) while still rejecting the
+# multi-second-to-minutes tail before it ever starts.
+_MAX_REACH = 5_000_000.0
+
+# S8's bounded re-inflation schedule: the construction is clean BY PROOF for
+# sibling-vs-sibling disjointness (`envelope.py`'s soundness argument) and
+# for the two structural risks identified and fixed while building M2 --
+# lopsided loops leaving their radius-fitting slack entirely on one side
+# (`geometry_helpers._angles_at` now splits it), and an exterior branch's
+# own "return" strand landing on the same side as an incoming backbone edge
+# (`_EXTERIOR_AXIS`'s sign). What's left is a DIFFERENT, more diffuse risk:
+# a branch's own near-seam interior content sitting close enough to its
+# OUTERMOST rung's far strand that the backbone edge continuing PAST that
+# strand (to whatever comes next, outside this branch's own subtree) can
+# graze it -- a genuine but small-margin near-miss (observed within ~2% of
+# the checker's clearance), not a directional/structural flaw. Retrying
+# with larger clearance margins is a legitimate, monotone way to close that
+# gap (never accepted unless the checker actually confirms clean).
+_MARGIN_SCALES: tuple[float, ...] = (1.0, 1.5, 2.0, 3.0, 5.0)
 
 
 @dataclass
 class _LayoutState:
-    """Mutable accumulators threaded through the M1 placement recursion.
+    """Mutable accumulators threaded through the placement recursion.
 
     Args:
         tree: The structure tree being laid out.
         x: Nucleotide x-coordinates, filled in as each stem/loop is placed.
         y: Nucleotide y-coordinates, filled in as each stem/loop is placed.
         params: Target geometry (`NODE_R`/`PRIMARY_SPACE`/`PAIR_SPACE`).
+        cache: S5 envelope memoization (`envelope.ReachCache`).
+        margin_scale: Multiplier on every additive clearance margin for
+            this attempt (see `_MARGIN_SCALES`).
     """
 
     tree: StructureTree
     x: list[float]
     y: list[float]
     params: DrawParameters
+    cache: envelope.ReachCache
+    margin_scale: float = 1.0
 
 
 class ConstructiveEngine:
-    """Bottom-up constructive layout, clean-by-construction (M1 scope)."""
+    """Bottom-up constructive layout, clean-by-construction (M2 scope)."""
 
     name = "constructive"
 
@@ -95,12 +183,16 @@ class ConstructiveEngine:
             un-rescaled (still checker-clean) coordinates are returned.
 
         Raises:
-            EngineError: If `secstruct` is a pseudoknot, is not the M1
-                single-multiloop-of-hairpins shape this engine supports, or
-                the constructed layout fails the frozen checker (never
-                returned silently).
+            EngineError: If `secstruct` is longer than `_MAX_NUCLEOTIDES`,
+                is a pseudoknot, or every attempt in `_MARGIN_SCALES`
+                produced a checker-dirty layout (never returned silently).
         """
         n = len(secstruct)
+        if n > _MAX_NUCLEOTIDES:
+            raise EngineError(
+                f"ConstructiveEngine declines structures over {_MAX_NUCLEOTIDES} nt "
+                f"(got {n} nt); route to a faster fallback engine instead"
+            )
         if n == 0:
             return [], []
         if n < 2:
@@ -109,138 +201,219 @@ class ConstructiveEngine:
             raise EngineError(f"ConstructiveEngine cannot lay out a pseudoknot: {secstruct!r}")
 
         pair_map = get_pairmap_from_secstruct(secstruct)
+        tree = build_structure_tree(pair_map)
+        _ensure_recursion_headroom(n)
+        x, y = _build_verified(tree, pair_map, n, self._params, secstruct)
+        return _rescale_or_keep_clean(x, y, pair_map, self._params.PRIMARY_SPACE)
+
+
+def _build_verified(
+    tree: StructureTree,
+    pair_map: list[int],
+    n: int,
+    params: DrawParameters,
+    secstruct: str,
+) -> tuple[list[float], list[float]]:
+    """Build `secstruct`'s layout, retrying at larger margins if needed (S8).
+
+    Args:
+        tree: The structure tree to lay out.
+        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
+            `-1` if unpaired.
+        n: The structure's length.
+        params: Target geometry.
+        secstruct: The original structure, for error messages.
+
+    Returns:
+        The first attempt's `(x, y)` that comes back checker-clean.
+
+    Raises:
+        EngineError: If a `RecursionError` fires, or every attempt in
+            `_MARGIN_SCALES` is dirty (never returned silently).
+    """
+    last_overlaps = 0
+    for margin_scale in _MARGIN_SCALES:
         state = _LayoutState(
-            tree=build_structure_tree(pair_map),
+            tree=tree,
             x=[0.0] * n,
             y=[0.0] * n,
-            params=self._params,
+            params=params,
+            cache=envelope.ReachCache(),
+            margin_scale=margin_scale,
         )
-        _place_exterior(state)
-        return _rescale_or_keep_clean(state, pair_map, secstruct)
+        try:
+            _place_exterior(state)
+        except RecursionError as exc:
+            raise EngineError(
+                f"ConstructiveEngine hit Python's recursion limit on {secstruct!r} "
+                "-- refusing to crash; route to a fallback engine instead"
+            ) from exc
+        report = check_overlaps(state.x, state.y, pair_map, OverlapParams())
+        if report.passed:
+            return state.x, state.y
+        last_overlaps = report.num_overlaps
+    raise EngineError(
+        f"ConstructiveEngine produced a dirty layout for {secstruct!r} after "
+        f"{len(_MARGIN_SCALES)} attempt(s) ({last_overlaps} overlaps on the last) "
+        "-- refusing to return it silently"
+    )
+
+
+def _ensure_recursion_headroom(n: int) -> None:
+    """Raise Python's recursion limit if `n` residues could plausibly nest deep.
+
+    Never lowers an already-higher limit some other caller set.
+
+    Args:
+        n: The structure's length.
+    """
+    needed = n * _RECURSION_FRAMES_PER_NT + _RECURSION_HEADROOM
+    if sys.getrecursionlimit() < needed:
+        sys.setrecursionlimit(needed)
 
 
 def _rescale_or_keep_clean(
-    state: _LayoutState, pair_map: list[int], secstruct: str
+    x: list[float], y: list[float], pair_map: list[int], primary_space: float
 ) -> tuple[list[float], list[float]]:
     """Rescale to the target backbone step, but never at the cost of clean.
 
-    `place_stem`/`pack_loop_angles` already build every coordinate in
-    `state.params`' absolute units, so `state.x`/`state.y` are checker-clean
-    by construction (belt-and-suspenders-verified below) BEFORE any
-    rescaling. `rescale_coords` uniformly scales by the *median*
-    consecutive-nucleotide step to hit `PRIMARY_SPACE` exactly -- usually a
-    near-identity touch-up, but for a structure whose backbone is mostly
-    loop-to-loop hops rather than in-stem steps (e.g. many depth-1
-    children), that median can be skewed well away from `PRIMARY_SPACE`,
-    and uniformly rescaling by it would shrink/grow the already-correct
-    absolute clearances, breaking them (`OverlapParams` are absolute, not
-    relative). So: rescale, but only keep it if it stays clean; otherwise
-    fall back to the un-rescaled coordinates, which are already proven
-    clean.
+    `x`/`y` are already checker-clean (verified by `_build_verified`),
+    built in absolute geometry units. `rescale_coords` uniformly scales by
+    the *median* consecutive-nucleotide step to hit `PRIMARY_SPACE` exactly
+    -- usually a near-identity touch-up, but for a structure whose backbone
+    is mostly loop-to-loop hops rather than in-stem steps, that median can
+    be skewed well away from `PRIMARY_SPACE`, and uniformly rescaling by it
+    would shrink/grow the already-correct absolute clearances, breaking
+    them (`OverlapParams` are absolute, not relative). So: rescale, but
+    only keep it if it stays clean; otherwise fall back to the un-rescaled
+    coordinates, which are already proven clean.
 
     Args:
-        state: Layout accumulators; `state.x`/`state.y` already fully placed.
+        x: Nucleotide x-coordinates, already checker-clean.
+        y: Nucleotide y-coordinates, already checker-clean.
         pair_map: Entry `i` holds the partner index of nucleotide `i`, or
             `-1` if unpaired.
-        secstruct: The original structure, for the error message.
+        primary_space: Target median consecutive-nucleotide step.
 
     Returns:
-        The rescaled `(x, y)` if that stays clean, else the un-rescaled
-        `(state.x, state.y)`.
-
-    Raises:
-        EngineError: If even the un-rescaled construction fails the frozen
-            checker (never returned silently).
+        The rescaled `(x, y)` if that stays clean, else the original
+        `(x, y)`.
     """
-    _verify_clean(state.x, state.y, pair_map, secstruct)
-    x, y = rescale_coords(state.x, state.y, state.params.PRIMARY_SPACE)
-    if check_overlaps(x, y, pair_map, OverlapParams()).passed:
-        return x, y
-    return state.x, state.y
-
-
-def _verify_clean(x: list[float], y: list[float], pair_map: list[int], secstruct: str) -> None:
-    """Belt-and-suspenders: never hand back a checker-dirty layout silently.
-
-    Args:
-        x: Nucleotide x-coordinates.
-        y: Nucleotide y-coordinates.
-        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
-            `-1` if unpaired.
-        secstruct: The original structure, for the error message.
-
-    Raises:
-        EngineError: If `check_overlaps` reports any witness.
-    """
-    report = check_overlaps(x, y, pair_map, OverlapParams())
-    if not report.passed:
-        raise EngineError(
-            f"ConstructiveEngine produced a dirty layout for {secstruct!r} "
-            f"({report.num_overlaps} overlaps) -- refusing to return it silently"
-        )
+    rescaled_x, rescaled_y = rescale_coords(x, y, primary_space)
+    if check_overlaps(rescaled_x, rescaled_y, pair_map, OverlapParams()).passed:
+        return rescaled_x, rescaled_y
+    return x, y
 
 
 def _place_exterior(state: _LayoutState) -> None:
-    """Place the exterior loop's one branch (M1's only supported exterior shape).
+    """Place the exterior loop: dangling tails + any number of top-level
+    branches, along an OPEN line (`pack_line_positions`) -- the one loop
+    with no closing pair, so no reserved seam is needed (S7).
 
     Args:
         state: Layout accumulators; `state.x`/`state.y` are filled in place.
-
-    Raises:
-        EngineError: If the exterior loop is not exactly one branch with no
-            dangling tails (multi-branch/tailed exteriors are a later
-            milestone, see S7).
     """
     exterior = state.tree.exterior
-    if len(exterior.children) != 1 or len(exterior.members) != 1:
+    branch_by_start = {branch.start: branch for branch in exterior.children}
+    extents = [_member_extent(state, member, branch_by_start) for member in exterior.members]
+    _check_reach_bounded(extents)
+    positions = pack_line_positions(extents, state.params.PRIMARY_SPACE)
+
+    for member, x_pos in zip(exterior.members, positions):
+        anchor = (x_pos, 0.0)
+        branch = branch_by_start.get(member)
+        if branch is None:
+            state.x[member], state.y[member] = anchor
+            continue
+        _place_branch(state, branch, anchor, _EXTERIOR_AXIS)
+
+
+def _check_reach_bounded(extents: list[float]) -> None:
+    """Fast, cheap guard against `_MAX_REACH`-scale envelope blow-up.
+
+    Computing `envelope.branch_reach` for every top-level branch (already
+    done by the time `extents` is built) is itself fast (pure arithmetic,
+    no coordinates written, no checker run) -- this is the earliest point a
+    pathological structure (see `_MAX_REACH`'s docstring) can be caught,
+    well before the expensive part (placement, then the checker on
+    resulting huge coordinates) would run.
+
+    Args:
+        extents: Every exterior member's required half-width, as built by
+            `_place_exterior` (a top-level branch's own `envelope.branch_reach`,
+            propagated bottom-up from the whole tree it contains -- so
+            bounding these few values bounds every branch anywhere in the
+            structure).
+
+    Raises:
+        EngineError: If any extent exceeds `_MAX_REACH`.
+    """
+    worst = max(extents, default=0.0)
+    if worst > _MAX_REACH:
         raise EngineError(
-            "ConstructiveEngine (M1) only supports an exterior loop with exactly "
-            "one top-level branch and no dangling 5'/3' tails"
+            f"ConstructiveEngine envelope reach {worst:.3g} exceeds the "
+            f"{_MAX_REACH:.3g} sanity cap (likely a long chain of single-child "
+            "bulge/interior loops compounding the envelope bound -- see "
+            "_MAX_REACH's docstring); route to a fallback engine instead"
         )
-    branch = exterior.children[0]
-    loop, tip_a, tip_b = _place_collapsed_stem(state, branch.closing_pair, (0.0, 0.0), (1.0, 0.0))
-    _place_loop_members(state, loop, tip_a, tip_b, (1.0, 0.0))
 
 
-def _place_hairpin_branch(
-    state: _LayoutState, branch: Branch, base_point: Point, axis_dir: Point
-) -> None:
-    """Place one multiloop child: its straight stem, then its hairpin loop.
+def _member_extent(state: _LayoutState, member: int, branch_by_start: dict[int, Branch]) -> float:
+    """The chord/linear half-width the exterior slot for `member` needs.
+
+    Args:
+        state: Layout accumulators.
+        member: An exterior member index (a tail nt, or a top-level
+            branch's own start index).
+        branch_by_start: Maps a top-level branch's start index to itself.
+
+    Returns:
+        The branch's `envelope.branch_reach` if `member` starts one, else a
+        bare unpaired nt's fixed `envelope.unpaired_half_width`.
+    """
+    branch = branch_by_start.get(member)
+    if branch is None:
+        return envelope.unpaired_half_width(state.params, state.margin_scale)
+    return envelope.branch_reach(
+        state.tree, branch.closing_pair, state.params, state.cache, state.margin_scale
+    )
+
+
+def _place_branch(state: _LayoutState, branch: Branch, attachment: Point, axis_dir: Point) -> None:
+    """Place one branch: its straight (collapsed) stem, then the loop it
+    closes -- a hairpin, a bulge/interior loop, or a multiloop of any
+    degree, recursed into via `_place_loop_members`.
 
     Args:
         state: Layout accumulators.
         branch: The child branch to place.
-        base_point: Where this branch's outermost rung attaches (a point on
-            the parent loop's circle).
-        axis_dir: Unit vector pointing radially outward from the parent
-            loop's center through `base_point`.
-
-    Raises:
-        EngineError: If `branch`, once its stacked pairs are collapsed,
-            closes a loop with further branches -- M1 only supports plain
-            hairpin children (nested multiloops are a later milestone).
+        attachment: Where `branch.closing_pair[0]` must land exactly (a
+            point on the parent loop's circle, or the exterior line) -- see
+            `_place_collapsed_stem`.
+        axis_dir: Unit vector pointing away from the parent (radially
+            outward from a loop's center, or straight up from the exterior
+            line).
     """
-    loop, tip_a, tip_b = _place_collapsed_stem(state, branch.closing_pair, base_point, axis_dir)
-    if loop.children:
-        raise EngineError(
-            "ConstructiveEngine (M1) only supports plain-hairpin multiloop "
-            f"children; branch {branch.closing_pair} closes a loop with further "
-            "branches (nested multiloops are a later milestone)"
-        )
+    loop, tip_a, tip_b = _place_collapsed_stem(state, branch.closing_pair, attachment, axis_dir)
     _place_loop_members(state, loop, tip_a, tip_b, axis_dir)
 
 
 def _place_collapsed_stem(
-    state: _LayoutState, closing_pair: tuple[int, int], base_point: Point, axis_dir: Point
+    state: _LayoutState, closing_pair: tuple[int, int], attachment: Point, axis_dir: Point
 ) -> tuple[Loop, Point, Point]:
     """Collapse a run of stacked pairs from `closing_pair` and place it as
-    one straight ladder.
+    one straight ladder, with `closing_pair[0]` landing EXACTLY at
+    `attachment` (see `geometry_helpers.stem_base_for_attachment` for why
+    that exact placement, not just "near" it, is load-bearing for S5's
+    envelope soundness argument).
 
     Args:
         state: Layout accumulators; `state.x`/`state.y` are filled in place
             for every nucleotide in the collapsed stem.
         closing_pair: The outermost pair of the stem to place.
-        base_point: Center of the stem's outermost rung.
+        attachment: Where `closing_pair[0]` (the branch's own attachment
+            nucleotide) must land -- the point the parent packer assigned
+            this branch's slot.
         axis_dir: Unit vector the stem rises along, base toward tip.
 
     Returns:
@@ -248,41 +421,13 @@ def _place_collapsed_stem(
         and the innermost rung's two strand coordinates (that loop's own
         closing-pair coordinates).
     """
-    depth, loop = _collapse_stem(state.tree, closing_pair)
+    depth, loop = collapse_stem(state.tree, closing_pair)
+    base_point = stem_base_for_attachment(attachment, axis_dir, state.params.PAIR_SPACE)
     ladder = place_stem(
         depth, base_point, axis_dir, state.params.PRIMARY_SPACE, state.params.PAIR_SPACE
     )
     _write_ladder(state, ladder, closing_pair, depth)
     return loop, ladder.strand_a[-1], ladder.strand_b[-1]
-
-
-def _collapse_stem(tree: StructureTree, start_pair: tuple[int, int]) -> tuple[int, Loop]:
-    """Walk a run of consecutive stacked pairs to the loop that branches.
-
-    A loop is a pure "stack continuation" -- not a real branch point -- when
-    it has exactly one child and no unpaired members (`Loop.members` is then
-    just `[closing_pair[0], child.start, closing_pair[1]]`). A straight
-    helix in a real RNA drawing spans the whole stack, not one segment per
-    stacked pair, so this collapses the whole run into one `place_stem` call.
-
-    Args:
-        tree: The structure tree containing `start_pair`.
-        start_pair: The outermost pair of the stem to walk.
-
-    Returns:
-        `(depth, loop)`: the total stacked-pair count, and the `Loop` at the
-        bottom of the stack (the first real branch point: a hairpin, an
-        interior loop/bulge, or a multiloop).
-    """
-    depth = 0
-    pair = start_pair
-    while True:
-        depth += 1
-        loop = tree.loop_by_closing_pair[pair]
-        is_stack_continuation = len(loop.children) == 1 and len(loop.members) == 3
-        if not is_stack_continuation:
-            return depth, loop
-        pair = loop.children[0].closing_pair
 
 
 def _write_ladder(
@@ -306,12 +451,14 @@ def _place_loop_members(
     state: _LayoutState, loop: Loop, tip_a: Point, tip_b: Point, axis_dir: Point
 ) -> None:
     """Place a loop's interior members (unpaired nts + child stem bases) on
-    a circle beyond its own closing-pair rung.
+    a circle beyond its own closing-pair rung, reusing the packing already
+    computed by S5's envelope pass (`envelope.loop_packing`) -- so the
+    radius/angles here are guaranteed identical to the ones every child's
+    `envelope.branch_reach` was measured against.
 
-    Each child branch is recursed into via `_place_hairpin_branch`, which
-    enforces the M1 "plain hairpin children only" restriction -- so this
-    function is exercised both for the root multiloop (children allowed)
-    and for a hairpin's own terminal loop (never has children).
+    Recurses into every child branch (`_place_branch`), so this handles a
+    hairpin's plain terminal loop (no children), a bulge/interior loop (one
+    child), and a multiloop of any degree, all uniformly.
 
     Args:
         state: Layout accumulators; mutated in place.
@@ -325,13 +472,7 @@ def _place_loop_members(
     params = state.params
     interior = loop.members[1:-1]
     branch_by_start = {branch.start: branch for branch in loop.children}
-    reserved = _stem_rung_half_width(params)
-    slots = [
-        reserved if member in branch_by_start else params.NODE_R + _UNPAIRED_MARGIN
-        for member in interior
-    ]
-    radius_floor = max(reserved, params.NODE_R, *slots) + _RADIUS_SEARCH_SLACK
-    packing = pack_loop_angles(slots, reserved, radius_floor, _RADIUS_STEP)
+    packing = envelope.loop_packing(state.tree, loop, params, state.cache, state.margin_scale)
 
     center = midpoint(tip_a, tip_b)
     loop_center = (
@@ -346,21 +487,7 @@ def _place_loop_members(
         if branch is None:
             state.x[member], state.y[member] = anchor
             continue
-        _place_hairpin_branch(state, branch, anchor, _radial_dir(loop_center, anchor))
-
-
-def _stem_rung_half_width(params: DrawParameters) -> float:
-    """Chord-clearance half-width a stem's outermost rung needs on a loop circle.
-
-    Args:
-        params: Target geometry (`NODE_R`, `PAIR_SPACE`).
-
-    Returns:
-        Half the rung's physical `PAIR_SPACE` separation, plus a disk
-        radius and a clearance margin (see the module-level
-        `_STEM_RUNG_MARGIN` comment).
-    """
-    return params.PAIR_SPACE / 2.0 + params.NODE_R + _STEM_RUNG_MARGIN
+        _place_branch(state, branch, anchor, _radial_dir(loop_center, anchor))
 
 
 def _radial_dir(center: Point, point: Point) -> Point:

@@ -70,6 +70,36 @@ def translate(point: Point, direction: Point, distance: float) -> Point:
     return (point[0] + distance * direction[0], point[1] + distance * direction[1])
 
 
+def stem_base_for_attachment(attachment: Point, axis_dir: Point, pair_space: float) -> Point:
+    """The `place_stem` `base_point` that puts the near strand's rung-0
+    point (`strand_a[0]`) exactly at `attachment`.
+
+    `place_stem` centers rung 0 ON its own `base_point`, offsetting each
+    strand `pair_space / 2` to either side perpendicular to `axis_dir` --
+    so `strand_a[0]` naturally lands `pair_space / 2` off `base_point`, not
+    on it. The constructive engine needs the OPPOSITE: a branch's
+    attachment nucleotide (`closing_pair[0]`, what a sibling's backbone
+    bond actually connects to) must land EXACTLY at the point its parent
+    packer assigned (`envelope.py`'s soundness argument measures every
+    subtree's reach from that same exact point -- an uncompensated
+    `pair_space / 2` offset lets the OTHER strand of this rung, which ends
+    up on the near side instead, sit close enough to a sibling's
+    connecting backbone edge to be clipped by it; this is what makes that
+    offset load-bearing rather than cosmetic). This computes the
+    `base_point` that cancels `place_stem`'s own offset.
+
+    Args:
+        attachment: Where `closing_pair[0]`'s own coordinate must land.
+        axis_dir: The `axis_dir` `place_stem` will be called with.
+        pair_space: The `pair_space` `place_stem` will be called with.
+
+    Returns:
+        The `base_point` to pass to `place_stem`.
+    """
+    perp = rotate90_ccw(axis_dir)
+    return translate(attachment, perp, pair_space / 2.0)
+
+
 @dataclass(frozen=True)
 class StemLadder:
     """Rigid straight-ladder coordinates for one stem's paired nucleotides.
@@ -192,6 +222,23 @@ def _total_required_angle(
 def _angles_at(half_widths: list[float], reserved_half_width: float, radius: float) -> list[float]:
     """Slot center angles at a `radius` already known to fit.
 
+    Any leftover slack (`2 * pi` minus the angle every slot plus the
+    reserved sector actually needs) is split evenly BEFORE the first slot
+    and AFTER the last one, rather than dumped entirely after the last slot
+    (which the naive "start right at the reserved edge" placement would
+    do). This keeps the disjointness proof identical (a uniform rotation of
+    every slot changes no pairwise angular gap), but matters for a
+    consuming engine that also draws a straight backbone edge from OUTSIDE
+    this ring (e.g. to the ring's own closing pair) to a slot's anchor: with
+    all the slack on one side, a lopsided packing (one dominant slot among
+    few) can leave that slot's own near edge closer, chord-wise, to the
+    reserved sector via the "slack" side than the packed order suggests,
+    letting such an edge approach nearly tangent to -- and graze -- the
+    slot's own paired-partner disk. Splitting the slack pushes a lopsided
+    packing's far slot toward sitting radially oppposite the reserved
+    sector instead, so an edge reaching it arrives closer to radially
+    (moving away from a tangential neighbor) rather than tangentially.
+
     Args:
         half_widths: Each slot's chord-clearance half-width, in fixed order.
         reserved_half_width: The reserved sector's chord-clearance half-width.
@@ -202,8 +249,9 @@ def _angles_at(half_widths: list[float], reserved_half_width: float, radius: flo
         sector's positive edge, each interval touching (never overlapping)
         its neighbors.
     """
+    slack = 2.0 * math.pi - _total_required_angle(half_widths, reserved_half_width, radius)
     angles = []
-    cursor = _angular_half_width(reserved_half_width, radius)
+    cursor = _angular_half_width(reserved_half_width, radius) + slack / 2.0
     for half_width in half_widths:
         half_angle = _angular_half_width(half_width, radius)
         cursor += half_angle
@@ -281,6 +329,49 @@ def loop_member_point(center: Point, zero_dir: Point, radius: float, angle: floa
     return translate(center, direction, radius)
 
 
+def pack_line_positions(extents: list[float], primary_space: float) -> list[float]:
+    """Place `len(extents)` slots along an open line, disjoint by construction.
+
+    Unlike `pack_loop_angles` (a closed circle, used for a loop's interior),
+    the exterior loop has an OPEN boundary (dangling 5'/3' tails, no
+    closing pair to reserve a seam for) -- see the constructive engine's
+    `_place_exterior`. Slot `k`'s center sits `max(primary_space, extents[k
+    - 1] + extents[k])` past slot `k - 1`'s, strictly increasing.
+
+    This is disjoint for EVERY pair, not just adjacent ones: for `i < j`,
+    the gap `positions[j] - positions[i]` is the sum of the consecutive
+    gaps between them, and that sum already includes (as two of its
+    non-negative terms) the single gap `>= extents[i] + extents[j-1] >=
+    ...` -- concretely, the very first term in the sum is `>= extents[i] +
+    extents[i+1]` and the very last is `>= extents[j-1] + extents[j]`, so
+    the total is at least `extents[i] + extents[j]` (the rest only adds).
+    So a disk of radius `extents[k]` centered at `positions[k]` never
+    overlaps any other slot's disk.
+
+    Args:
+        extents: Each slot's required half-width -- a disk radius, centered
+            at the slot's own position, bounding everything (e.g. a whole
+            child subtree's envelope) that must not collide with a
+            neighboring slot's own disk.
+        primary_space: Minimum consecutive-slot spacing floor, so two tiny
+            extents (e.g. two bare unpaired nts) still get a normal
+            backbone step rather than crowding tighter.
+
+    Returns:
+        One x position per extent, `positions[0] == 0.0`, strictly
+        increasing (empty list if `extents` is empty).
+    """
+    positions: list[float] = []
+    x = 0.0
+    prev_extent = 0.0
+    for index, extent in enumerate(extents):
+        if index > 0:
+            x += max(primary_space, prev_extent + extent)
+        positions.append(x)
+        prev_extent = extent
+    return positions
+
+
 __all__ = [
     "Point",
     "StemLadder",
@@ -289,7 +380,9 @@ __all__ = [
     "rotate",
     "midpoint",
     "translate",
+    "stem_base_for_attachment",
     "place_stem",
     "pack_loop_angles",
+    "pack_line_positions",
     "loop_member_point",
 ]
