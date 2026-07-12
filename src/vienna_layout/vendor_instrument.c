@@ -563,20 +563,24 @@ PRIVATE short checkAndApplyConfigChanges(treeNode* tree, double* deltaCfg,
  * "deltas":[...], "accepted":true}, ...]`: the ORDERED sequence of
  * config-change decisions `checkAndFixIntersections` made on `structure`'s
  * T1 tree with `checkSiblingIntersections = 1`, `checkAncestorIntersections
- * = 0`, `optimize = 0` (the SIBLING-only resolver path, Milestone A step
- * 7) -- see `include/rna_layout/resolve.hpp`'s `ChangeTraceEntry`, which
- * this exactly mirrors. Caller owns the returned buffer; free() it.
- * Returns NULL on a malformed/degenerate structure.
+ * = check_ancestor`, `optimize = 0` (the SIBLING-only resolver path,
+ * Milestone A step 7, when `check_ancestor == 0`; SIBLING+ANCESTOR,
+ * Milestone A step 8, when `check_ancestor != 0`) -- see
+ * `include/rna_layout/resolve.hpp`'s `ChangeTraceEntry`, which this exactly
+ * mirrors. Caller owns the returned buffer; free() it. Returns NULL on a
+ * malformed/degenerate structure.
  *
- * WARNING (see `benchmarks/hard_set_sibling_only_oracle_hangs.json`): the
- * vendored `checkAndFixIntersections` does not terminate on every
- * structure under this option combination -- callers MUST NOT invoke this
- * on a structure from that exclusion list (or any other not already known
- * to terminate) without an external timeout; this file adds none, per its
- * "expose dumps, don't change vendored logic" scope.
+ * WARNING (see `benchmarks/hard_set_sibling_only_oracle_hangs.json` for
+ * `check_ancestor == 0`, `benchmarks/hard_set_sibling_ancestor_oracle_hangs
+ * .json` for `check_ancestor != 0`): the vendored `checkAndFixIntersections`
+ * does not terminate on every structure under either option combination --
+ * callers MUST NOT invoke this on a structure from the relevant exclusion
+ * list (or any other not already known to terminate) without an external
+ * timeout; this file adds none, per its "expose dumps, don't change
+ * vendored logic" scope.
  */
 char* rnadraw_oracle_dump_change_trace(const char* structure, double paired, double unpaired,
-                                       int max_config_changes) {
+                                       int max_config_changes, int check_ancestor) {
   t1_tree_t built;
 
   if (!build_t1_tree(structure, paired, unpaired, &built)) return NULL;
@@ -586,7 +590,7 @@ char* rnadraw_oracle_dump_change_trace(const char* structure, double paired, dou
   puzzler_options->paired = paired;
   puzzler_options->unpaired = unpaired;
   puzzler_options->checkSiblingIntersections = 1;
-  puzzler_options->checkAncestorIntersections = 0;
+  puzzler_options->checkAncestorIntersections = check_ancestor ? 1 : 0;
   puzzler_options->optimize = 0;
   puzzler_options->numberOfChangesAppliedToConfig = 0;
   puzzler_options->maximumNumberOfConfigChangesAllowed =
@@ -630,10 +634,11 @@ char* rnadraw_oracle_dump_change_trace(const char* structure, double paired, dou
 }
 
 const char* rnadraw_oracle_instrumentation_version(void) {
-  return "vendor_instrument v3: turtle dump + dump_tree (config tree + "
+  return "vendor_instrument v4: turtle dump + dump_tree (config tree + "
          "bounding boxes, Milestone A step 4) + dump_detections "
          "(intersection detection set, Milestone A step 5) + "
          "dump_change_trace (SIBLING resolver config-change trace, "
-         "Milestone A step 7, via macro-interposition on "
-         "checkAndApplyConfigChanges -- see this file's header).";
+         "Milestone A step 7, extended to SIBLING+ANCESTOR via a "
+         "check_ancestor flag, Milestone A step 8, via macro-interposition "
+         "on checkAndApplyConfigChanges -- see this file's header).";
 }

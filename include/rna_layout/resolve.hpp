@@ -4,22 +4,21 @@
  * @file resolve.hpp
  * @brief The intersection-resolver driver, ported from
  *        `resolveIntersections.inc:24 checkAndFixIntersections` (Milestone A
- *        step 7: the SIBLING-intersection vertical only).
+ *        step 7 landed the SIBLING path; step 8 adds the ANCESTOR path).
  *
- * SCOPE (Milestone A step 7): only the SIBLING-resolution path is real here
- * -- `check_and_fix_intersections` requires `opts.check_ancestor == false`
- * and `opts.optimize == false` (throws otherwise); `opts.check_sibling` may
- * be `true`. The ANCESTOR path (`handleAncestorIntersections.inc`, Milestone
- * A step 8) and `optimizeTree` (`optimize.inc`, Milestone A step 9) are not
- * ported -- their gates are preserved in the driver's control flow (matching
- * the reference's exact shape) but throw if ever reached, rather than being
- * silently skipped or approximated. See `puzzler.cpp`'s call site for how
- * `PuzzlerOptions` is validated before this ever runs.
+ * SCOPE (Milestone A step 8): the SIBLING (`check_sibling`) and ANCESTOR
+ * (`check_ancestor`) resolution paths are both real -- `check_and_fix_
+ * intersections` only requires `opts.optimize == false` (throws otherwise).
+ * `optimizeTree` (`optimize.inc`, Milestone A step 9) is not ported -- its
+ * gate is preserved in the driver's control flow (matching the reference's
+ * exact shape) but throws if reached, rather than being silently skipped or
+ * approximated. See `puzzler.cpp`'s call site for how `PuzzlerOptions` is
+ * validated before this ever runs.
  *
  * MUTATION MODEL: unlike every earlier Milestone A step (pure construction/
  * detection over an already-built tree), this driver MUTATES the tree in
- * place -- a resolved sibling intersection changes a node's `Config` (radius,
- * arc angles) and recomputes that node's subtree's boxes
+ * place -- a resolved sibling or ancestor intersection changes a node's
+ * `Config` (radius, arc angles) and recomputes that node's subtree's boxes
  * (`apply_changes_to_config_and_bounding_boxes`, `config_tree.hpp`). No node
  * is ever reparented, added, or deleted (`TreeNode`'s `unique_ptr` ownership,
  * `tree.hpp`, needs no change for this) -- only `cfg`/`lbox`/`sbox`/`aabb`
@@ -27,6 +26,13 @@
  * `TreeNode*` addresses `puzzler.cpp`'s `build_config_tree` returned, which
  * is why this driver takes raw `TreeNode*` (never re-allocating), matching
  * the reference's own in-place-mutation model over `treeNode*`.
+ *
+ * RETURN-VALUE PROPAGATION (new in step 8): a resolved ancestor intersection
+ * can make this function return non-`nullptr` from a RECURSIVE call (not
+ * just the top-level one) -- see `resolve.cpp`'s "PROPAGATION" comment at
+ * the recursive-call site for the id-comparison argument that makes
+ * re-dispatching that return (propagate further up vs. restart this level)
+ * sound.
  */
 
 #include <vector>
@@ -95,15 +101,22 @@ struct ResolverState {
  * (`resolveIntersections.inc:24`); see this file's header for scope.
  *
  * @param node The (sub)tree to resolve; mutated in place.
- * @param opts Resolver options; `check_ancestor` and `optimize` MUST both be
- *     `false` (see this file's header).
+ * @param opts Resolver options; `optimize` MUST be `false` (see this file's
+ *     header). `check_ancestor`/`check_sibling` may each independently be
+ *     `true` or `false`.
  * @param state Resolver-wide mutable state (change counter + trace),
  *     threaded through and updated in place.
- * @return `nullptr` always, in this step's scope (the non-null "propagate
- *     to an ancestor" return is Milestone A step 8's -- see this file's
- *     header).
- * @throws std::logic_error If @p opts requests the not-yet-ported ancestor
- *     or optimize passes.
+ * @return Non-`nullptr` ONLY from an internal RECURSIVE call, meaning "an
+ *     ancestor intersection was fixed by rotating a node ABOVE @p node's own
+ *     tree position -- the caller (an ancestor frame) must handle it, not
+ *     this one" (see `resolve.cpp`'s "PROPAGATION" comment). Calling this at
+ *     the tree's true root (as `puzzler.cpp` does) always returns `nullptr`:
+ *     a rotation candidate can never be the root itself (`is_interior_loop`/
+ *     `is_multi_loop` are both `false` for the root by definition), so every
+ *     non-null return is fully absorbed at some node strictly below the
+ *     root before ever reaching this function's outermost call.
+ * @throws std::logic_error If @p opts requests the not-yet-ported optimize
+ *     pass.
  */
 TreeNode* check_and_fix_intersections(TreeNode* node, const PuzzlerOptions& opts,
                                       ResolverState& state);

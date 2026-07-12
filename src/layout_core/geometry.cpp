@@ -109,4 +109,55 @@ double angle_pt_pt_pt(Vec2 p1, Vec2 center, Vec2 p3) {
   return angle_between(v1, v2);
 }
 
+Circle circumcircle(Vec2 p1, Vec2 p2, Vec2 p3) {
+  // Ported verbatim from `circle` (`vector_math.inc:791`): a linear system
+  // in (B, C) built from `P1`'s row eliminated into `P2`/`P3`'s, then solved
+  // by picking whichever of beta[1]/gamma[1]/beta[2]/gamma[2] is nearest
+  // zero (avoiding division by a near-zero coefficient) -- not the textbook
+  // circumcenter formula, preserved as written.
+  const double beta0 = -p1.x;
+  const double gamma0 = -p1.y;
+  const double r0 = -(p1.x * p1.x + p1.y * p1.y);
+
+  double beta1 = -p2.x - beta0;
+  double gamma1 = -p2.y - gamma0;
+  double r1 = -(p2.x * p2.x + p2.y * p2.y) - r0;
+
+  double beta2 = -p3.x - beta0;
+  double gamma2 = -p3.y - gamma0;
+  double r2 = -(p3.x * p3.x + p3.y * p3.y) - r0;
+
+  double b_coef = 0.0;
+  double c_coef = 0.0;
+
+  if (std::fabs(beta1) < kEpsilon7 && std::fabs(gamma1) > kEpsilon7) {
+    c_coef = r1 / gamma1;
+    b_coef = (r2 - gamma2 * c_coef) / beta2;
+  } else if (std::fabs(beta2) < kEpsilon7 && std::fabs(gamma2) > kEpsilon7) {
+    c_coef = r2 / gamma2;
+    b_coef = (r1 - gamma1 * c_coef) / beta1;
+  } else {
+    if (std::fabs(gamma1) < kEpsilon7) {
+      b_coef = r1 / beta1;
+      c_coef = (r2 - beta2 * b_coef) / gamma2;
+    } else if (std::fabs(gamma2) < kEpsilon7) {
+      b_coef = r2 / beta2;
+      c_coef = (r1 - beta1 * b_coef) / gamma1;
+    } else {
+      gamma2 = gamma2 * beta1 - gamma1 * beta2;
+      r2 = r2 * beta1 - r1 * beta2;
+      c_coef = r2 / gamma2;
+      b_coef = (r1 - gamma1 * c_coef) / beta1;
+    }
+  }
+
+  const double a_coef = r0 - beta0 * b_coef - gamma0 * c_coef;
+
+  Circle result;
+  result.center = Vec2{b_coef / 2.0, c_coef / 2.0};
+  result.radius = std::sqrt(result.center.x * result.center.x +
+                            result.center.y * result.center.y - a_coef);
+  return result;
+}
+
 }  // namespace rna_layout::geom

@@ -63,33 +63,6 @@ LoopData get_loop_data(int start, const std::vector<int>& pair_table,
  *  StemBox construction
  *==========================================================================*/
 
-/// Ported from `createStemBox` (`boundingBoxes.inc:350`).
-StemBox create_stem_box(Vec2 s, Vec2 e, Vec2 sp) {
-  Vec2 a{0.5 * (e.x - s.x), 0.5 * (e.y - s.y)};
-  const Vec2 b{0.5 * (s.x - sp.x), 0.5 * (s.y - sp.y)};
-
-  double length_a = geom::length(a);
-  const double length_b = geom::length(b);
-
-  if (length_a == 0) {
-    // Degenerate stem (zero backbone steps): solve using b's normal vector.
-    // The reference scales the normal to length 0.1 and then immediately
-    // divides by that same 0.1 below -- preserved as written (Task 1's
-    // fidelity rule), not simplified to "a := normal(b)".
-    a = geom::normal(b);
-    length_a = 0.1;
-    a.x = a.x * length_a;
-    a.y = a.y * length_a;
-  }
-
-  StemBox box;
-  box.a = Vec2{a.x / length_a, a.y / length_a};
-  box.b = Vec2{b.x / length_b, b.y / length_b};
-  box.c = Vec2{s.x + a.x - b.x, s.y + a.y - b.y};
-  box.e = Vec2{length_a, length_b};
-  return box;
-}
-
 /// Ported from `countBulges` (`boundingBoxes.inc:389`).
 int count_bulges(const std::vector<int>& pair_table, int start, int end) {
   int bulge_count = 0;
@@ -155,6 +128,34 @@ void set_bulges(StemBox& box, const std::vector<int>& pair_table, int start, int
 }
 
 }  // namespace
+
+LoopBox create_loop_box(Vec2 center, double radius) { return LoopBox{center, radius}; }
+
+StemBox create_stem_box(Vec2 s, Vec2 e, Vec2 sp) {
+  Vec2 a{0.5 * (e.x - s.x), 0.5 * (e.y - s.y)};
+  const Vec2 b{0.5 * (s.x - sp.x), 0.5 * (s.y - sp.y)};
+
+  double length_a = geom::length(a);
+  const double length_b = geom::length(b);
+
+  if (length_a == 0) {
+    // Degenerate stem (zero backbone steps): solve using b's normal vector.
+    // The reference scales the normal to length 0.1 and then immediately
+    // divides by that same 0.1 below -- preserved as written (Task 1's
+    // fidelity rule), not simplified to "a := normal(b)".
+    a = geom::normal(b);
+    length_a = 0.1;
+    a.x = a.x * length_a;
+    a.y = a.y * length_a;
+  }
+
+  StemBox box;
+  box.a = Vec2{a.x / length_a, a.y / length_a};
+  box.b = Vec2{b.x / length_b, b.y / length_b};
+  box.c = Vec2{s.x + a.x - b.x, s.y + a.y - b.y};
+  box.e = Vec2{length_a, length_b};
+  return box;
+}
 
 LoopBox build_loop_box(int start, const std::vector<int>& pair_table,
                        const std::vector<BaseInfo>& base_info, const std::vector<Config>& configs,

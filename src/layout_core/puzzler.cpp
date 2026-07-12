@@ -24,30 +24,27 @@ namespace {
 constexpr int kDefaultMaxConfigChanges = 25000;
 
 /// Throws if @p opts requests a not-yet-ported resolver stage. See
-/// `puzzler.hpp`'s file header: `check_sibling` is real (Milestone A step
-/// 7); `check_ancestor` (step 8) and `optimize` (step 9) are not.
-void require_ancestor_and_optimize_off(const PuzzlerOptions& opts) {
-  if (opts.check_ancestor || opts.optimize) {
+/// `puzzler.hpp`'s file header: `check_sibling` (Milestone A step 7) and
+/// `check_ancestor` (step 8) are both real; `optimize` (step 9) is not.
+void require_optimize_off(const PuzzlerOptions& opts) {
+  if (opts.optimize) {
     throw std::logic_error(
-        "rna_layout::layout_puzzler: the ancestor-intersection resolver "
-        "and/or optimize pass are not implemented yet (Milestone A steps "
-        "8-9); pass a PuzzlerOptions with both false (check_sibling may be "
-        "true or false).");
+        "rna_layout::layout_puzzler: the optimize pass is not implemented "
+        "yet (Milestone A step 9); pass a PuzzlerOptions with optimize = "
+        "false (check_sibling/check_ancestor may each be true or false).");
   }
 }
 
 /**
  * Build the config tree and, if any of `check_exterior`/`check_sibling`/
  * `check_ancestor` is requested, canonicalize its boxes and run the
- * SIBLING resolver. Ported from `vrna_plot_coords_puzzler_pt`'s setup
- * through its `checkAndFixIntersections` call (`RNApuzzler.c:441-478`).
+ * SIBLING/ANCESTOR resolver. Ported from `vrna_plot_coords_puzzler_pt`'s
+ * setup through its `checkAndFixIntersections` call (`RNApuzzler.c:441-478`).
  *
- * `require_ancestor_and_optimize_off` (called by every public entry point
- * before this runs) guarantees `check_ancestor == optimize == false`, so
- * `check_and_fix_intersections` here only ever exercises the sibling path
- * (or, if `check_sibling` is also false, is itself a no-op by the same
- * reasoning `puzzler.hpp`'s prior revision proved for the fully-off case --
- * see `resolve.cpp`'s driver: with every gate false, its `while` loop runs
+ * `require_optimize_off` (called by every public entry point before this
+ * runs) guarantees `optimize == false`; if BOTH `check_sibling` and
+ * `check_ancestor` are also false, `check_and_fix_intersections` is a no-op
+ * (see `resolve.cpp`'s driver: with every gate false, its `while` loop runs
  * its guarded checks once, all skipped, and falls through untouched).
  */
 std::unique_ptr<TreeNode> run_config_tree_pipeline(const std::vector<int>& pair_table,
@@ -94,7 +91,7 @@ void validate_no_empty_loop(const std::string& structure) {
 }  // namespace
 
 Coords layout_puzzler(const std::vector<int>& pair_table, const PuzzlerOptions& opts) {
-  require_ancestor_and_optimize_off(opts);
+  require_optimize_off(opts);
   validate_pair_table_nonempty(pair_table);
 
   const int length = pair_table[0];

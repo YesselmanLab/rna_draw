@@ -115,20 +115,8 @@ void test_max_config_changes_budget_aborts() {
   expect(state.trace.empty(), "check_siblings: an aborted call makes no config changes");
 }
 
-void test_driver_throws_when_ancestor_requested() {
-  const auto tree = rna_layout::test::build_updated_tree("((((...))))", kPaired, kUnpaired);
-  PuzzlerOptions opts = sibling_only_options();
-  opts.check_ancestor = true;
-  ResolverState state;
-
-  bool threw = false;
-  try {
-    check_and_fix_intersections(tree.get(), opts, state);
-  } catch (const std::logic_error&) {
-    threw = true;
-  }
-  expect(threw, "check_and_fix_intersections: check_ancestor == true throws (Milestone A step 8)");
-}
+// `check_ancestor == true` is exercised end-to-end in
+// `resolve_ancestors_test.cpp` (Milestone A step 8) -- it no longer throws.
 
 void test_driver_throws_when_optimize_requested() {
   const auto tree = rna_layout::test::build_updated_tree("((((...))))", kPaired, kUnpaired);
@@ -174,7 +162,6 @@ int main() {
   test_check_siblings_none_when_no_intersections();
   test_check_siblings_restarts_and_records_a_trace_on_collision();
   test_max_config_changes_budget_aborts();
-  test_driver_throws_when_ancestor_requested();
   test_driver_throws_when_optimize_requested();
   test_driver_resolves_a_colliding_multiloop_end_to_end();
   test_driver_is_a_no_op_on_an_already_clean_tree();

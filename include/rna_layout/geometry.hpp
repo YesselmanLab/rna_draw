@@ -57,6 +57,15 @@ inline constexpr double kEpsilon7 = 1e-7;
 /// line rather than a circular loop center.
 inline constexpr double kExteriorY = 100.0;
 
+/// The vendored `MIN_POSITIVE_ANGLE`/`MIN_NEGATIVE_ANGLE` (`definitions.inc:64-65`):
+/// the ancestor-resolution rotation-angle solvers (`rotation_angle.cpp`,
+/// Milestone A step 8) nudge an exact `0.0` rotation-angle candidate off zero
+/// by this much (signed by `std::signbit`) rather than treating it as "no
+/// solution", since a literal `0.0` there is an underflow artifact, not a
+/// genuine "no rotation needed" answer.
+inline constexpr double kMinPositiveAngle = 0.0000000001;
+inline constexpr double kMinNegativeAngle = -0.0000000001;
+
 /**
  * Length of @p v.
  */
@@ -182,5 +191,23 @@ inline constexpr double kExteriorY = 100.0;
  * p3 - center)`.
  */
 [[nodiscard]] double angle_pt_pt_pt(Vec2 p1, Vec2 center, Vec2 p3);
+
+/// The center and radius of a Vec2 result struct for `circumcircle`.
+struct Circle {
+  Vec2 center;
+  double radius = 0.0;
+};
+
+/**
+ * The circle passing through three points @p p1, @p p2, @p p3. Mirrors
+ * `circle` (`vector_math.inc:791`) expression-for-expression -- the linear
+ * system it solves for the center is NOT the textbook circumcenter formula
+ * (it eliminates using whichever of `beta`/`gamma` is closer to zero, a
+ * numerically-motivated case split preserved here verbatim per Task 1's
+ * fidelity rule) -- used only by the ancestor-resolution rotation-angle
+ * solvers (`rotation_angle.cpp`, Milestone A step 8) to build a bulge's
+ * circumscribing circle.
+ */
+[[nodiscard]] Circle circumcircle(Vec2 p1, Vec2 p2, Vec2 p3);
 
 }  // namespace rna_layout::geom

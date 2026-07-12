@@ -125,23 +125,22 @@ SiblingCheckResult check_siblings(TreeNode& node, const PuzzlerOptions& opts,
   // structures, under the equivalent options
   // (`checkSiblingIntersections=1, checkAncestorIntersections=0,
   // optimize=0` -- `plot_coords_puzzler_sibling_only`,
-  // `src/vienna_layout/bindings.cpp`). In the FULL vendored algorithm (all
-  // three passes on), this is a non-issue: the interleaved
-  // ANCESTOR pass can still mutate the tree on the next `while` iteration
-  // even when siblings alone made no progress, so the "restart" bit-flag's
-  // generosity is earning its keep there. Under Milestone A step 7's
-  // scope, though, `layout_puzzler` GUARANTEES `check_ancestor == optimize
-  // == false` (`require_ancestor_and_optimize_off`) -- NOTHING else can
-  // change this subtree between one `check_siblings` call and the next, so
-  // returning `none` here instead of `restart` when `outcome == false` is
-  // PROVABLY behavior-preserving (every case that would have converged
-  // still converges identically; only the non-productive infinite retry is
-  // skipped) for as long as that guarantee holds.
+  // `src/vienna_layout/bindings.cpp`).
   //
-  // MUST BE REVISITED AT MILESTONE A STEP 8: once `check_ancestor` is
-  // wired in, "no sibling change" no longer implies "nothing can change on
-  // a restart" (the ancestor pass might). Re-derive or remove this
-  // shortcut then.
+  // RE-DERIVED AT MILESTONE A STEP 8 (ancestor resolution now real): this
+  // shortcut REMAINS behavior-preserving with `check_ancestor == true`. See
+  // `resolve_internal.hpp`'s `SiblingCheckResult` doc comment for the full
+  // argument -- in short, `outcome == false` means NO `Config`/box anywhere
+  // in the tree changed (not just at this node), so a restart's ancestor-
+  // check/children-recursion/sibling-check all reproduce their identical
+  // prior answers regardless of whether ancestor-checking is enabled; a real
+  // restart driven by an ancestor fix flows through `resolve.cpp`'s
+  // SEPARATE `checkTree = true` paths, never through this function's return
+  // value. Empirically re-verified too: re-running the vendored oracle's
+  // sibling-only hang list under `checkSibling=1, checkAncestor=1,
+  // optimize=0` -- see `tests/test_native_parity.py`'s sibling+ancestor
+  // suite and this port's handoff report for the (possibly narrower)
+  // re-derived exclusion set.
   if (!outcome.value()) {
     return SiblingCheckResult::none;
   }

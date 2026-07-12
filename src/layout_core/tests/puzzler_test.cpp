@@ -1,9 +1,10 @@
-// ctest: `rna_layout::layout_puzzler` (`puzzler.hpp`), Milestone A steps 6-7
-// ("finalization with resolver OFF" + the SIBLING intersection resolver).
-// Parity against the vendored oracle is a Python-level concern
+// ctest: `rna_layout::layout_puzzler` (`puzzler.hpp`), Milestone A steps 6-8
+// ("finalization with resolver OFF" + the SIBLING and ANCESTOR intersection
+// resolvers). Parity against the vendored oracle is a Python-level concern
 // (`tests/test_native_parity.py`); this proves the native pipeline runs,
-// guards its ancestor/optimize preconditions, and produces sane,
-// deterministic output with `check_sibling` on or off.
+// guards its optimize precondition, and produces sane, deterministic output
+// with `check_sibling`/`check_ancestor` on or off (independently or
+// together).
 
 #include "rna_layout/puzzler.hpp"
 
@@ -51,7 +52,10 @@ void test_default_options_throw() {
   expect(threw, "layout_puzzler: the default PuzzlerOptions (ancestor+optimize ON) throw");
 }
 
-void test_ancestor_or_optimize_alone_throws_but_sibling_alone_does_not() {
+void test_only_optimize_throws() {
+  // Milestone A step 8: `check_sibling`/`check_ancestor` are both real now
+  // (independently or together); only `optimize` (Milestone A step 9) still
+  // throws.
   for (bool sibling : {true, false}) {
     for (bool ancestor : {true, false}) {
       for (bool optimize : {true, false}) {
@@ -67,12 +71,56 @@ void test_ancestor_or_optimize_alone_throws_but_sibling_alone_does_not() {
         } catch (const std::logic_error&) {
           threw = true;
         }
-        const bool should_throw = ancestor || optimize;
-        expect(threw == should_throw,
-               "layout_puzzler: throws iff check_ancestor or optimize is requested "
-               "(check_sibling alone is Milestone A step 7, implemented)");
+        expect(threw == optimize,
+               "layout_puzzler: throws iff optimize is requested (check_sibling/"
+               "check_ancestor, alone or together, are Milestone A steps 7-8, implemented)");
       }
     }
+  }
+}
+
+void test_sibling_and_ancestor_resolver_produces_sane_coordinates() {
+  const std::string structure = "((((...)))((....(((.....))).))(((...))))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  opts.check_ancestor = true;
+  const Coords coords = layout_puzzler(structure, opts);
+
+  expect(coords.x.size() == structure.size(),
+         "layout_puzzler (sibling+ancestor on): output length matches input length");
+  for (std::size_t i = 0; i < coords.x.size(); ++i) {
+    expect(std::isfinite(coords.x[i]),
+           "layout_puzzler (sibling+ancestor on): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]),
+           "layout_puzzler (sibling+ancestor on): every y coordinate is finite");
+  }
+}
+
+void test_sibling_and_ancestor_resolver_is_deterministic() {
+  const std::string structure = "((((..((((....))))..))))(((...)))(((...)))(((...)))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  opts.check_ancestor = true;
+  const Coords first = layout_puzzler(structure, opts);
+  const Coords second = layout_puzzler(structure, opts);
+  expect(first.x == second.x,
+         "layout_puzzler (sibling+ancestor on): repeated calls produce identical x coordinates");
+  expect(first.y == second.y,
+         "layout_puzzler (sibling+ancestor on): repeated calls produce identical y coordinates");
+}
+
+void test_ancestor_only_resolver_produces_sane_coordinates() {
+  const std::string structure = "((((...)))((....(((.....))).))(((...))))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = false;
+  opts.check_ancestor = true;
+  const Coords coords = layout_puzzler(structure, opts);
+
+  expect(coords.x.size() == structure.size(),
+         "layout_puzzler (ancestor on): output length matches input length");
+  for (std::size_t i = 0; i < coords.x.size(); ++i) {
+    expect(std::isfinite(coords.x[i]), "layout_puzzler (ancestor on): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]), "layout_puzzler (ancestor on): every y coordinate is finite");
   }
 }
 
@@ -148,11 +196,14 @@ void test_malformed_input_throws() {
 
 int main() {
   test_default_options_throw();
-  test_ancestor_or_optimize_alone_throws_but_sibling_alone_does_not();
+  test_only_optimize_throws();
   test_resolver_off_produces_sane_coordinates();
   test_resolver_off_is_deterministic();
   test_sibling_resolver_produces_sane_coordinates();
   test_sibling_resolver_is_deterministic();
+  test_ancestor_only_resolver_produces_sane_coordinates();
+  test_sibling_and_ancestor_resolver_produces_sane_coordinates();
+  test_sibling_and_ancestor_resolver_is_deterministic();
   test_malformed_input_throws();
 
   if (g_failures > 0) {

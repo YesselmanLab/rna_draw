@@ -266,6 +266,31 @@ CoordVectors plot_coords_puzzler_sibling_only(const std::string& structure) {
   return to_vectors(x, y, n);
 }
 
+/// Call `vrna_plot_coords_puzzler` with `checkSiblingIntersections = 1`,
+/// `checkAncestorIntersections = 1`, `optimize = 0` -- the vendored-side
+/// counterpart of `rna_layout::layout_puzzler`'s SIBLING+ANCESTOR resolver
+/// path (Milestone A step 8). `checkExteriorIntersections` and
+/// `allowFlipping` are left at `vrna_plot_options_puzzler()`'s own defaults,
+/// matching `rna_layout::PuzzlerOptions`'s defaults for those two fields.
+CoordVectors plot_coords_puzzler_sibling_ancestor(const std::string& structure) {
+  validate_nonempty(structure);
+  validate_well_nested(structure);
+  validate_no_empty_loop(structure);
+  PuzzlerOptions options;
+  options.ptr->checkSiblingIntersections = 1;
+  options.ptr->checkAncestorIntersections = 1;
+  options.ptr->optimize = 0;
+  MallocBuffer<float> x;
+  MallocBuffer<float> y;
+  int n = vrna_plot_coords_puzzler(structure.c_str(), &x.ptr, &y.ptr, nullptr, options.ptr);
+  if (n == 0 || static_cast<size_t>(n) != structure.size()) {
+    throw std::runtime_error(
+        "vrna_plot_coords_puzzler (sibling+ancestor) failed on structure of length " +
+        std::to_string(structure.size()));
+  }
+  return to_vectors(x, y, n);
+}
+
 // Defined in vendor_instrument.c, compiled in only when RNA_DRAW_BUILD_ORACLE
 // is on (see CMakeLists.txt); that file documents the (macro-interposition-
 // adjacent) mechanism used to reach the vendored tree/box internals, and the
@@ -299,26 +324,32 @@ std::string dump_tree(const std::string& structure, double paired, double unpair
 extern "C" char* rnadraw_oracle_dump_detections(const char* structure, double paired,
                                                 double unpaired);
 extern "C" char* rnadraw_oracle_dump_change_trace(const char* structure, double paired,
-                                                  double unpaired, int max_config_changes);
+                                                  double unpaired, int max_config_changes,
+                                                  int check_ancestor);
 
-/// The ordered SIBLING-resolver config-change trace (Milestone A step 7):
-/// calls `rnadraw_oracle_dump_change_trace` (`vendor_instrument.c`), which
-/// returns a malloc'd JSON string; copy it into a `std::string` and free
-/// the buffer (same pattern as `dump_tree`/`dump_detections`).
+/// The ordered resolver config-change trace (SIBLING always on; ANCESTOR on
+/// iff @p check_ancestor -- Milestone A steps 7-8): calls
+/// `rnadraw_oracle_dump_change_trace` (`vendor_instrument.c`), which returns
+/// a malloc'd JSON string; copy it into a `std::string` and free the buffer
+/// (same pattern as `dump_tree`/`dump_detections`).
 ///
 /// CALLER WARNING (see `vendor_instrument.c`'s doc comment on the C
 /// function): the vendored resolver does not terminate on every structure
 /// under checkSiblingIntersections=1/checkAncestorIntersections=0/
-/// optimize=0 -- do not call this on a structure not already known to
-/// terminate (`benchmarks/hard_set_sibling_only_oracle_hangs.json` lists
-/// the known exceptions on `hard_set.json`) without an external timeout.
+/// optimize=0 (@p check_ancestor `false`) -- do not call this on a
+/// structure not already known to terminate
+/// (`benchmarks/hard_set_sibling_only_oracle_hangs.json` lists the known
+/// exceptions on `hard_set.json`) without an external timeout. The same
+/// caveat applies, with a SEPARATE exclusion list
+/// (`benchmarks/hard_set_sibling_ancestor_oracle_hangs.json`), when
+/// @p check_ancestor is `true`.
 std::string dump_change_trace(const std::string& structure, double paired, double unpaired,
-                              int max_config_changes) {
+                              int max_config_changes, bool check_ancestor) {
   validate_nonempty(structure);
   validate_well_nested(structure);
   validate_no_empty_loop(structure);
-  char* json =
-      rnadraw_oracle_dump_change_trace(structure.c_str(), paired, unpaired, max_config_changes);
+  char* json = rnadraw_oracle_dump_change_trace(structure.c_str(), paired, unpaired,
+                                                max_config_changes, check_ancestor ? 1 : 0);
   if (json == nullptr) {
     throw std::runtime_error("rnadraw_oracle_dump_change_trace failed on structure of length " +
                              std::to_string(structure.size()));
@@ -400,6 +431,14 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "left at their stock defaults) -- the vendored-side counterpart of "
         "the native rna_layout::layout_puzzler SIBLING-only resolver path "
         "(Milestone A step 7). Returns (x, y).");
+  m.def("plot_coords_puzzler_sibling_ancestor", &plot_coords_puzzler_sibling_ancestor,
+        py::arg("structure"),
+        "Lay out a dot-bracket structure with RNApuzzler, with "
+        "checkSiblingIntersections and checkAncestorIntersections both true "
+        "and optimize false (checkExteriorIntersections and allowFlipping "
+        "left at their stock defaults) -- the vendored-side counterpart of "
+        "the native rna_layout::layout_puzzler SIBLING+ANCESTOR resolver "
+        "path (Milestone A step 8). Returns (x, y).");
   m.def("plot_coords_turtle", &plot_coords_turtle, py::arg("structure"),
         "Lay out a dot-bracket structure with RNAturtle; returns (x, y).");
   m.def("dump_turtle", &plot_coords_turtle, py::arg("structure"),
@@ -428,12 +467,15 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "RNA_DRAW_BUILD_ORACLE is on.");
   m.def("dump_change_trace", &dump_change_trace, py::arg("structure"), py::arg("paired") = 35.0,
         py::arg("unpaired") = 25.0, py::arg("max_config_changes") = 25000,
-        "The ordered SIBLING-resolver config-change trace (Milestone A step "
-        "7, checkSiblingIntersections=1/checkAncestorIntersections=0/"
-        "optimize=0), as a JSON string -- json.loads() it and compare "
-        "against the native rna_layout core's dump_change_trace. WARNING: "
-        "does not terminate on every structure (see "
-        "benchmarks/hard_set_sibling_only_oracle_hangs.json); only built "
-        "when RNA_DRAW_BUILD_ORACLE is on.");
+        py::arg("check_ancestor") = false,
+        "The ordered resolver config-change trace (checkSiblingIntersections"
+        "=1 always; checkAncestorIntersections=1 iff check_ancestor -- "
+        "Milestone A steps 7-8; optimize=0), as a JSON string -- "
+        "json.loads() it and compare against the native rna_layout core's "
+        "dump_change_trace. WARNING: does not terminate on every structure "
+        "(see benchmarks/hard_set_sibling_only_oracle_hangs.json for "
+        "check_ancestor=False, benchmarks/"
+        "hard_set_sibling_ancestor_oracle_hangs.json for check_ancestor="
+        "True); only built when RNA_DRAW_BUILD_ORACLE is on.");
 #endif
 }

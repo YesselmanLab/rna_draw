@@ -92,6 +92,16 @@ SIBLING_ONLY_ORACLE_HANGS_PATH = (
     Path(__file__).parent.parent / "benchmarks" / "hard_set_sibling_only_oracle_hangs.json"
 )
 
+# Milestone A step 8 (ANCESTOR resolver): same idea as
+# `SIBLING_ONLY_ORACLE_HANGS_PATH`, but for `checkSiblingIntersections=1/
+# checkAncestorIntersections=1/optimize=0` -- an INDEPENDENTLY generated
+# exclusion list (the ancestor pass changes the tree topology the sibling
+# check sees, so a structure hanging one combination does not imply it
+# hangs, or is clean under, the other). See `_sibling_ancestor_oracle_hangs`.
+SIBLING_ANCESTOR_ORACLE_HANGS_PATH = (
+    Path(__file__).parent.parent / "benchmarks" / "hard_set_sibling_ancestor_oracle_hangs.json"
+)
+
 
 def _turtle_usable(structure: str) -> bool:
     """Whether both engines' shared malformed-input guards accept `structure`."""
@@ -117,6 +127,23 @@ def _sibling_safe_hard_set_structures() -> list[str]:
     uses.
     """
     hangs = _sibling_only_oracle_hangs()
+    return [s for s in _hard_set_structures() if s not in hangs]
+
+
+def _sibling_ancestor_oracle_hangs() -> set[str]:
+    import json
+
+    return set(json.loads(SIBLING_ANCESTOR_ORACLE_HANGS_PATH.read_text())["structures"])
+
+
+def _sibling_ancestor_safe_hard_set_structures() -> list[str]:
+    """`_hard_set_structures()`, minus the SIBLING+ANCESTOR vendored-oracle-
+    hangs exclusion list (Milestone A step 8) -- the corpus every
+    sibling+ancestor oracle-comparison test uses. Independent of
+    `_sibling_safe_hard_set_structures` (see `SIBLING_ANCESTOR_ORACLE_HANGS_
+    PATH`'s doc comment).
+    """
+    hangs = _sibling_ancestor_oracle_hangs()
     return [s for s in _hard_set_structures() if s not in hangs]
 
 
@@ -698,6 +725,174 @@ class TestSiblingCheckerEquivalence:
         vendored_clean_rate = vendored_clean / len(structures)
         print(
             f"\nhard_set sibling checker-equivalence: n={len(structures)}, "
+            f"native_clean_rate={native_clean_rate:.4f}, "
+            f"vendored_clean_rate={vendored_clean_rate:.4f}, worse={len(worse)}"
+        )
+        assert not worse, f"native strictly worse than vendored on: {worse}"
+        assert native_clean_rate >= vendored_clean_rate
+
+
+# ---------------------------------------------------------------------------
+# Milestone A step 8: SIBLING + ANCESTOR intersection resolvers together.
+# ---------------------------------------------------------------------------
+
+
+def _sibling_ancestor_coords(structure: str, engine: ModuleType) -> np.ndarray:
+    x, y = engine.plot_coords_puzzler_sibling_ancestor(structure)
+    return np.column_stack([x, y])
+
+
+def _assert_sibling_ancestor_coords_parity(structure: str) -> float:
+    """Coord half of plan criterion 4 for the SIBLING+ANCESTOR resolver:
+    native `plot_coords_puzzler_sibling_ancestor` vs the vendored oracle's
+    counterpart (`checkSibling=true, checkAncestor=true, optimize=false`) --
+    same float32-return-type precision-ceiling reasoning as the turtle/
+    resolver-off/sibling-only parity docstrings above.
+    """
+    native_xy = _sibling_ancestor_coords(structure, native_layout)
+    oracle_xy = _sibling_ancestor_coords(structure, vienna_layout)
+
+    native_f32_xy: np.ndarray = native_xy.astype(np.float32).astype(np.float64)
+    tight_diff = _max_aligned_diff(native_f32_xy, oracle_xy)
+    assert tight_diff <= TIGHT_TOL, (
+        f"{structure!r}: sibling+ancestor float32-rounded aligned diff {tight_diff} exceeds "
+        f"the {TIGHT_TOL} parity gate"
+    )
+    return tight_diff
+
+
+class TestSiblingAncestorCoordParity:
+    """Plan criterion 4's coord half (Milestone A step 8): native vs
+    vendored SIBLING+ANCESTOR resolver output, over the hand/motif corpus
+    (none of which hang the vendored oracle -- verified) + the oracle-safe
+    subset of the hard set (`_sibling_ancestor_safe_hard_set_structures`).
+    """
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_sibling_ancestor_parity(self, name: str) -> None:
+        _assert_sibling_ancestor_coords_parity(HAND_STRUCTURES[name])
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_sibling_ancestor_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.plot_coords_puzzler_sibling_ancestor(structure)
+        second = native_layout.plot_coords_puzzler_sibling_ancestor(structure)
+        assert first == second
+
+    def test_sibling_ancestor_parity_over_safe_hard_set(self) -> None:
+        structures = _sibling_ancestor_safe_hard_set_structures()
+        assert len(structures) > 300, "expected most of the hard set to be oracle-safe"
+
+        diffs = [_assert_sibling_ancestor_coords_parity(s) for s in structures]
+        assert max(diffs) <= TIGHT_TOL
+        print(
+            f"\nhard_set sibling+ancestor coord parity: n={len(structures)}, "
+            f"max_diff={max(diffs):.3e}, mean_diff={sum(diffs) / len(diffs):.3e}"
+        )
+
+
+def _change_traces_with_ancestor(structure: str) -> tuple[list[dict], list[dict]]:
+    """`(native, vendored)` SIBLING+ANCESTOR-resolver change traces for
+    `structure`.
+    """
+    native_trace = native_layout.dump_change_trace(structure, check_ancestor=True)
+    vendored_trace = json.loads(vienna_layout.dump_change_trace(structure, check_ancestor=True))
+    return native_trace, vendored_trace
+
+
+class TestSiblingAncestorChangeTraceParity:
+    """Plan criterion 4b (Milestone A step 8): the ORDERED sequence of
+    config-change decisions the SIBLING+ANCESTOR resolver made, native vs
+    vendored, over the oracle-safe hard set. Same "agreement up to the
+    first legitimate tie-break divergence" definition as
+    `TestSiblingChangeTraceParity`.
+    """
+
+    def test_change_trace_parity_over_safe_hard_set(self) -> None:
+        structures = _sibling_ancestor_safe_hard_set_structures()
+        assert len(structures) > 300, "expected most of the hard set to be oracle-safe"
+
+        total_matched = 0
+        total_len = 0
+        n_nonempty = 0
+        pre_tie_break_divergences: list[str] = []
+
+        for structure in structures:
+            native_trace, vendored_trace = _change_traces_with_ancestor(structure)
+            if not native_trace and not vendored_trace:
+                continue
+            n_nonempty += 1
+            matched, total = _trace_prefix_agreement(native_trace, vendored_trace)
+            total_matched += matched
+            total_len += total
+            if matched == 0 and native_trace and vendored_trace:
+                pre_tie_break_divergences.append(structure)
+
+        agreement_fraction = (total_matched / total_len) if total_len else 1.0
+        print(
+            f"\nhard_set sibling+ancestor change-trace parity: n_nonempty={n_nonempty}, "
+            f"prefix_agreement_fraction={agreement_fraction:.6f}, "
+            f"pre_tie_break_divergences={len(pre_tie_break_divergences)}"
+        )
+        assert not pre_tie_break_divergences, (
+            f"structures whose FIRST change-trace decision already disagrees "
+            f"(a real logic bug, not a legitimate tie-break): {pre_tie_break_divergences}"
+        )
+        assert agreement_fraction >= 0.95, (
+            f"aggregate change-trace prefix agreement {agreement_fraction} below the "
+            "plan's 95% gate (criterion 4b)"
+        )
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_change_trace_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.dump_change_trace(structure, check_ancestor=True)
+        second = native_layout.dump_change_trace(structure, check_ancestor=True)
+        assert first == second
+
+
+class TestSiblingAncestorCheckerEquivalence:
+    """Plan criterion 4a (Milestone A step 8), the PRIMARY sibling+ancestor
+    resolver gate: run the frozen `check_overlaps` checker on both engines'
+    SIBLING+ANCESTOR output, rescaled to `DrawParameters.PRIMARY_SPACE` the
+    same way a production `LayoutEngine` would (`rescale_coords`). Require,
+    per structure, `native_min_witnesses <= vendored_min_witnesses` (never
+    worse) and, in aggregate, `native_clean_rate >= vendored_clean_rate` on
+    the oracle-safe hard set.
+    """
+
+    def test_never_worse_and_clean_rate_over_safe_hard_set(self) -> None:
+        structures = _sibling_ancestor_safe_hard_set_structures()
+        assert len(structures) > 300, "expected most of the hard set to be oracle-safe"
+
+        target_step = DrawParameters().PRIMARY_SPACE
+        native_clean = 0
+        vendored_clean = 0
+        worse: list[str] = []
+
+        for structure in structures:
+            pair_map = get_pairmap_from_secstruct(structure)
+            native_x, native_y = _sibling_ancestor_coords(structure, native_layout).T.tolist()
+            vendored_x, vendored_y = _sibling_ancestor_coords(structure, vienna_layout).T.tolist()
+            native_x, native_y = rescale_coords(native_x, native_y, target_step)
+            vendored_x, vendored_y = rescale_coords(vendored_x, vendored_y, target_step)
+
+            native_witnesses = _min_witnesses(native_x, native_y, pair_map)
+            vendored_witnesses = _min_witnesses(vendored_x, vendored_y, pair_map)
+
+            if native_witnesses <= vendored_witnesses:
+                pass
+            else:
+                worse.append(structure)
+            if native_witnesses == 0:
+                native_clean += 1
+            if vendored_witnesses == 0:
+                vendored_clean += 1
+
+        native_clean_rate = native_clean / len(structures)
+        vendored_clean_rate = vendored_clean / len(structures)
+        print(
+            f"\nhard_set sibling+ancestor checker-equivalence: n={len(structures)}, "
             f"native_clean_rate={native_clean_rate:.4f}, "
             f"vendored_clean_rate={vendored_clean_rate:.4f}, worse={len(worse)}"
         )

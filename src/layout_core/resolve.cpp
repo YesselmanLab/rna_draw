@@ -20,16 +20,18 @@ TreeNode* check_and_fix_intersections(TreeNode* node, const PuzzlerOptions& opts
     check_tree = false;
 
     // On the way from root to leaves: resolve ancestor intersections
-    // (Milestone A step 8, NOT YET PORTED). `layout_puzzler` throws before
-    // this driver ever runs with `opts.check_ancestor == true`
-    // (`puzzler.cpp`), so this branch's condition mirrors
-    // `resolveIntersections.inc:52-60`'s gate faithfully but is PROVABLY
-    // unreachable in this build -- the throw below is a defensive
-    // trip-wire, not expected behavior.
+    // (Milestone A step 8). Ported from `resolveIntersections.inc:52-60`: if
+    // `node` itself has an ancestor (or exterior) intersection that was
+    // fixed by rotating some node ON THE PATH BETWEEN THEM, propagate that
+    // node straight back up the RECURSION STACK (not the tree) -- see the
+    // "propagation" note below, at this function's recursive-call site,
+    // for how each enclosing level decides whether to keep propagating or
+    // restart at its own level.
     if (opts.check_ancestor && !is_exterior(*node)) {
-      throw std::logic_error(
-          "rna_layout::check_and_fix_intersections: ancestor intersection "
-          "resolution is not implemented yet (Milestone A step 8)");
+      TreeNode* changed_by_ancestor = check_node_against_ancestors(*node, opts, state);
+      if (changed_by_ancestor != nullptr) {
+        return changed_by_ancestor;
+      }
     }
 
     // Recursive call for all children.
@@ -37,14 +39,33 @@ TreeNode* check_and_fix_intersections(TreeNode* node, const PuzzlerOptions& opts
       for (auto& child : node->children) {
         TreeNode* changed_by_recursion = check_and_fix_intersections(child.get(), opts, state);
         if (changed_by_recursion != nullptr) {
-          // `checkNodeAgainstAncestors` (the ancestor branch above) is the
-          // ONLY producer of a non-null return in the reference, and it is
-          // never called while `opts.check_ancestor == false` (see above) --
-          // so this is unreachable too, for the same reason.
-          throw std::logic_error(
-              "rna_layout::check_and_fix_intersections: unexpected non-null "
-              "ancestor-propagation return (Milestone A step 8)");
+          // PROPAGATION (`resolveIntersections.inc:76-88`): a non-null
+          // return only ever comes from the ancestor branch above, applied
+          // somewhere at or below `child`, and that call's `rotationNode`
+          // is ALWAYS a genuine tree-ancestor of the node it was checking
+          // (`fix_intersection_with_ancestor`'s caller only ever offers
+          // nodes strictly between an intersector and its own ancestor) --
+          // so `changed_by_recursion`'s id is always `<= node->id` here,
+          // with equality iff it IS `node`. There is no third case (the
+          // vendored `if`/`else if` has no trailing `else` either).
+          if (changed_by_recursion->id < node->id) {
+            // The rotated node is a STRICT ancestor of `node` too: keep
+            // propagating up unchanged (this level's own state is
+            // untouched by that rotation, so there is nothing to restart
+            // here).
+            return changed_by_recursion;
+          }
+          if (changed_by_recursion == node) {
+            // The rotated node IS `node`: its own Config/boxes changed, so
+            // restart this level's `while` loop (re-run the ancestor check,
+            // children recursion, and sibling check against the new state).
+            check_tree = true;
+            break;
+          }
         }
+        // `changed_by_recursion == nullptr`: that child's whole subtree
+        // (and its own ancestor chain up to and including `node`) is
+        // already intersection-free; move on to the next child.
       }
     }
 
@@ -63,8 +84,8 @@ TreeNode* check_and_fix_intersections(TreeNode* node, const PuzzlerOptions& opts
 
   // ----- OPTIMIZATIONS ----- (Milestone A step 9, NOT YET PORTED).
   // `layout_puzzler` throws before this driver ever runs with
-  // `opts.optimize == true` (`puzzler.cpp`); same defensive trip-wire as
-  // above.
+  // `opts.optimize == true` (`puzzler.cpp`); the throw below is a
+  // defensive trip-wire, not expected behavior.
   if (opts.optimize) {
     throw std::logic_error(
         "rna_layout::check_and_fix_intersections: optimize is not "

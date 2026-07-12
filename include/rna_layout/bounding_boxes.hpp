@@ -97,4 +97,23 @@ void translate_loop_box(LoopBox& box, Vec2 vector);
 /// (`boundingBoxes.inc:219`).
 void translate_stem_box(StemBox& box, Vec2 vector);
 
+/**
+ * A `LoopBox` with the given @p center/@p radius, no other bookkeeping.
+ * Ported from `createLoopBox` (`boundingBoxes.inc:60`); used by the
+ * ancestor-resolution exterior-box setup (`exterior_boxes.cpp`, Milestone A
+ * step 8) to build a SYNTHETIC loop box directly from computed geometry,
+ * unlike `build_loop_box`'s pair-table-driven construction.
+ */
+[[nodiscard]] LoopBox create_loop_box(Vec2 center, double radius);
+
+/**
+ * A `StemBox` from three raw corner points (`s`: south/start corner,
+ * `e`: north/end corner, `sp`: south-prime, the opposite long edge's start
+ * corner). Ported from `createStemBox` (`boundingBoxes.inc:350`); the same
+ * primitive `build_stem_box` uses internally, exposed here for
+ * `exterior_boxes.cpp` (Milestone A step 8), which builds synthetic stem
+ * boxes directly from computed geometry rather than pair-table positions.
+ */
+[[nodiscard]] StemBox create_stem_box(Vec2 s, Vec2 e, Vec2 sp);
+
 }  // namespace rna_layout

@@ -216,6 +216,24 @@ CoordVectors plot_coords_puzzler_sibling_only(const std::string& structure) {
   return {std::move(coords.x), std::move(coords.y)};
 }
 
+/// `layout_puzzler` with `check_sibling`/`check_ancestor` both forced true
+/// and `optimize` forced false -- the Python-facing entry point for the
+/// SIBLING+ANCESTOR resolver path (Milestone A step 8), so
+/// `tests/test_native_parity.py` can call it without constructing a
+/// `PuzzlerOptions` binding. `check_exterior`/`allow_flipping`/`clearance`/
+/// `max_config_changes` stay at `rna_layout::PuzzlerOptions`'s own
+/// defaults, matching the vendored oracle's
+/// `plot_coords_puzzler_sibling_ancestor` counterpart
+/// (`src/vienna_layout/bindings.cpp`).
+CoordVectors plot_coords_puzzler_sibling_ancestor(const std::string& structure) {
+  rna_layout::PuzzlerOptions opts;
+  opts.check_sibling = true;
+  opts.check_ancestor = true;
+  opts.optimize = false;
+  rna_layout::Coords coords = rna_layout::layout_puzzler(structure, opts);
+  return {std::move(coords.x), std::move(coords.y)};
+}
+
 /// `rna_layout::ChangeTraceEntry` -> the same field-name `py::dict` shape
 /// the vendored oracle's `vendor_instrument.c` change-trace JSON dump uses
 /// (Milestone A step 7's change-trace parity gate), so
@@ -231,13 +249,16 @@ py::object to_python(const rna_layout::ChangeTraceEntry& entry) {
 }
 
 /// Run the turtle pass + config-tree build + `update_bounding_boxes` +
-/// SIBLING-only `check_and_fix_intersections` on `structure`, and return the
-/// ORDERED sequence of config-change decisions the resolver made (Milestone
-/// A step 7's `dump_change_trace` parity seam) as a `list[dict]`. Mirrors
-/// `plot_coords_puzzler_sibling_only`'s pipeline but exposes the resolver's
-/// internal decisions rather than only the final coordinates.
+/// `check_and_fix_intersections` (SIBLING on always; ANCESTOR on iff
+/// @p check_ancestor -- Milestone A steps 7-8) on `structure`, and return
+/// the ORDERED sequence of config-change decisions the resolver made (the
+/// `dump_change_trace` parity seam) as a `list[dict]`. Mirrors
+/// `plot_coords_puzzler_sibling_only`/`plot_coords_puzzler_sibling_ancestor`'s
+/// pipeline but exposes the resolver's internal decisions rather than only
+/// the final coordinates.
 py::list dump_change_trace_binding(const std::string& structure, double paired, double unpaired,
-                                   double clearance, int max_config_changes) {
+                                   double clearance, int max_config_changes,
+                                   bool check_ancestor) {
   validate_dump_tree_input(structure);
   const std::vector<int> pair_table = rna_layout::make_pair_table(structure);
   const rna_layout::TurtleLayout turtle =
@@ -253,7 +274,7 @@ py::list dump_change_trace_binding(const std::string& structure, double paired, 
   opts.unpaired = unpaired;
   opts.clearance = clearance;
   opts.check_sibling = true;
-  opts.check_ancestor = false;
+  opts.check_ancestor = check_ancestor;
   opts.optimize = false;
 
   rna_layout::ResolverState state;
@@ -315,11 +336,20 @@ PYBIND11_MODULE(_layout_core, m) {
         "testing against the vendored oracle's "
         "plot_coords_puzzler_sibling_only. Returns (x, y).");
 
+  m.def("plot_coords_puzzler_sibling_ancestor", &plot_coords_puzzler_sibling_ancestor,
+        py::arg("structure"),
+        "Lay out a dot-bracket structure with the native RNApuzzler port, "
+        "SIBLING + ANCESTOR intersection resolvers (check_sibling/"
+        "check_ancestor both true, optimize false; Milestone A step 8) -- "
+        "for parity testing against the vendored oracle's "
+        "plot_coords_puzzler_sibling_ancestor. Returns (x, y).");
+
   m.def("dump_change_trace", &dump_change_trace_binding, py::arg("structure"),
         py::arg("paired") = 35.0, py::arg("unpaired") = 25.0, py::arg("clearance") = 1.0,
-        py::arg("max_config_changes") = 25000,
-        "The ordered sequence of config-change decisions the SIBLING "
-        "resolver made (Milestone A step 7) for parity testing against the "
-        "vendored oracle's dump_change_trace; list[dict] of (node_id, type, "
-        "deltas, accepted).");
+        py::arg("max_config_changes") = 25000, py::arg("check_ancestor") = false,
+        "The ordered sequence of config-change decisions the resolver made "
+        "(SIBLING always on; ANCESTOR on iff check_ancestor -- Milestone A "
+        "steps 7-8) for parity testing against the vendored oracle's "
+        "dump_change_trace; list[dict] of (node_id, type, deltas, "
+        "accepted).");
 }

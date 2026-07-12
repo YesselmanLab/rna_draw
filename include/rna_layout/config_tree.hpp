@@ -93,6 +93,12 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired);
 /// can be pushed to a higher tree level instead of the current loop.
 [[nodiscard]] bool is_multi_loop(const TreeNode& node);
 
+/// Whether @p node is an interior loop (a non-root node with exactly one
+/// child). Mirrors `isInteriorLoop` (`configtree.inc:582`); used by the
+/// ancestor resolver (`resolve_ancestors.cpp`, Milestone A step 8) to decide
+/// which nodes along an intersection path are eligible rotation candidates.
+[[nodiscard]] bool is_interior_loop(const TreeNode& node);
+
 /// @p node's loop center, i.e. its `LoopBox::center`. Mirrors
 /// `getLoopCenter` (`configtree.inc:1021`). `node.lbox` must be set (not
 /// the root).
@@ -110,6 +116,29 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired);
  * root -- it has no `sbox`).
  */
 [[nodiscard]] double get_child_angle(const TreeNode& parent, const TreeNode& child);
+
+/// `get_child_angle(parent, *parent.children[child_index])`. Mirrors
+/// `getChildAngleByIndex` (`configtree.inc:1006`).
+[[nodiscard]] double get_child_angle_by_index(const TreeNode& parent, int child_index);
+
+/**
+ * The index into @p tree's `children` of the child whose subtree contains
+ * (or leads toward) the node with id @p child_id: the LAST child whose own
+ * id is `<= child_id` (children are DFS pre-order, so ids are contiguous and
+ * strictly increasing across children). Mirrors `getChildIndex`
+ * (`configtree.inc:931`); used by the ancestor resolver
+ * (`resolve_ancestors.cpp`, Milestone A step 8) to recover, for each node
+ * along a REDUCED intersection path (which may skip straight interior
+ * loops), which of that node's DIRECT children continues toward the next
+ * path entry.
+ *
+ * @param tree The node whose children to search.
+ * @param child_id A node id at or below @p tree in the tree (typically not
+ *     a direct child itself, per the "reduced path" note above).
+ * @return The child index, or `tree.children.size() - 1` if every child's id
+ *     is `<= child_id` (mirrors the vendored loop's fallthrough).
+ */
+[[nodiscard]] int get_child_index(const TreeNode& tree, int child_id);
 
 /**
  * Translate @p node's `StemBox`/`LoopBox`/`Aabb` by @p vector, and recurse

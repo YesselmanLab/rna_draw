@@ -207,6 +207,10 @@ bool is_exterior(const TreeNode& node) { return node.parent == nullptr; }
 
 bool is_multi_loop(const TreeNode& node) { return !is_exterior(node) && node.children.size() > 1; }
 
+bool is_interior_loop(const TreeNode& node) {
+  return !is_exterior(node) && node.children.size() == 1;
+}
+
 // NOLINTBEGIN(bugprone-unchecked-optional-access) -- same invariant as
 // `update_bounding_boxes`'s block comment above: `lbox`/`sbox` are set on
 // every non-root node these getters are documented (`config_tree.hpp`) to
@@ -228,6 +232,24 @@ double get_child_angle(const TreeNode& parent, const TreeNode& child) {
     angle = geom::kTwoPi - angle;
   }
   return angle;
+}
+
+double get_child_angle_by_index(const TreeNode& parent, int child_index) {
+  return get_child_angle(parent, *parent.children[static_cast<std::size_t>(child_index)]);
+}
+
+int get_child_index(const TreeNode& tree, int child_id) {
+  // Ported from `getChildIndex` (`configtree.inc:931`): the loop's
+  // fallthrough (every child's id `<= child_id`) leaves `child_index` at its
+  // initialized `childCount - 1`, preserved as written.
+  int child_index = static_cast<int>(tree.children.size()) - 1;
+  for (std::size_t i = 0; i < tree.children.size(); ++i) {
+    if (tree.children[i]->id > child_id) {
+      child_index = static_cast<int>(i) - 1;
+      break;
+    }
+  }
+  return child_index;
 }
 
 void translate_bounding_boxes(TreeNode& node, Vec2 vector) {

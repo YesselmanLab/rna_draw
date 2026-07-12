@@ -9,17 +9,21 @@
  * room, WITHOUT mutating anything -- `check_and_apply_config_changes`
  * (`config_changes.cpp`) is the only thing that applies the result.
  *
- * SIBLING-PATH DEAD CODE (documented, not simplified away -- fidelity
- * rule): `calc_deltas`'s "can this bend go to a higher tree level instead"
- * search is UNREACHABLE for every call this port makes (Milestone A step 7,
- * sibling-only): `fix_intersection_of_siblings` (`resolve_siblings.cpp`)
- * always passes `recursive_end = node.parent`, and the search's own first
- * step reads `TreeNode* parent = node.parent` -- so `parent == recursive_end`
- * is true before the loop's first condition check ever runs, and the `while`
- * body never executes (`can_go_higher` stays `false`). This is ported
- * verbatim anyway (not simplified to an `if (true)`) because Milestone A
- * step 8's ancestor path calls `calc_deltas` with a DIFFERENT,
- * more-distant `recursive_end` where this search is real and load-bearing.
+ * "GO TO A HIGHER TREE LEVEL" SEARCH -- LIVE FOR THE ANCESTOR PATH (Milestone
+ * A step 8): `calc_deltas`'s "can this bend go to a higher tree level
+ * instead" search was UNREACHABLE for every Milestone A step 7 (sibling-only)
+ * call (`fix_intersection_of_siblings`, `resolve_siblings.cpp`, always
+ * passes `recursive_end = node.parent`, making `parent == recursive_end`
+ * true before the loop's first condition check ever runs). It was ported
+ * verbatim anyway then (not simplified to an `if (true)`), and is now LIVE:
+ * `fix_intersection_with_ancestor` (`resolve_ancestors.cpp`) calls
+ * `calc_deltas` with `recursive_end = &ancestor`, the ANCESTOR endpoint of
+ * the whole ancestor-intersection check -- often several tree levels above
+ * `rotation_node.parent` -- so the `while (parent != recursive_end && ...)`
+ * loop genuinely walks multiple levels and `can_go_higher` can be `true`,
+ * routing around `calc_deltas_maximum_first_decrease` entirely for those
+ * calls. No code change was needed here; this note supersedes the prior
+ * "sibling-path dead code" framing.
  */
 
 #include <algorithm>
