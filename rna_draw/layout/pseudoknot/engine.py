@@ -11,13 +11,21 @@ nucleotides (Phase 3, `.placement`).
 
 from __future__ import annotations
 
-from rna_draw.layout.base import EngineError, LayoutResult, is_pseudoknot_free, params_at_node_r
-from rna_draw.overlap import OverlapParams, check_overlaps
+from rna_draw.geometry import Capsule
+from rna_draw.layout.base import (
+    EngineError,
+    LayoutResult,
+    RoutedLine,
+    is_pseudoknot_free,
+    params_at_node_r,
+)
+from rna_draw.overlap import OverlapParams, build_primitives, check_overlaps
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
 from .extraction import max_nested_subset
 from .parsing import Stem, group_stems, nested_secstruct, parse_all_pairs, stem_pairs
 from .placement import PlacementResult, place_crossings
+from .validate import polyline_capsules, polyline_is_clean
 
 
 def layout_pseudoknot(secstruct: str, params: OverlapParams) -> LayoutResult:
@@ -134,13 +142,17 @@ def _assemble(
         `LayoutResult(engine_name="pseudoknot", ...)` with `pair_map` =
         the FULL drawn pairs (nested + PK-B), `crossing_pairs` = the PK-B
         pairs alone (for the renderer's distinct connector color), and
-        `crossing_lines` = every PK-A `RoutedLine`.
+        `crossing_lines` = every PK-A `RoutedLine` that survived the final
+        mutual-validation backstop (see `_clean_routed_lines`).
     """
     final_pair_map = list(base_pair_map)
     for i, j in placement.pk_b_pairs:
         final_pair_map[i], final_pair_map[j] = j, i
     report = check_overlaps(nested_result.x, nested_result.y, final_pair_map, gate_params)
-    flagged = bool(placement.pk_a_lines) or bool(placement.unplaced) or not report.passed
+    clean_lines, dropped_any = _clean_routed_lines(
+        nested_result.x, nested_result.y, final_pair_map, placement.pk_a_lines, gate_params
+    )
+    flagged = bool(clean_lines) or bool(placement.unplaced) or dropped_any or not report.passed
 
     return LayoutResult(
         x=nested_result.x,
@@ -151,8 +163,53 @@ def _assemble(
         node_r=gate_params.node_r,
         pair_map=final_pair_map,
         crossing_pairs=placement.pk_b_pairs,
-        crossing_lines=placement.pk_a_lines,
+        crossing_lines=clean_lines,
     )
+
+
+def _clean_routed_lines(
+    x: list[float],
+    y: list[float],
+    final_pair_map: list[int],
+    lines: list[RoutedLine],
+    params: OverlapParams,
+) -> tuple[list[RoutedLine], bool]:
+    """Belt-and-suspenders backstop (BUG 1 fix): drop any routed line the
+    incremental placement logic somehow let through with an overlap.
+
+    Re-validates every PK-A line's own capsules against `final_pair_map`'s
+    base primitives (nested pairs AND PK-B rungs) AND every other routed
+    line, using the same frozen predicates `placement`/`validate` use.
+    Incremental validation (`placement._try_in_plane`/`_route_stem`)
+    should make this always pass; if it ever doesn't, that is an
+    incremental-logic bug -- the offending line is simply never drawn
+    rather than silently overlapping.
+
+    Args:
+        x: Nucleotide x-coordinates.
+        y: Nucleotide y-coordinates.
+        final_pair_map: The nested + PK-B pair_map (`build_primitives`'s
+            input covers disks, backbone, and every pair capsule).
+        lines: Every PK-A `RoutedLine` the placement phase committed.
+        params: Geometry to validate against (the render radius).
+
+    Returns:
+        `(clean_lines, dropped_any)`: the subset of `lines` that are
+        mutually clean against everything, and whether any line had to be
+        dropped.
+    """
+    base_primitives = build_primitives(x, y, final_pair_map, params)
+    committed: list[Capsule] = []
+    clean: list[RoutedLine] = []
+    dropped_any = False
+    for uid, line in enumerate(lines, start=1):
+        segments = polyline_capsules(line.points, line.i, line.j, params.pair_half_width, uid)
+        if polyline_is_clean(segments, base_primitives, committed, final_pair_map, params.tol):
+            clean.append(line)
+            committed.extend(segments)
+        else:
+            dropped_any = True
+    return clean, dropped_any
 
 
 __all__ = ["layout_pseudoknot"]

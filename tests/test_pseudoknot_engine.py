@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from rna_draw.layout.base import EngineError, is_pseudoknot_free
-from rna_draw.layout.pseudoknot.engine import layout_pseudoknot
+from rna_draw.layout.base import EngineError, RoutedLine, is_pseudoknot_free, params_at_node_r
+from rna_draw.layout.pseudoknot.engine import _clean_routed_lines, layout_pseudoknot
 from rna_draw.layout.pseudoknot.validate import capsule_is_clean, polyline_capsules
 from rna_draw.overlap import OverlapParams, build_primitives, check_overlaps
 
@@ -32,14 +32,32 @@ NESTED_INSIDE_PK = "((((...((((....))))...[[[[....))))....]]]]"
 # clipping the OTHER's already-committed geometry.
 TWO_CROSSINGS = "((([[[)))]]]" + "(((<<<)))>>>"
 
+# BUG 1 adversarial repros (found by fuzz testing): each has a PK-B rung
+# (a straight crossing connector, checker-clean against the plain
+# pair_map) and a PK-A routed line whose escalation search never checked
+# the two against EACH OTHER, so the drawn line overlapped the drawn
+# rung's own capsule.
+BUG1_REPRO_PK_B_RUNG_VS_PK_A_LINE = "((([[[[.....<<{]]]]))).>>}"
+BUG1_REPRO_LINE_VS_RUNG_2 = "..<<<...[..(..>>>.]...{...).........}"
+BUG1_REPRO_LINE_VS_RUNG_3 = ".<<<<..[[(>>>>]]....{{{{).....}}}}"
+
 
 def _full_layout_is_clean(result) -> bool:
     """Independent oracle: checker-clean pair_map view AND every PK-A line
     clear of the whole layout and every OTHER PK-A line, using only the
     `LayoutResult`'s public fields (never engine-internal state).
+
+    `params_at_node_r` (not a bare `OverlapParams(node_r=result.node_r)`)
+    preserves the default half-width-to-`node_r` RATIO at the resolved
+    radius -- exactly how `pseudoknot.engine._assemble`'s own
+    `gate_params` were computed. A flat `OverlapParams(node_r=...)`
+    keeps `pair_half_width`/`backbone_half_width` at their raw defaults
+    regardless of `node_r`, silently using the WRONG (larger) half-width
+    whenever the resolved `node_r` shrank below the default 10.0 -- a
+    false-positive oracle, not a real drawn overlap.
     """
     assert result.pair_map is not None
-    params = OverlapParams(node_r=result.node_r)
+    params = params_at_node_r(OverlapParams(), result.node_r)
     base_report = check_overlaps(result.x, result.y, result.pair_map, params)
     if not base_report.passed:
         return False
@@ -116,6 +134,67 @@ class TestTwoCrossingStems:
         # is not vacuous.
         result = layout_pseudoknot(TWO_CROSSINGS, OverlapParams())
         assert result.crossing_pairs or result.crossing_lines
+
+
+class TestBug1DrawnCrossingElementOverlapRegression:
+    """Regression for BUG 1: a drawn PK-A routed line could overlap a
+    drawn PK-B connector rung. `_try_in_plane` validated a candidate PK-B
+    rung only against the plain `pair_map` (blind to already-committed
+    PK-A lines), and the final assembly never re-checked PK-A line
+    capsules against the full drawn pair_map at all. `_full_layout_is_clean`
+    is the independent oracle -- it checks every PK-A line against the
+    FULL pair_map (nested + PK-B) AND every other line, using only public
+    `LayoutResult` fields (`pair_map`, `crossing_lines`).
+    """
+
+    @pytest.mark.parametrize(
+        "secstruct",
+        [
+            BUG1_REPRO_PK_B_RUNG_VS_PK_A_LINE,
+            BUG1_REPRO_LINE_VS_RUNG_2,
+            BUG1_REPRO_LINE_VS_RUNG_3,
+        ],
+    )
+    def test_never_silent_overlap(self, secstruct: str) -> None:
+        result = layout_pseudoknot(secstruct, OverlapParams())
+        assert _full_layout_is_clean(result)
+
+    def test_all_nucleotides_placed(self) -> None:
+        result = layout_pseudoknot(BUG1_REPRO_PK_B_RUNG_VS_PK_A_LINE, OverlapParams())
+        assert len(result.x) == len(BUG1_REPRO_PK_B_RUNG_VS_PK_A_LINE)
+
+
+class TestCleanRoutedLinesBackstop:
+    """Direct unit coverage of `_assemble`'s belt-and-suspenders backstop
+    (`_clean_routed_lines`): if it is ever handed a mutually-overlapping
+    pair of routed lines -- which incremental validation should already
+    prevent -- it must drop the offender rather than draw a silent
+    overlap.
+    """
+
+    def test_drops_a_line_that_overlaps_an_earlier_one(self) -> None:
+        x = [0.0, 1000.0, 0.0, 1000.0]
+        y = [0.0, 0.0, 1000.0, 1000.0]
+        final_pair_map = [-1, -1, -1, -1]
+        line_a = RoutedLine(i=0, j=1, points=[(0.0, 0.0), (50.0, 0.0)])
+        line_b = RoutedLine(i=2, j=3, points=[(0.0, 0.0), (50.0, 0.0)])
+        clean, dropped_any = _clean_routed_lines(
+            x, y, final_pair_map, [line_a, line_b], OverlapParams()
+        )
+        assert clean == [line_a]
+        assert dropped_any is True
+
+    def test_keeps_every_line_when_all_are_mutually_clean(self) -> None:
+        x = [0.0, 1000.0, 2000.0, 3000.0]
+        y = [0.0, 0.0, 0.0, 0.0]
+        final_pair_map = [-1, -1, -1, -1]
+        line_a = RoutedLine(i=0, j=1, points=[(0.0, 0.0), (1000.0, 0.0)])
+        line_b = RoutedLine(i=2, j=3, points=[(2000.0, 0.0), (3000.0, 0.0)])
+        clean, dropped_any = _clean_routed_lines(
+            x, y, final_pair_map, [line_a, line_b], OverlapParams()
+        )
+        assert clean == [line_a, line_b]
+        assert dropped_any is False
 
 
 class TestPseudoknotFreeInputStillWorks:

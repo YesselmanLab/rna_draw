@@ -5,6 +5,8 @@ helpers (MUST-FIX #1/#2).
 
 from __future__ import annotations
 
+import pytest
+
 from rna_draw import settings
 from rna_draw.colorer import COLORS
 from rna_draw.draw import RNADrawer, _drawn_pairs, _figure_bounds, _shift_routed_lines
@@ -45,6 +47,25 @@ class TestLayoutGuaranteedPseudoknotTier:
         for i, j in result.crossing_pairs:
             assert result.pair_map[i] == j
             assert result.pair_map[j] == i
+
+
+class TestInvalidCharacterInputDegradesGracefully:
+    """Regression for BUG 2: `parsing.parse_all_pairs` raises `ValueError`
+    on any character outside `.()[]{}<>`; pre-pseudoknot-tier this
+    degraded to the flagged circle fallback, and `_try_pseudoknot` must
+    keep catching it (alongside `EngineError`) rather than let it escape
+    `layout_guaranteed` entirely.
+    """
+
+    @pytest.mark.parametrize("secstruct", [".((A)).", "..NN..", "..1..", "..X.."])
+    def test_layout_guaranteed_never_raises_and_falls_back(self, secstruct: str) -> None:
+        result = layout_guaranteed(secstruct)
+        assert result.flagged is True
+        assert result.engine_name == "fallback"
+
+    @pytest.mark.parametrize("secstruct", [".((A)).", "..NN..", "..1.."])
+    def test_try_pseudoknot_returns_none_not_raise(self, secstruct: str) -> None:
+        assert _try_pseudoknot(secstruct, OverlapParams()) is None
 
 
 class TestDrawnPairsHelper:

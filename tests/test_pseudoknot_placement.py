@@ -9,7 +9,12 @@ from __future__ import annotations
 from rna_draw.geometry import Capsule, Disk, PrimitiveId
 from rna_draw.layout.pseudoknot import routing
 from rna_draw.layout.pseudoknot.parsing import Stem
-from rna_draw.layout.pseudoknot.placement import MAX_PK_B_LENGTH, place_crossings
+from rna_draw.layout.pseudoknot.placement import (
+    MAX_PK_B_LENGTH,
+    _PlacementState,
+    _try_in_plane,
+    place_crossings,
+)
 from rna_draw.layout.pseudoknot.routing import enclosing_circle
 from rna_draw.layout.pseudoknot.validate import polyline_capsules, polyline_is_clean
 from rna_draw.overlap import OverlapParams, build_primitives
@@ -71,6 +76,42 @@ class TestPlaceCrossingsPKA:
         line = result.pk_a_lines[0]
         assert line.points[0] == (self.X[0], self.Y[0])
         assert line.points[-1] == (self.X[2], self.Y[2])
+
+
+class TestPkBRejectedAgainstCommittedPkALine:
+    """Regression for BUG 1: `_try_in_plane` used to validate a candidate
+    PK-B rung only against `check_overlaps(candidate_pair_map)`, which is
+    blind to already-committed PK-A routed lines (they never enter any
+    `pair_map`). A rung that is clean against every OTHER primitive but
+    slices straight through an earlier crossing stem's committed line must
+    now be rejected (demoted to PK-A) instead of silently accepted.
+    """
+
+    def test_rung_clean_against_pair_map_but_crossing_committed_line_is_rejected(self) -> None:
+        params = OverlapParams()
+        x = [0.0, 100.0, 0.0, 100.0]
+        y = [0.0, 0.0, 100.0, 100.0]
+        pair_map = [-1, -1, -1, -1]
+        # A committed PK-A line from an unrelated, already-placed crossing
+        # stem: a vertical segment at x=50 that the candidate rung's
+        # straight (0,0)-(100,0) chord must cross at (50, 0).
+        committed_lines = polyline_capsules(
+            [(50.0, -50.0), (50.0, 150.0)], 9, 10, params.pair_half_width, line_uid=1
+        )
+        state = _PlacementState(
+            x=x, y=y, params=params, pair_map=pair_map, committed_lines=committed_lines
+        )
+        stem = Stem(i=0, j=1, length=1)
+        assert _try_in_plane(state, stem) is False
+
+    def test_rung_accepted_when_no_committed_line_is_in_the_way(self) -> None:
+        params = OverlapParams()
+        x = [0.0, 100.0, 0.0, 100.0]
+        y = [0.0, 0.0, 100.0, 100.0]
+        pair_map = [-1, -1, -1, -1]
+        state = _PlacementState(x=x, y=y, params=params, pair_map=pair_map, committed_lines=[])
+        stem = Stem(i=0, j=1, length=1)
+        assert _try_in_plane(state, stem) is True
 
 
 class TestEnclosingCircle:

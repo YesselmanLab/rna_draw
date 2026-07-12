@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from rna_draw.geometry import Capsule
+from rna_draw.geometry import Capsule, PrimitiveId
 from rna_draw.layout.base import RoutedLine
 from rna_draw.overlap import OverlapParams, Primitive, build_primitives, check_overlaps
 
 from . import routing
 from .parsing import Stem
-from .validate import polyline_capsules
+from .validate import capsule_is_clean, polyline_capsules
 
 Point = tuple[float, float]
 
@@ -141,11 +141,39 @@ def _place_one_stem(state: _PlacementState, stem: Stem) -> None:
 
 
 def _try_in_plane(state: _PlacementState, stem: Stem) -> bool:
-    """PK-B: whether adding `stem`'s pairs to `pair_map` stays checker-clean."""
+    """PK-B: whether adding `stem`'s pairs to `pair_map` stays checker-clean.
+
+    `check_overlaps` alone is blind to already-committed PK-A routed lines
+    (they never enter any `pair_map`), so a straight rung that is clean
+    against every OTHER pair/disk/backbone primitive could still slice
+    through an earlier crossing stem's routed line. Every new rung capsule
+    is therefore also checked directly against `state.committed_lines`
+    before PK-B is accepted (BUG 1 fix: mutual validation of all drawn
+    crossing elements, not just pair-map-visible ones).
+    """
     if stem.length > MAX_PK_B_LENGTH:
         return False
     candidate = _augment(state.pair_map, stem.pairs())
-    return check_overlaps(state.x, state.y, candidate, state.params).passed
+    if not check_overlaps(state.x, state.y, candidate, state.params).passed:
+        return False
+    return _rungs_clear_committed_lines(state, stem)
+
+
+def _rungs_clear_committed_lines(state: _PlacementState, stem: Stem) -> bool:
+    """Whether `stem`'s new PK-B rung capsules clear every committed PK-A line."""
+    for i, j in stem.pairs():
+        rung = Capsule(
+            pid=PrimitiveId("pkbrung", i),
+            x0=state.x[i],
+            y0=state.y[i],
+            x1=state.x[j],
+            y1=state.y[j],
+            half_width=state.params.pair_half_width,
+            ends=frozenset({i, j}),
+        )
+        if not capsule_is_clean(rung, state.committed_lines, state.pair_map, state.params.tol):
+            return False
+    return True
 
 
 def _augment(pair_map: list[int], pairs: list[tuple[int, int]]) -> list[int]:

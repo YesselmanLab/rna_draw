@@ -272,11 +272,15 @@ def _try_pseudoknot(secstruct: str, params: OverlapParams) -> LayoutResult | Non
         only if every crossing stem became a clean in-plane connector;
         `flagged=True` if any routed line or unplaced crossing exists. Or
         `None` if `layout_pseudoknot` raised `EngineError` (an internal
-        invariant failure), so the pipeline falls through to the circle.
+        invariant failure) or `ValueError` (an invalid dot-bracket
+        character outside `.()[]{}<>` -- BUG 2 fix: pre-pseudoknot-tier
+        this degraded to the circle fallback, and it must keep doing so
+        rather than escape the whole pipeline), so the pipeline falls
+        through to the circle.
     """
     try:
         return layout_pseudoknot(secstruct, params)
-    except EngineError:
+    except (EngineError, ValueError):
         return None
 
 
