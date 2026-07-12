@@ -1,23 +1,30 @@
-"""Phase 3 PK-A candidate-route geometry: two escalating strategies for
-routing a non-overlapping line from nucleotide `i` to `j` when a straight
-in-plane connector (PK-B) is rejected.
+"""Phase 3 PK-A candidate-route geometry: the first three tiers of
+`placement._route_pair`'s quality ladder (see that module) for routing a
+non-overlapping line from nucleotide `i` to `j` when a straight in-plane
+connector (PK-B) is rejected. Tier 3, the GUARANTEED FLOOR, lives in
+`.floor` (used here too, by tier 2's exits).
+
+Tier 0 (`find_direct_route`): the bare `[p_i, p_j]` chord. The nicest
+possible route -- most pairs' direct chord is already checker-clean.
 
 Tier 1 (`find_midpoint_bow_route`): a single-apex "elbow" out from the
 `(i, j)` chord's own midpoint, escalating BOW MAGNITUDE (relative to the
 layout's own extent) and DIRECTION -- cheap and usually sufficient for
 short/local crossings (the common case; corpus crossing stems are short,
-see the plan's Corpus facts).
+see the plan's Corpus facts). Kept at v1's own full magnitude range (see
+`_BOW_FACTORS`); the floor tier is purely ADDITIVE coverage on top.
 
 Tier 2 (`find_ring_route`): route each endpoint independently out to a
-circle that provably encloses the WHOLE layout (so it is clear of every
-real primitive by construction), then around the shorter arc to the other
-endpoint's own exit point. More robust for a nucleotide deeply embedded in
-a dense structure, where tier 1's fixed-midpoint bow direction can keep
-clipping a close neighbor regardless of magnitude.
+LOCAL ring (usually far smaller than the layout's own enclosing circle) --
+v1's own cheap single-leg exit first, `floor.escape_to_ring`'s two-stage
+exit as the fallback -- then around the shorter arc to the other
+endpoint's own exit point. A purely local sidestep, tried at small ring
+scales before paying for the floor's own always-safe enclosing-circle-
+scale ring.
 
-Both tiers generate AND check candidates (via `validate`), returning the
+Every tier generates AND checks candidates (via `validate`), returning the
 first clean `RoutedLine` or `None`; `placement.py` only orchestrates which
-tier to try, in what order, and what to do once both fail.
+tier to try, in what order, and what to do once every tier fails.
 """
 
 from __future__ import annotations
@@ -34,14 +41,21 @@ Point = tuple[float, float]
 
 # Tier 1 (midpoint bow): magnitude ladder as fractions/multiples of the
 # layout's own bounding-box diagonal, and how many bearings to fan out
-# around the away-from-center one at each magnitude.
+# around the away-from-center one at each magnitude. MEASURED: trimming
+# the largest factor (12.8) regressed real corpus structures whose only
+# clean route was specifically that magnitude -- the floor tier does not
+# yet reliably replace every such case (see `.floor`'s module docstring
+# and this milestone's STOP-criterion note), so this ladder is kept at
+# v1's own full range; tiers 0 (direct) and 3/4 (ring/floor) are the new,
+# purely ADDITIVE coverage layered on top.
 _BOW_FACTORS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8)
 _BOW_DIRECTION_COUNT = 16
 
-# Tier 2 (ring route): local-exit bearing resolution, and radius
-# escalation multipliers on the layout's own enclosing-circle radius (see
-# `enclosing_circle`). Below 1.0 the ring is smaller than the true
-# enclosing circle -- not provably clear by construction, but still
+# Tier 2 (ring route): local single-leg-exit bearing resolution (v1's own
+# exit search, kept as the cheap first try -- see `_single_leg_exit`), and
+# radius escalation multipliers on the layout's own enclosing-circle
+# radius (see `enclosing_circle`). Below 1.0 the ring is smaller than the
+# true enclosing circle -- not provably clear by construction, but still
 # checked, and often succeeds as a purely local sidestep far short of a
 # full trip out to the guaranteed-safe floor.
 _EXIT_ANGLE_STEPS = 24
@@ -61,6 +75,25 @@ def enclosing_circle(x: list[float], y: list[float], params: OverlapParams) -> t
         params.node_r + max(params.backbone_half_width, params.pair_half_width)
     )
     return center, max(half_diag + margin, params.node_r)
+
+
+def find_direct_route(
+    i: int,
+    j: int,
+    p_i: Point,
+    p_j: Point,
+    params: OverlapParams,
+    base_primitives: list[Primitive],
+    committed_lines: list[Capsule],
+    pair_map: list[int],
+) -> RoutedLine | None:
+    """Tier 0 (best case): the single straight `i -> j` segment, unmodified.
+
+    The nicest possible route -- tried first so most pairs (whose direct
+    chord happens to already be checker-clean) never pay for a bow or a
+    ring detour at all.
+    """
+    return _accept_if_clean(i, j, [p_i, p_j], params, base_primitives, committed_lines, pair_map)
 
 
 def find_midpoint_bow_route(
@@ -110,25 +143,62 @@ def find_ring_route(
     committed_lines: list[Capsule],
     pair_map: list[int],
 ) -> RoutedLine | None:
-    """Tier 2: route `i -> ring -> j` at an escalating ring radius.
+    """Tier 2: route `i -> ring -> j` at an escalating LOCAL ring radius.
 
-    Each radius independently searches a local exit bearing for `i` and
-    for `j` (each checked only against `base_primitives`, since the arc is
-    provably clear of them by construction at scale >= 1.0), then verifies
-    the WHOLE assembled path -- including the arc -- against both
-    `base_primitives` and `committed_lines`.
+    Each radius independently exits `i` and `j`: `_single_leg_exit` (v1's
+    own cheap single-straight-leg search) is tried FIRST so tier 2 never
+    regresses below v1's own reach; `floor.escape_to_ring` (a short local
+    escape, then a straight leg to the ring -- decoupling local clearance
+    from the ring's own size) is the fallback, catching endpoints the
+    single leg cannot clear. Either way the WHOLE assembled path --
+    including the arc -- is verified against both `base_primitives` and
+    `committed_lines`.
+
     """
     for scale in _RING_SCALES:
         radius = base_radius * scale
-        angle_i = _find_exit_angle(i, p_i, center, radius, params, base_primitives, pair_map)
-        angle_j = _find_exit_angle(j, p_j, center, radius, params, base_primitives, pair_map)
-        if angle_i is None or angle_j is None:
+        exit_i = _endpoint_exit(
+            i, p_i, center, radius, params, base_primitives, committed_lines, pair_map
+        )
+        exit_j = _endpoint_exit(
+            j, p_j, center, radius, params, base_primitives, committed_lines, pair_map
+        )
+        if exit_i is None or exit_j is None:
             continue
-        points = _assemble_ring_route(center, radius, p_i, angle_i, p_j, angle_j)
+        points = _assemble_two_stage_route(center, radius, exit_i, exit_j)
         line = _accept_if_clean(i, j, points, params, base_primitives, committed_lines, pair_map)
         if line is not None:
             return line
     return None
+
+
+def _endpoint_exit(
+    real_index: int,
+    point: Point,
+    center: Point,
+    radius: float,
+    params: OverlapParams,
+    base_primitives: list[Primitive],
+    committed_lines: list[Capsule],
+    pair_map: list[int],
+) -> list[Point] | None:
+    """`_single_leg_exit` (cheap, v1-equivalent), else `floor.escape_to_ring`.
+
+    Local import of `.floor` breaks the routing<->floor module cycle
+    (`floor` also needs `routing`'s own bearing/ring helpers); same
+    pattern as `engine._layout_nested`'s local import.
+    """
+    exit_path = _single_leg_exit(
+        real_index, point, center, radius, params, base_primitives, pair_map
+    )
+    if exit_path is not None:
+        return exit_path
+
+    from . import floor
+
+    return floor.escape_to_ring(
+        real_index, point, center, radius, params, base_primitives, committed_lines, pair_map
+    )
 
 
 def _accept_if_clean(
@@ -183,6 +253,11 @@ def _elbow_points(p_i: Point, p_j: Point, direction: Point, magnitude: float) ->
     return [p_i, apex, p_j]
 
 
+def _ring_point(center: Point, radius: float, angle: float) -> Point:
+    """A point on the ring of `radius` around `center` at `angle`."""
+    return (center[0] + radius * cos(angle), center[1] + radius * sin(angle))
+
+
 def _exit_angle_candidates(base_angle: float) -> list[float]:
     """Bearings to try for a local exit, starting at `base_angle` (the
     shortest, purely radial exit) and fanning out to cover the full circle.
@@ -195,12 +270,7 @@ def _exit_angle_candidates(base_angle: float) -> list[float]:
     return angles
 
 
-def _ring_point(center: Point, radius: float, angle: float) -> Point:
-    """A point on the ring of `radius` around `center` at `angle`."""
-    return (center[0] + radius * cos(angle), center[1] + radius * sin(angle))
-
-
-def _find_exit_angle(
+def _single_leg_exit(
     real_index: int,
     point: Point,
     center: Point,
@@ -208,13 +278,19 @@ def _find_exit_angle(
     params: OverlapParams,
     base_primitives: list[Primitive],
     pair_map: list[int],
-) -> float | None:
-    """The first clean bearing (radial-first) from `point` out to the ring."""
+) -> list[Point] | None:
+    """v1's own exit search: the first clean SINGLE straight leg out to the ring.
+
+    Checked over its FULL length, so it can never clear a deeply embedded
+    endpoint (see `.floor`'s module docstring) -- but for the common
+    non-embedded case it is the cheapest exit, so `find_ring_route` tries
+    this first and only falls back to `floor.escape_to_ring` when it fails.
+    """
     for angle in _exit_angle_candidates(_radial_angle(center, point)):
         exit_point = _ring_point(center, radius, angle)
         leg = _leg_capsule(point, exit_point, real_index, params.pair_half_width)
         if capsule_is_clean(leg, base_primitives, pair_map, params.tol):
-            return angle
+            return [point, exit_point]
     return None
 
 
@@ -238,14 +314,20 @@ def _leg_capsule(point: Point, exit_point: Point, real_index: int, half_width: f
     )
 
 
-def _assemble_ring_route(
-    center: Point, radius: float, p_i: Point, angle_i: float, p_j: Point, angle_j: float
+def _assemble_two_stage_route(
+    center: Point, radius: float, exit_i: list[Point], exit_j: list[Point]
 ) -> list[Point]:
-    """Build the full `i -> exit_i -> (arc) -> exit_j -> j` waypoint list."""
-    exit_i = _ring_point(center, radius, angle_i)
-    exit_j = _ring_point(center, radius, angle_j)
+    """Join two endpoints' own two-stage exit paths via the shorter ring arc.
+
+    `exit_i`/`exit_j` are `[point, ..., ring_point]` waypoint lists (from
+    `floor.escape_to_ring`/`floor.creep_out`); both end exactly on the
+    `radius` ring, so the arc between their two ring points is well-formed
+    regardless of how many interior waypoints either exit path has.
+    """
+    angle_i = _radial_angle(center, exit_i[-1])
+    angle_j = _radial_angle(center, exit_j[-1])
     arc = _arc_waypoints(center, radius, angle_i, angle_j)
-    return [p_i, exit_i, *arc, exit_j, p_j]
+    return [*exit_i, *arc, *reversed(exit_j)]
 
 
 def _arc_waypoints(center: Point, radius: float, angle_a: float, angle_b: float) -> list[Point]:
@@ -264,4 +346,9 @@ def _arc_waypoints(center: Point, radius: float, angle_a: float, angle_b: float)
     return [_ring_point(center, radius, angle_a + step * k) for k in range(1, n_steps + 1)]
 
 
-__all__ = ["enclosing_circle", "find_midpoint_bow_route", "find_ring_route"]
+__all__ = [
+    "enclosing_circle",
+    "find_direct_route",
+    "find_midpoint_bow_route",
+    "find_ring_route",
+]

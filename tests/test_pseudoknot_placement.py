@@ -7,11 +7,13 @@ the two routing tiers, at the unit level (independent of the full
 from __future__ import annotations
 
 from rna_draw.geometry import Capsule, Disk, PrimitiveId
+from rna_draw.layout.base import RoutedLine
 from rna_draw.layout.pseudoknot import routing
 from rna_draw.layout.pseudoknot.parsing import Stem
 from rna_draw.layout.pseudoknot.placement import (
     MAX_PK_B_LENGTH,
     _PlacementState,
+    _route_pair,
     _try_in_plane,
     place_crossings,
 )
@@ -76,6 +78,114 @@ class TestPlaceCrossingsPKA:
         line = result.pk_a_lines[0]
         assert line.points[0] == (self.X[0], self.Y[0])
         assert line.points[-1] == (self.X[2], self.Y[2])
+
+
+class TestDensePseudoknotAllPairsPlaced:
+    """The guaranteed-floor quality ladder (direct/bow/ring/floor) placing
+    EVERY crossing pair of a moderately dense pseudoknot -- the plan's
+    core deliverable (UNPLACED -> ~0 for the reachable common case; see
+    `benchmarks/pseudoknot_gate.py` for the honest corpus-scale numbers,
+    which do have a residual -- documented -- for genuinely embedded
+    real-structure endpoints; see `.floor`'s STOP-criterion notes).
+    """
+
+    def test_zero_unplaced(self) -> None:
+        # 10 co-linear nucleotides (ordinary 30-unit backbone spacing)
+        # with 4 nested-bow crossing stems, each pair's straight chord
+        # blocked by the nucleotides between it -- every one must
+        # escalate to (and succeed at) a PK-A routed line.
+        n = 10
+        x = [float(k) * 30 for k in range(n)]
+        y = [0.0] * n
+        pair_map = [-1] * n
+        stems = [
+            Stem(i=0, j=9, length=1),
+            Stem(i=1, j=8, length=1),
+            Stem(i=2, j=7, length=1),
+            Stem(i=3, j=6, length=1),
+        ]
+        result = place_crossings(x, y, pair_map, stems, OverlapParams())
+        assert result.unplaced == []
+        assert len(result.pk_a_lines) == 4
+
+    def test_every_routed_line_is_mutually_clean(self) -> None:
+        n = 10
+        x = [float(k) * 30 for k in range(n)]
+        y = [0.0] * n
+        pair_map = [-1] * n
+        stems = [
+            Stem(i=0, j=9, length=1),
+            Stem(i=1, j=8, length=1),
+            Stem(i=2, j=7, length=1),
+            Stem(i=3, j=6, length=1),
+        ]
+        params = OverlapParams()
+        result = place_crossings(x, y, pair_map, stems, params)
+        base_primitives = build_primitives(x, y, pair_map, params)
+        all_caps = [
+            polyline_capsules(line.points, line.i, line.j, params.pair_half_width, uid)
+            for uid, line in enumerate(result.pk_a_lines, start=1)
+        ]
+        for uid, segments in enumerate(all_caps):
+            others = [s for ouid, caps in enumerate(all_caps) if ouid != uid for s in caps]
+            assert polyline_is_clean(segments, base_primitives, others, pair_map, params.tol)
+
+
+class TestTwoCrossingLinesRouteDisjoint:
+    """Two crossing pairs whose INDEPENDENTLY-computed best routes would
+    physically collide (same bow apex) must end up mutually clean once
+    threaded through the SAME `committed_lines` -- the second escalates to
+    a genuinely different, disjoint route rather than either colliding or
+    going unplaced.
+    """
+
+    N = 10
+    X = [float(k) * 30 for k in range(N)]
+    Y = [0.0] * N
+    PAIR_MAP = [-1] * N
+
+    def _route(self, i: int, j: int, committed: list[Capsule]) -> RoutedLine | None:
+        params = OverlapParams()
+        base_primitives = build_primitives(self.X, self.Y, self.PAIR_MAP, params)
+        center, base_radius = enclosing_circle(self.X, self.Y, params)
+        state = _PlacementState(
+            x=self.X,
+            y=self.Y,
+            params=params,
+            pair_map=self.PAIR_MAP,
+            committed_lines=committed,
+            center=center,
+            extent=max(max(self.X) - min(self.X), params.node_r),
+            base_radius=base_radius,
+            floor_ring_radius=base_radius,
+        )
+        return _route_pair(state, i, j, base_primitives)
+
+    def test_naive_independent_routes_would_collide(self) -> None:
+        # Sanity: WITHOUT committed-line knowledge, pair (1, 8)'s own best
+        # route lands on the exact same apex as pair (0, 9)'s -- proving
+        # this scenario actually exercises disjoint-routing, not a vacuous
+        # pass.
+        line_a = self._route(0, 9, [])
+        line_b_naive = self._route(1, 8, [])
+        assert line_a is not None
+        assert line_b_naive is not None
+        assert line_a.points[1] == line_b_naive.points[1]
+
+    def test_informed_second_route_is_disjoint_and_clean(self) -> None:
+        params = OverlapParams()
+        base_primitives = build_primitives(self.X, self.Y, self.PAIR_MAP, params)
+        line_a = self._route(0, 9, [])
+        assert line_a is not None
+        caps_a = polyline_capsules(line_a.points, 0, 9, params.pair_half_width, line_uid=1)
+
+        line_b = self._route(1, 8, caps_a)
+        assert line_b is not None
+        caps_b = polyline_capsules(line_b.points, 1, 8, params.pair_half_width, line_uid=2)
+
+        assert line_b.points != line_a.points
+        assert polyline_is_clean(caps_b, base_primitives, caps_a, self.PAIR_MAP, params.tol)
+        assert polyline_is_clean(caps_a, base_primitives, caps_b, self.PAIR_MAP, params.tol)
 
 
 class TestPkBRejectedAgainstCommittedPkALine:
