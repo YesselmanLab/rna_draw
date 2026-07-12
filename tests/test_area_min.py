@@ -213,28 +213,6 @@ class TestRotateBranches:
         for loop in pinned_loops:
             assert _dom_axis_parallel_to_loop_axis(tree, loop, cache, rx, ry)
 
-
-def _dom_axis_parallel_to_loop_axis(
-    tree: StructureTree,
-    loop: Loop,
-    cache: envelope.ReachCache,
-    x: list[float],
-    y: list[float],
-) -> bool:
-    """Whether a pinned degree-2 loop's dominant child still continues
-    straight through (its own axis parallel to the loop's own axis)."""
-    from rna_draw.layout.constructive import compaction
-    from rna_draw.layout.constructive import envelope as env
-
-    dom, _side = env._dominant_and_side(tree, loop, PARAMS, cache, 1.0)
-    assert loop.closing_pair is not None  # caller only passes pinned (closing-paired) loops
-    i, j = loop.closing_pair
-    loop_axis = compaction._axis_dir_from_rung((x[i], y[i]), (x[j], y[j]), PARAMS.PAIR_SPACE)
-    di, dj = dom.closing_pair
-    dom_axis = compaction._axis_dir_from_rung((x[di], y[di]), (x[dj], y[dj]), PARAMS.PAIR_SPACE)
-    cos_angle = loop_axis[0] * dom_axis[0] + loop_axis[1] * dom_axis[1]
-    return cos_angle == pytest.approx(1.0, abs=1e-6)
-
     @pytest.mark.timeout(TIMEOUT)
     def test_bulge_child_left_straight(self) -> None:
         """A bulge/interior loop's sole child must keep continuing the
@@ -268,6 +246,28 @@ def _dom_axis_parallel_to_loop_axis(
         before = _bbox_area(x, y)
         rx, ry = area_min.rotate_branches(tree, x, y, pair_map, PARAMS, OVERLAP_PARAMS, cache)
         assert _bbox_area(rx, ry) <= before + 1e-6
+
+
+def _dom_axis_parallel_to_loop_axis(
+    tree: StructureTree,
+    loop: Loop,
+    cache: envelope.ReachCache,
+    x: list[float],
+    y: list[float],
+) -> bool:
+    """Whether a pinned degree-2 loop's dominant child still continues
+    straight through (its own axis parallel to the loop's own axis)."""
+    from rna_draw.layout.constructive import compaction
+    from rna_draw.layout.constructive import envelope as env
+
+    dom, _side = env._dominant_and_side(tree, loop, PARAMS, cache, 1.0)
+    assert loop.closing_pair is not None  # caller only passes pinned (closing-paired) loops
+    i, j = loop.closing_pair
+    loop_axis = compaction._axis_dir_from_rung((x[i], y[i]), (x[j], y[j]), PARAMS.PAIR_SPACE)
+    di, dj = dom.closing_pair
+    dom_axis = compaction._axis_dir_from_rung((x[di], y[di]), (x[dj], y[dj]), PARAMS.PAIR_SPACE)
+    cos_angle = loop_axis[0] * dom_axis[0] + loop_axis[1] * dom_axis[1]
+    return cos_angle == pytest.approx(1.0, abs=1e-6)
 
 
 class TestEngineIntegration:
