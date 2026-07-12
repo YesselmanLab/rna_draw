@@ -333,6 +333,131 @@ class TestTreeParity:
         print(f"\nhard_set tree parity: n={len(structures)}, topology exact + numeric parity OK")
 
 
+def _detections(structure: str, paired: float = 35.0, unpaired: float = 25.0,
+                clearance: float = 1.0) -> tuple[list, list]:
+    """`(native, vendored)` T0 detection sets for `structure`, both as
+    `list[tuple[int, int, str]]` (the vendored side is JSON text over the
+    wire; decode it and tuple-ify each `[id1, id2, "type"]` entry).
+    """
+    native_detections = native_layout.dump_detections(structure, paired, unpaired, clearance)
+    vendored_detections = [
+        tuple(entry)
+        for entry in json.loads(vienna_layout.dump_detections(structure, paired, unpaired))
+    ]
+    return native_detections, vendored_detections
+
+
+def _assert_detections_parity(structure: str) -> None:
+    """Plan criterion 3 ("Detections (discrete)"): the native and vendored
+    detection sets are EXACTLY equal, as ORDERED sequences (both sides
+    build them via the identical `(id_i, id_j)` nested-loop order over the
+    same DFS pre-order id numbering, then the same exterior-check pass --
+    see `intersect_tree.hpp`'s `detect_intersections` doc comment) -- a
+    strictly stronger check than set equality, and one exact-order mismatch
+    here would itself be a useful bug signal.
+    """
+    native_detections, vendored_detections = _detections(structure)
+    assert native_detections == vendored_detections, (
+        f"{structure!r}: detection sets differ\n"
+        f"  native:   {native_detections}\n"
+        f"  vendored: {vendored_detections}"
+    )
+
+
+class TestDetectionParity:
+    """Plan criterion 3 ("Detections (discrete)"): `dump_detections` sets
+    EQUAL (exact) on the T0 tree, over the hand/motif corpus + the hard set
+    (Milestone A step 5).
+    """
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_detections_parity_on_hand_corpus(self, name: str) -> None:
+        _assert_detections_parity(HAND_STRUCTURES[name])
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_detections_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.dump_detections(structure)
+        second = native_layout.dump_detections(structure)
+        assert first == second
+
+    def test_detections_parity_over_hard_set(self) -> None:
+        structures = _hard_set_structures()
+        assert len(structures) > 400, "expected most of the hard set to be turtle-usable"
+
+        n_nonempty = 0
+        for structure in structures:
+            native_detections, _ = _detections(structure)
+            if native_detections:
+                n_nonempty += 1
+            _assert_detections_parity(structure)
+
+        print(
+            f"\nhard_set detection parity: n={len(structures)}, "
+            f"nonempty_detection_sets={n_nonempty} -- exact parity OK"
+        )
+
+
+def _resolver_off_coords(structure: str, engine: ModuleType) -> np.ndarray:
+    x, y = engine.plot_coords_puzzler_resolver_off(structure)
+    return np.column_stack([x, y])
+
+
+def _assert_resolver_off_coords_parity(structure: str) -> float:
+    """Plan's "RESOLVER-OFF FINALIZATION" parity gate (Milestone A step 6):
+    native `plot_coords_puzzler_resolver_off` vs the vendored oracle's
+    counterpart (`checkSiblingIntersections`/`checkAncestorIntersections`/
+    `optimize` all false on the vendored side), at criterion 1's tolerance
+    -- both engines run the SAME deterministic pipeline (turtle -> tree ->
+    canonical boxes -> `determine_nucleotide_coordinates` ->
+    `resolve_exterior_children_intersection`; no resolver iteration), so
+    the same float32-return-type precision-ceiling reasoning from the
+    turtle-parity docstring above applies verbatim.
+    """
+    native_xy = _resolver_off_coords(structure, native_layout)
+    oracle_xy = _resolver_off_coords(structure, vienna_layout)
+
+    native_f32_xy: np.ndarray = native_xy.astype(np.float32).astype(np.float64)
+    tight_diff = _max_aligned_diff(native_f32_xy, oracle_xy)
+    assert tight_diff <= TIGHT_TOL, (
+        f"{structure!r}: resolver-off float32-rounded aligned diff {tight_diff} exceeds "
+        f"the {TIGHT_TOL} parity gate"
+    )
+    return tight_diff
+
+
+class TestResolverOffFinalizationParity:
+    """Milestone A step 6 ("finalization with resolver OFF"): native
+    `plot_coords_puzzler_resolver_off` vs the vendored oracle's, over the
+    hand/motif corpus + the hard set. Isolates coordinate finalization
+    (`determine_nucleotide_coordinates` +
+    `resolve_exterior_children_intersection`) from the (not-yet-ported)
+    resolver.
+    """
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_resolver_off_parity(self, name: str) -> None:
+        _assert_resolver_off_coords_parity(HAND_STRUCTURES[name])
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_resolver_off_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.plot_coords_puzzler_resolver_off(structure)
+        second = native_layout.plot_coords_puzzler_resolver_off(structure)
+        assert first == second
+
+    def test_resolver_off_parity_over_hard_set(self) -> None:
+        structures = _hard_set_structures()
+        assert len(structures) > 400, "expected most of the hard set to be turtle-usable"
+
+        diffs = [_assert_resolver_off_coords_parity(s) for s in structures]
+        assert max(diffs) <= TIGHT_TOL
+        print(
+            f"\nhard_set resolver-off parity: n={len(structures)}, "
+            f"max_diff={max(diffs):.3e}, mean_diff={sum(diffs) / len(diffs):.3e}"
+        )
+
+
 @pytest.mark.skipif(
     not os.environ.get("RNA_DRAW_PARITY_BROAD"),
     reason="broad ~2k dbnFiles sample is on-demand (set RNA_DRAW_PARITY_BROAD=1); "

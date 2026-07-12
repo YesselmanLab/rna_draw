@@ -161,6 +161,12 @@ set(RNA_LAYOUT_CORE_SOURCES
   src/layout_core/bounding_boxes.cpp
   src/layout_core/config_tree.cpp
   src/layout_core/bounding_wedge.cpp
+  src/layout_core/intersections.cpp
+  src/layout_core/intersect_boxes.cpp
+  src/layout_core/intersect_tree.cpp
+  src/layout_core/nucleotide_coords.cpp
+  src/layout_core/resolve_exterior.cpp
+  src/layout_core/puzzler.cpp
   src/layout_core/debug_dump.cpp
 )
 
@@ -178,7 +184,8 @@ install(TARGETS _layout_core DESTINATION rna_draw)
 # oracle comparisons run at the Python level, `tests/test_native_parity.py`,
 # since that is where both compiled extensions are importable together).
 foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test
-                             bounding_boxes_test config_tree_test bounding_wedge_test)
+                             bounding_boxes_test config_tree_test bounding_wedge_test
+                             intersections_test intersect_tree_test puzzler_test)
   add_executable(${rna_layout_test_name} src/layout_core/tests/${rna_layout_test_name}.cpp)
   target_link_libraries(${rna_layout_test_name} PRIVATE rna_layout_core)
   target_compile_options(${rna_layout_test_name} PRIVATE ${RNA_DRAW_FP_FLAGS})

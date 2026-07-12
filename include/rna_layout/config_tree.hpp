@@ -14,11 +14,17 @@
  * SCOPE (Milestone A step 4): only construction + the navigation getters the
  * config-tree/bounding-box/wedge code itself needs (`is_exterior`,
  * `get_loop_center`, `get_stem_center`, `get_child_angle`) are ported this
- * slice. `configtree.inc`'s resolver-only helpers (`translateBoundingBoxes`,
- * `applyChangesToConfigAndBoundingBoxes`, `getChildIndex`/`getChildNode`,
+ * slice. `configtree.inc`'s resolver-only helpers
+ * (`applyChangesToConfigAndBoundingBoxes`, `getChildIndex`/`getChildNode`,
  * `countSubtreeNodes`/`countAncestorNodes`, `isInteriorLoop`/`isMultiLoop`,
  * `getPairedAngle`) are deferred to the resolver steps (Milestone A step 7+)
  * that actually call them.
+ *
+ * `translate_bounding_boxes` (Milestone A step 6) is the one exception:
+ * `resolveExteriorChildrenIntersectionXY` (`resolve_exterior.cpp`) needs it
+ * to shift a whole exterior child's subtree, and that pass runs regardless
+ * of the resolver's `check_*`/`optimize` options (`RNApuzzler.c:498-507`
+ * calls it unconditionally) -- see `resolve_exterior.hpp`'s file header.
  */
 
 #include <memory>
@@ -98,5 +104,16 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired);
  * root -- it has no `sbox`).
  */
 [[nodiscard]] double get_child_angle(const TreeNode& parent, const TreeNode& child);
+
+/**
+ * Translate @p node's `StemBox`/`LoopBox`/`Aabb` by @p vector, and recurse
+ * into every descendant (translating its boxes by the SAME vector). Ported
+ * from `translateBoundingBoxes` (`configtree.inc:906`).
+ *
+ * @param node The (sub)tree root to translate, in place; must not be the
+ *     true exterior root (it has no boxes to translate).
+ * @param vector The translation to apply.
+ */
+void translate_bounding_boxes(TreeNode& node, Vec2 vector);
 
 }  // namespace rna_layout

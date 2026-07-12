@@ -215,6 +215,32 @@ CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_f
   return to_vectors(x, y, n);
 }
 
+/// Call `vrna_plot_coords_puzzler` with `checkSiblingIntersections = 0`,
+/// `checkAncestorIntersections = 0`, `optimize = 0` -- the vendored-side
+/// counterpart of `rna_layout::layout_puzzler`'s resolver-off finalization
+/// path (Milestone A step 6). `checkExteriorIntersections` and
+/// `allowFlipping` are left at `vrna_plot_options_puzzler()`'s own defaults
+/// (`1` and `0` respectively), matching `rna_layout::PuzzlerOptions`'s
+/// defaults for those two fields.
+CoordVectors plot_coords_puzzler_resolver_off(const std::string& structure) {
+  validate_nonempty(structure);
+  validate_well_nested(structure);
+  validate_no_empty_loop(structure);
+  PuzzlerOptions options;
+  options.ptr->checkSiblingIntersections = 0;
+  options.ptr->checkAncestorIntersections = 0;
+  options.ptr->optimize = 0;
+  MallocBuffer<float> x;
+  MallocBuffer<float> y;
+  int n = vrna_plot_coords_puzzler(structure.c_str(), &x.ptr, &y.ptr, nullptr, options.ptr);
+  if (n == 0 || static_cast<size_t>(n) != structure.size()) {
+    throw std::runtime_error(
+        "vrna_plot_coords_puzzler (resolver off) failed on structure of length " +
+        std::to_string(structure.size()));
+  }
+  return to_vectors(x, y, n);
+}
+
 // Defined in vendor_instrument.c, compiled in only when RNA_DRAW_BUILD_ORACLE
 // is on (see CMakeLists.txt); that file documents the (macro-interposition-
 // adjacent) mechanism used to reach the vendored tree/box internals, and the
@@ -238,6 +264,27 @@ std::string dump_tree(const std::string& structure, double paired, double unpair
   char* json = rnadraw_oracle_dump_tree(structure.c_str(), paired, unpaired);
   if (json == nullptr) {
     throw std::runtime_error("rnadraw_oracle_dump_tree failed on structure of length " +
+                             std::to_string(structure.size()));
+  }
+  std::string result(json);
+  std::free(json);
+  return result;
+}
+
+extern "C" char* rnadraw_oracle_dump_detections(const char* structure, double paired,
+                                                double unpaired);
+
+/// The intersection detection set (Milestone A step 5): calls
+/// `rnadraw_oracle_dump_detections` (`vendor_instrument.c`), which returns
+/// a malloc'd JSON string of `[[node1_id, node2_id, "type"], ...]`; copy it
+/// into a `std::string` and free the buffer (same pattern as `dump_tree`).
+std::string dump_detections(const std::string& structure, double paired, double unpaired) {
+  validate_nonempty(structure);
+  validate_well_nested(structure);
+  validate_no_empty_loop(structure);
+  char* json = rnadraw_oracle_dump_detections(structure.c_str(), paired, unpaired);
+  if (json == nullptr) {
+    throw std::runtime_error("rnadraw_oracle_dump_detections failed on structure of length " +
                              std::to_string(structure.size()));
   }
   std::string result(json);
@@ -285,6 +332,13 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "clearance so puzzler resolves near-touches rna_draw's checker "
         "flags; <= 0 or 1.0 == stock). Defaults match plot_coords_puzzler "
         "exactly. Returns (x, y).");
+  m.def("plot_coords_puzzler_resolver_off", &plot_coords_puzzler_resolver_off, py::arg("structure"),
+        "Lay out a dot-bracket structure with RNApuzzler, with "
+        "checkSiblingIntersections/checkAncestorIntersections/optimize all "
+        "false (checkExteriorIntersections and allowFlipping left at their "
+        "stock defaults) -- the vendored-side counterpart of the native "
+        "rna_layout::layout_puzzler resolver-off finalization path "
+        "(Milestone A step 6). Returns (x, y).");
   m.def("plot_coords_turtle", &plot_coords_turtle, py::arg("structure"),
         "Lay out a dot-bracket structure with RNAturtle; returns (x, y).");
   m.def("dump_turtle", &plot_coords_turtle, py::arg("structure"),
@@ -304,5 +358,12 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "pre-resolver), as a JSON string -- json.loads() it and compare "
         "against the native rna_layout core's dump_tree (a list[dict] of "
         "the same shape); only built when RNA_DRAW_BUILD_ORACLE is on.");
+  m.def("dump_detections", &dump_detections, py::arg("structure"), py::arg("paired") = 35.0,
+        py::arg("unpaired") = 25.0,
+        "The full intersection detection set over the T1 tree (Milestone A "
+        "step 5), as a JSON string of [[node1_id, node2_id, \"type\"], "
+        "...] -- json.loads() it and compare against the native "
+        "rna_layout core's dump_detections; only built when "
+        "RNA_DRAW_BUILD_ORACLE is on.");
 #endif
 }

@@ -36,6 +36,22 @@
  * (native `_layout_core.dump_tree`) returns as a `list[dict]`, so
  * `tests/test_native_parity.py` can compare both sides after
  * `json.loads()`.
+ *
+ * MILESTONE A STEP 5 addition: `rnadraw_oracle_dump_detections` runs the
+ * SAME setup (through `updateBoundingBoxes`) and then computes the FULL
+ * intersection detection set over the resulting tree -- every intersecting
+ * non-root node pair (`intersectNodeNode`, called for all `n*(n-1)/2` pairs
+ * in the SAME DFS pre-order `id` numbering `dump_tree`'s JSON already uses)
+ * plus every direct root child that intersects the exterior baseline
+ * (`intersectNodeExterior`, forced on via `checkExteriorIntersections = 1`).
+ * This mirrors `include/rna_layout/intersect_tree.hpp`'s
+ * `detect_intersections` exactly -- see that file's header for why this
+ * "check every pair" detection set has no single vendored counterpart (the
+ * resolver only ever queries specific pairs on demand): calling the
+ * vendored `intersectNodeNode`/`intersectNodeExterior` directly, in a loop
+ * this file adds, is NOT an edit to vendored logic (same "second
+ * independent copy of the .inc amalgam, in this TU" mechanism the rest of
+ * this file already uses -- see the header above).
  */
 
 #include <ViennaRNA/structures/pairtable.h>
@@ -49,6 +65,7 @@
 #include "includes/coordinates.inc"
 #include "includes/definitions.inc"
 #include "includes/drawingconfig.inc"
+#include "includes/intersectLevelTreeNodes.inc"
 #include "includes/vector_math.inc"
 
 /*---------------------------------------------------------------------------
@@ -207,29 +224,51 @@ static void dump_node_json(strbuf_t* buf, const treeNode* node, short is_first) 
 }
 
 /*---------------------------------------------------------------------------
- *  Public entry point
+ *  Shared T1-tree build (dump_tree + dump_detections setup)
  *--------------------------------------------------------------------------*/
 
-/*
- * Runs the turtle pass + buildConfigtree + updateBoundingBoxes on
+/* Everything `rnadraw_oracle_dump_tree`/`rnadraw_oracle_dump_detections`
+ * need to free once they are done with the tree. */
+typedef struct {
+  short* pair_table;
+  tBaseInformation* base_information;
+  double* x;
+  double* y;
+  treeNode* tree;
+} t1_tree_t;
+
+static void t1_tree_free(t1_tree_t* built) {
+  if (built->tree != NULL) freeTree(built->tree);
+  free(built->x);
+  free(built->y);
+  free(built->base_information);
+  free(built->pair_table);
+}
+
+/* Runs the turtle pass + buildConfigtree + updateBoundingBoxes on
  * `structure` (mirroring `RNApuzzler.c:421-476` through, but not
- * including, the resolver) and returns a malloc'd JSON array of the
- * resulting T1 tree, one object per node (see this file's header for the
- * schema). Caller owns the returned buffer; free() it. Returns NULL on a
- * malformed/degenerate structure (caller should treat that as an error,
- * same contract as `vrna_plot_coords_puzzler` returning 0).
- */
-char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpaired) {
+ * including, the resolver). Returns 1 on success (`*out` populated;
+ * caller must `t1_tree_free(out)` when done) or 0 on a malformed/
+ * degenerate structure (`*out`'s fields are NULL/zeroed either way). */
+static short build_t1_tree(const char* structure, double paired, double unpaired,
+                           t1_tree_t* out) {
+  out->pair_table = NULL;
+  out->base_information = NULL;
+  out->x = NULL;
+  out->y = NULL;
+  out->tree = NULL;
+
   short* pair_table = vrna_ptable(structure);
 
-  if (pair_table == NULL) return NULL;
+  if (pair_table == NULL) return 0;
 
   int length = pair_table[0];
 
   if (length <= 0) {
     free(pair_table);
-    return NULL;
+    return 0;
   }
+  out->pair_table = pair_table;
 
   tBaseInformation* baseInformation = vrna_alloc((length + 1) * sizeof(tBaseInformation));
 
@@ -239,6 +278,7 @@ char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpa
     baseInformation[i].angle = 0.0;
     baseInformation[i].config = NULL;
   }
+  out->base_information = baseInformation;
 
   cfgGenerateConfig(pair_table, baseInformation, unpaired, paired);
   computeAffineCoordinates(pair_table, paired, unpaired, baseInformation);
@@ -247,10 +287,13 @@ char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpa
   double* y = (double*)vrna_alloc(length * sizeof(double));
 
   affineToCartesianCoordinates(baseInformation, length, x, y);
+  out->x = x;
+  out->y = y;
 
   double distBulge = sqrt(unpaired * unpaired - 0.25 * unpaired * unpaired);
 
   treeNode* tree = buildConfigtree(pair_table, baseInformation, x, y, distBulge);
+  out->tree = tree;
 
   /* Fully-initialized defaults (same constructor `bindings.cpp`'s
    * `PuzzlerOptions` RAII wrapper uses), overriding only the two fields
@@ -262,25 +305,147 @@ char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpa
   updateBoundingBoxes(tree, puzzler_options);
   vrna_plot_options_puzzler_free(puzzler_options);
 
+  return 1;
+}
+
+/*---------------------------------------------------------------------------
+ *  Public entry points
+ *--------------------------------------------------------------------------*/
+
+/*
+ * Returns a malloc'd JSON array of `structure`'s T1 tree (see
+ * `build_t1_tree`), one object per node (see this file's header for the
+ * schema). Caller owns the returned buffer; free() it. Returns NULL on a
+ * malformed/degenerate structure (caller should treat that as an error,
+ * same contract as `vrna_plot_coords_puzzler` returning 0).
+ */
+char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpaired) {
+  t1_tree_t built;
+
+  if (!build_t1_tree(structure, paired, unpaired, &built)) return NULL;
+
   strbuf_t buf;
 
   strbuf_init(&buf);
   strbuf_append(&buf, "[");
-  dump_node_json(&buf, tree, 1);
+  dump_node_json(&buf, built.tree, 1);
   strbuf_append(&buf, "]");
 
-  freeTree(tree);
-  free(x);
-  free(y);
-  free(baseInformation);
-  free(pair_table);
+  t1_tree_free(&built);
+
+  return buf.data;
+}
+
+/*---------------------------------------------------------------------------
+ *  Detection set (Milestone A step 5)
+ *--------------------------------------------------------------------------*/
+
+/* Growable flat array of `treeNode*`, filled by `flatten_tree` in the SAME
+ * DFS pre-order `getNodeID` assignment uses (`configtree.inc`'s
+ * `treeHandleStem`), so `nodes[i]` and `getNodeID(nodes[i])` agree -- the
+ * same invariant `dump_node_json` already relies on. */
+typedef struct {
+  treeNode** items;
+  int count;
+  int capacity;
+} node_list_t;
+
+static void node_list_init(node_list_t* list) {
+  list->capacity = 64;
+  list->count = 0;
+  list->items = (treeNode**)vrna_alloc((size_t)list->capacity * sizeof(treeNode*));
+}
+
+static void node_list_push(node_list_t* list, treeNode* node) {
+  if (list->count >= list->capacity) {
+    list->capacity *= 2;
+    list->items = (treeNode**)realloc(list->items, (size_t)list->capacity * sizeof(treeNode*));
+  }
+  list->items[list->count++] = node;
+}
+
+static void flatten_tree(treeNode* node, node_list_t* list) {
+  node_list_push(list, node);
+  for (int i = 0; i < node->childCount; i++) flatten_tree(getChild(node, i), list);
+}
+
+/*
+ * Returns a malloc'd JSON array of `[[node1_id, node2_id, "type"], ...]`
+ * over the FULL detection set of `structure`'s T1 tree: every intersecting
+ * non-root node pair (`intersectNodeNode`, all `n*(n-1)/2` pairs, `id_i <
+ * id_j`, in that nested-loop discovery order) then every direct root child
+ * that intersects the exterior baseline (`intersectNodeExterior`, forced on
+ * via `checkExteriorIntersections = 1` -- `node2_id` is the root's own id,
+ * `0`, for these) -- see `include/rna_layout/intersect_tree.hpp`'s
+ * `detect_intersections`, which this exactly mirrors. `"type"` is
+ * `intersectionTypeToString`'s own short code (`"LxL"`, `"SxS"`, ...,
+ * `"EXT"`), so both sides serialize identically without a translation
+ * table on the Python test side. Caller owns the returned buffer; free()
+ * it. Returns NULL on a malformed/degenerate structure.
+ */
+char* rnadraw_oracle_dump_detections(const char* structure, double paired, double unpaired) {
+  t1_tree_t built;
+
+  if (!build_t1_tree(structure, paired, unpaired, &built)) return NULL;
+
+  node_list_t nodes;
+
+  node_list_init(&nodes);
+  flatten_tree(built.tree, &nodes);
+
+  vrna_plot_options_puzzler_t* puzzler_options = vrna_plot_options_puzzler();
+
+  puzzler_options->checkExteriorIntersections = 1;
+
+  strbuf_t buf;
+
+  strbuf_init(&buf);
+  strbuf_append(&buf, "[");
+  short is_first = 1;
+
+  for (int i = 1; i < nodes.count; i++) {
+    for (int j = i + 1; j < nodes.count; j++) {
+      intersectionType it = intersectNodeNode(nodes.items[i], nodes.items[j]);
+      if (it == noIntersection) continue;
+
+      if (!is_first) strbuf_append(&buf, ",");
+      is_first = 0;
+      strbuf_append(&buf, "[");
+      strbuf_append_int(&buf, getNodeID(nodes.items[i]));
+      strbuf_append(&buf, ",");
+      strbuf_append_int(&buf, getNodeID(nodes.items[j]));
+      strbuf_append(&buf, ",\"");
+      strbuf_append(&buf, intersectionTypeToString(it));
+      strbuf_append(&buf, "\"]");
+    }
+  }
+
+  for (int i = 1; i < nodes.count; i++) {
+    if (getParent(nodes.items[i]) != built.tree) continue;
+    if (!intersectNodeExterior(nodes.items[i], puzzler_options)) continue;
+
+    if (!is_first) strbuf_append(&buf, ",");
+    is_first = 0;
+    strbuf_append(&buf, "[");
+    strbuf_append_int(&buf, getNodeID(nodes.items[i]));
+    strbuf_append(&buf, ",");
+    strbuf_append_int(&buf, getNodeID(built.tree));
+    strbuf_append(&buf, ",\"EXT\"]");
+  }
+
+  strbuf_append(&buf, "]");
+
+  vrna_plot_options_puzzler_free(puzzler_options);
+  free(nodes.items);
+  t1_tree_free(&built);
 
   return buf.data;
 }
 
 const char* rnadraw_oracle_instrumentation_version(void) {
-  return "vendor_instrument v1: turtle dump + dump_tree (config tree + "
-         "bounding boxes, Milestone A step 4); see this file's header for "
-         "the macro-interposition mechanism dump_detections/"
+  return "vendor_instrument v2: turtle dump + dump_tree (config tree + "
+         "bounding boxes, Milestone A step 4) + dump_detections "
+         "(intersection detection set, Milestone A step 5); see this "
+         "file's header for the macro-interposition mechanism "
          "dump_change_trace will use.";
 }

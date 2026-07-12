@@ -223,6 +223,16 @@ double get_child_angle(const TreeNode& parent, const TreeNode& child) {
   }
   return angle;
 }
+
+void translate_bounding_boxes(TreeNode& node, Vec2 vector) {
+  translate_stem_box(*node.sbox, vector);
+  translate_loop_box(*node.lbox, vector);
+  node.aabb = compute_aabb(*node.sbox, *node.lbox);
+
+  for (auto& child : node.children) {
+    translate_bounding_boxes(*child, vector);
+  }
+}
 // NOLINTEND(bugprone-unchecked-optional-access)
 
 }  // namespace rna_layout

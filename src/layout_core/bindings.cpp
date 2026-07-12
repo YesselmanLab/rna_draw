@@ -32,7 +32,9 @@
 
 #include "rna_layout/config_tree.hpp"
 #include "rna_layout/debug_dump.hpp"
+#include "rna_layout/intersect_tree.hpp"
 #include "rna_layout/pair_table.hpp"
+#include "rna_layout/puzzler.hpp"
 #include "rna_layout/turtle.hpp"
 
 namespace py = pybind11;
@@ -150,6 +152,51 @@ py::list dump_config_tree_binding(const std::string& structure, double paired, d
   return result;
 }
 
+/// Run the turtle pass + config-tree build + `update_bounding_boxes` on
+/// `structure` and return the T0 tree's full intersection detection set
+/// (Milestone A step 5) as a `list[tuple[int, int, str]]`, matching the
+/// vendored oracle's `dump_detections` JSON shape (`vendor_instrument.c`'s
+/// `rnadraw_oracle_dump_detections`) field-for-field so
+/// `tests/test_native_parity.py` can compare both sides directly.
+py::list dump_detections_binding(const std::string& structure, double paired, double unpaired,
+                                 double clearance) {
+  validate_dump_tree_input(structure);
+  const std::vector<int> pair_table = rna_layout::make_pair_table(structure);
+  const rna_layout::TurtleLayout turtle =
+      rna_layout::run_turtle_layout(pair_table, paired, unpaired);
+  const double bulge_dist = rna_layout::stem_bulge_distance(unpaired);
+
+  std::unique_ptr<rna_layout::TreeNode> tree = rna_layout::build_config_tree(
+      pair_table, turtle.base_info, turtle.configs, turtle.coords, bulge_dist);
+  rna_layout::update_bounding_boxes(*tree, paired, unpaired);
+
+  py::list result;
+  for (const rna_layout::Detection& detection :
+       rna_layout::detect_intersections(*tree, clearance)) {
+    result.append(py::make_tuple(detection.node1_id, detection.node2_id,
+                                 rna_layout::intersection_type_to_string(detection.type)));
+  }
+  return result;
+}
+
+/// `layout_puzzler` with `check_sibling`/`check_ancestor`/`optimize` forced
+/// false -- the Python-facing entry point for the resolver-off
+/// finalization path (Milestone A step 6), so
+/// `tests/test_native_parity.py` can call it without constructing a
+/// `PuzzlerOptions` binding (not yet exposed; the resolver-on path is a
+/// later Milestone A step). `check_exterior`/`allow_flipping`/`clearance`
+/// stay at `rna_layout::PuzzlerOptions`'s own defaults, matching the
+/// vendored oracle's `plot_coords_puzzler_resolver_off` counterpart
+/// (`src/vienna_layout/bindings.cpp`).
+CoordVectors plot_coords_puzzler_resolver_off(const std::string& structure) {
+  rna_layout::PuzzlerOptions opts;
+  opts.check_sibling = false;
+  opts.check_ancestor = false;
+  opts.optimize = false;
+  rna_layout::Coords coords = rna_layout::layout_puzzler(structure, opts);
+  return {std::move(coords.x), std::move(coords.y)};
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_layout_core, m) {
@@ -177,4 +224,17 @@ PYBIND11_MODULE(_layout_core, m) {
         "pre-resolver) for parity testing against the vendored oracle's "
         "dump_tree; list[dict], one entry per tree node in DFS pre-order "
         "(id == its index; parent_id == -1 for the root).");
+
+  m.def("dump_detections", &dump_detections_binding, py::arg("structure"), py::arg("paired") = 35.0,
+        py::arg("unpaired") = 25.0, py::arg("clearance") = 1.0,
+        "The full intersection detection set over the T0 tree (Milestone A "
+        "step 5) for parity testing against the vendored oracle's "
+        "dump_detections; list[tuple[int, int, str]] of (node1_id, "
+        "node2_id, type).");
+
+  m.def("plot_coords_puzzler_resolver_off", &plot_coords_puzzler_resolver_off, py::arg("structure"),
+        "Lay out a dot-bracket structure with the native RNApuzzler port, "
+        "resolver disabled (check_sibling/check_ancestor/optimize all "
+        "false; Milestone A step 6) -- for parity testing against the "
+        "vendored oracle's plot_coords_puzzler_resolver_off. Returns (x, y).");
 }
