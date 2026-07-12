@@ -25,6 +25,7 @@ from rna_draw.render_rna import get_pairmap_from_secstruct
 from .extraction import max_nested_subset
 from .parsing import Stem, group_stems, nested_secstruct, parse_all_pairs, stem_pairs
 from .placement import PlacementResult, place_crossings
+from .proximity import bias_crossing_proximity
 from .validate import polyline_capsules, polyline_is_clean
 
 
@@ -58,11 +59,40 @@ def layout_pseudoknot(secstruct: str, params: OverlapParams) -> LayoutResult:
     nested_result = _layout_nested(nested, params)
     gate_params = params_at_node_r(params, nested_result.node_r)
     base_pair_map = get_pairmap_from_secstruct(nested)
-    placement = place_crossings(
+    bx, by = _bias_nested_layout(nested_result, base_pair_map, crossing, gate_params)
+    placement = place_crossings(bx, by, base_pair_map, crossing, gate_params)
+
+    return _assemble(bx, by, base_pair_map, placement, gate_params)
+
+
+def _bias_nested_layout(
+    nested_result: LayoutResult,
+    base_pair_map: list[int],
+    crossing: list[Stem],
+    gate_params: OverlapParams,
+) -> tuple[list[float], list[float]]:
+    """Phase 2b entry gate: only bias an already checker-clean nested layout.
+
+    A fallback/dirty nested layout (`not nested_result.report.passed or
+    nested_result.flagged`) is left untouched -- `bias_crossing_proximity`
+    itself also guards on `check_overlaps`, so this is belt-and-suspenders,
+    matching the plan's "never bias a layout that isn't already clean"
+    entry condition exactly.
+
+    Args:
+        nested_result: `_layout_nested`'s own result.
+        base_pair_map: The nested subset's own pair_map.
+        crossing: Every crossing stem.
+        gate_params: The resolved geometry to gate against.
+
+    Returns:
+        `(x, y)`, possibly proximity-biased.
+    """
+    if not nested_result.report.passed or nested_result.flagged:
+        return nested_result.x, nested_result.y
+    return bias_crossing_proximity(
         nested_result.x, nested_result.y, base_pair_map, crossing, gate_params
     )
-
-    return _assemble(nested_result, base_pair_map, placement, gate_params)
 
 
 def _layout_nested(nested: str, params: OverlapParams) -> LayoutResult:
@@ -123,7 +153,8 @@ def _assert_round_trip(n: int, retained: list[Stem], nested: str) -> None:
 
 
 def _assemble(
-    nested_result: LayoutResult,
+    x: list[float],
+    y: list[float],
     base_pair_map: list[int],
     placement: PlacementResult,
     gate_params: OverlapParams,
@@ -131,10 +162,13 @@ def _assemble(
     """Fold crossing placement into the final pseudoknot `LayoutResult`.
 
     Args:
-        nested_result: The nested subset's own (checker-clean-or-flagged)
-            layout.
+        x: The nucleotide x-coordinates the layout was actually drawn/
+            checked at -- the nested layout's own coordinates, or Phase
+            2b's proximity-biased coordinates when biasing ran.
+        y: The corresponding y-coordinates.
         base_pair_map: The nested subset's own pair_map.
-        placement: Every crossing stem's PK-B/PK-A/unplaced outcome.
+        placement: Every crossing stem's PK-B/PK-A/unplaced outcome
+            (already computed against `x`/`y`).
         gate_params: The SAME geometry the nested layout resolved at
             (MUST-FIX #3: gate radius == render radius).
 
@@ -148,15 +182,15 @@ def _assemble(
     final_pair_map = list(base_pair_map)
     for i, j in placement.pk_b_pairs:
         final_pair_map[i], final_pair_map[j] = j, i
-    report = check_overlaps(nested_result.x, nested_result.y, final_pair_map, gate_params)
+    report = check_overlaps(x, y, final_pair_map, gate_params)
     clean_lines, dropped_any = _clean_routed_lines(
-        nested_result.x, nested_result.y, final_pair_map, placement.pk_a_lines, gate_params
+        x, y, final_pair_map, placement.pk_a_lines, gate_params
     )
     flagged = bool(clean_lines) or bool(placement.unplaced) or dropped_any or not report.passed
 
     return LayoutResult(
-        x=nested_result.x,
-        y=nested_result.y,
+        x=x,
+        y=y,
         engine_name="pseudoknot",
         report=report,
         flagged=flagged,

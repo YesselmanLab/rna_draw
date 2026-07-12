@@ -7,9 +7,14 @@ harness (`hard_gate.py:196`), but selects the PSEUDOKNOTTED corpus subset
 reports M3-specific metrics: clean %, **0 silent overlaps** (the pass/fail
 gate), the % of crossing stems' pairs placed as in-plane PK-B connectors
 vs routed PK-A lines vs left unplaced, mean PK-A polyline length, mean
-crossing-endpoint distance (the un-biased Phase 2 objective this milestone
-does NOT optimize -- Phase 2b is deferred), and readability
-(`benchmarks.quality_metrics.compute_readability`).
+crossing-endpoint distance (`pseudoknot.proximity.bias_crossing_proximity`,
+Phase 2b, tries to shrink this pre-placement; measured on the real corpus
+it is a safe no-op -- every LCA-level whole-branch reflection it finds is
+checker-rejected, since a branch's own rung axis is typically ALIGNED with
+its incoming/outgoing exterior neighbor's layout direction, so flipping to
+the mirror side collides with them almost by construction; see
+`rna_draw/layout/pseudoknot/proximity.py`'s module docstring), and
+readability (`benchmarks.quality_metrics.compute_readability`).
 
 Usage (repo root, py3 env):
     python -m benchmarks.pseudoknot_gate select [--limit 400] [--max-length 600]
