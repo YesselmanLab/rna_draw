@@ -290,18 +290,17 @@ def _build_verified(
 def _compact_or_keep(
     tree: StructureTree, pair_map: list[int], state: _LayoutState
 ) -> tuple[list[float], list[float]]:
-    """Run M3 compaction + the area-min rotation/fold pass, monotone
-    end-to-end: never returns a layout bigger than plain compaction alone.
+    """Run M3 compaction + the area-min rotation pass, monotone end-to-end:
+    never returns a layout bigger than plain compaction alone.
 
     `state.x`/`state.y` are already checker-clean (the "sound" layout).
-    Each of `area_min.rotate_branches`, `compaction.compact_layout`, and
-    `area_min.fold_exterior` only ever applies a move it has itself
-    verified (via a targeted certificate or a local check) against the
-    frozen checker, so the `check_overlaps` re-checks each stage runs
-    through (`_keep_if_clean`) are belt-and-suspenders, not the primary
-    safety mechanism -- but they make the never-silent-overlap contract
-    airtight even if a local check's or a certificate's own scope
-    assumption ever turns out to be wrong.
+    Each of `area_min.rotate_branches` and `compaction.compact_layout` only
+    ever applies a move it has itself verified (via a targeted certificate
+    or a local check) against the frozen checker, so the `check_overlaps`
+    re-checks each stage runs through (`_keep_if_clean`) are
+    belt-and-suspenders, not the primary safety mechanism -- but they make
+    the never-silent-overlap contract airtight even if a local check's or a
+    certificate's own scope assumption ever turns out to be wrong.
 
     `rotate_branches` is greedy against the SOUND bbox, which is not always
     what best serves `compact_layout`'s own (different) tangential-width
@@ -326,15 +325,15 @@ def _compact_or_keep(
         as far as the sound `(x, y)`.
     """
     params = OverlapParams()
-    rotated_result = _rotate_compact_fold(tree, pair_map, state, params)
-    plain_result = _compact_then_fold(tree, pair_map, state, params, state.x, state.y)
+    rotated_result = _rotate_then_compact(tree, pair_map, state, params)
+    plain_result = _compact_only(tree, pair_map, state, params, state.x, state.y)
     return _smaller_bbox(rotated_result, plain_result, state.params.PRIMARY_SPACE)
 
 
-def _rotate_compact_fold(
+def _rotate_then_compact(
     tree: StructureTree, pair_map: list[int], state: _LayoutState, params: OverlapParams
 ) -> tuple[list[float], list[float]]:
-    """`rotate_branches` on the sound layout, then `_compact_then_fold`.
+    """`rotate_branches` on the sound layout, then `_compact_only`.
 
     Args:
         tree: The structure tree the sound layout was built from.
@@ -350,10 +349,10 @@ def _rotate_compact_fold(
         tree, state.x, state.y, pair_map, state.params, params, state.cache, state.margin_scale
     )
     base_x, base_y = _keep_if_clean(rotated_x, rotated_y, pair_map, params, state.x, state.y)
-    return _compact_then_fold(tree, pair_map, state, params, base_x, base_y)
+    return _compact_only(tree, pair_map, state, params, base_x, base_y)
 
 
-def _compact_then_fold(
+def _compact_only(
     tree: StructureTree,
     pair_map: list[int],
     state: _LayoutState,
@@ -361,14 +360,7 @@ def _compact_then_fold(
     base_x: list[float],
     base_y: list[float],
 ) -> tuple[list[float], list[float]]:
-    """`compaction.compact_layout` then `area_min.fold_exterior` on `(base_x, base_y)`.
-
-    Stage order is load-bearing: `fold_exterior` re-derives its own
-    arrangement from each member's CURRENT footprint (sound at any pipeline
-    position), and is most effective AFTER compaction has already
-    tightened every subtree -- only then does the exterior's own open line
-    dominate a big structure's remaining sprawl (see `area_min.py`'s
-    module docstring).
+    """`compaction.compact_layout` on `(base_x, base_y)`.
 
     Args:
         tree: The structure tree the sound layout was built from.
@@ -385,12 +377,7 @@ def _compact_then_fold(
     compact_x, compact_y = compaction.compact_layout(
         tree, base_x, base_y, pair_map, state.params, params, state.cache, state.margin_scale
     )
-    base_x, base_y = _keep_if_clean(compact_x, compact_y, pair_map, params, base_x, base_y)
-
-    folded_x, folded_y = area_min.fold_exterior(
-        tree, base_x, base_y, pair_map, state.params, params, state.margin_scale
-    )
-    return _keep_if_clean(folded_x, folded_y, pair_map, params, base_x, base_y)
+    return _keep_if_clean(compact_x, compact_y, pair_map, params, base_x, base_y)
 
 
 def _smaller_bbox(
@@ -400,9 +387,8 @@ def _smaller_bbox(
 
     Compares bbox area AFTER the same rescale-to-`primary_space` step the
     caller (`_rescale_or_keep_clean`) applies to whichever candidate wins --
-    two pipelines can have very different median backbone steps (e.g. a
-    folded exterior packs many short within-row steps against a few long
-    row-transition ones), so their RAW bbox areas do not rank the same way
+    the rotate-then-compact and compact-only pipelines can have different
+    median backbone steps, so their RAW bbox areas do not rank the same way
     their final, rendered areas do; comparing raw area risked picking the
     candidate that looks smaller now but rescales larger (measured: a real
     fuzz seed regressed 2x-5x under a raw-area comparison). Returns the

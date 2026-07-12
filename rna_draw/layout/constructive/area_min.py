@@ -3,82 +3,53 @@
 The constructive engine (`engine.py`) is overlap-free BY CONSTRUCTION (the
 isotropic bounding-disk certificate, `envelope.py`'s module docstring) but
 sprawls: a dense structure puzzler can't place falls to it and renders as a
-stretched strip. This module adds two, and only two, provably-clean area
-levers on top of the sound (optionally already `compaction`-tightened)
-layout:
+stretched strip. This module adds one provably-clean area lever on top of
+the sound layout:
 
-1. Per-branch ROTATION `theta_b` about its own attachment pivot
-   (`closing_pair[0]`'s placed coordinate). The disk `envelope.branch_disk`
-   proves sibling-disjoint is centered EXACTLY at that pivot, so a rigid
-   rotation about it is an isometry fixing the disk -- every
-   sibling/cousin disjointness relation is preserved AUTOMATICALLY, no
-   re-verification needed. Rotation still moves area because the disk's
-   CONTENTS are anisotropic (an elongated stem in a round disk): reorienting
-   it changes where its far tip lands. The ONE primitive the disk argument
-   does not cover is the branch's own DEPARTING backbone capsule
-   `(j_b, j_b + 1)` (`j_b = closing_pair[1]`, `j_b + 1` the next sibling in
-   structure order) -- its far endpoint is fixed while its near endpoint
-   rotates, so it is checked explicitly (`_capsule_clear`).
-2. Exterior 2-D FOLD: the exterior loop places dangling tails and top-level
-   branches along a single open line (`pack_line_positions`,
-   `engine._place_exterior`) -- the dominant cause of a big rRNA's wide
-   strip. This wraps that 1-D line into rows: ROWS are separated along
-   `EXTERIOR_AXIS` by each row's own DIRECTIONAL up/down reach
-   (`_row_y_offsets`) -- every exterior member's content only ever advances
-   along that same axis, so this is a tighter, sound analogue of
-   `pack_line_positions`' isotropic-disk argument, not the isotropic bound
-   itself (an isotropic bound measured on a real hard-set structure
-   defeated the whole fold: one tall branch's radius alone forced every
-   other row arbitrarily far away). WITHIN a row, members are spaced along
-   X by their own directional lateral half-width (`_lateral_extents`),
-   spliced boustrophedon-style (`_row_layout_positions`) so consecutive
-   rows connect with a short, near-vertical transition instead of a long
-   diagonal. Because this tighter, re-derived packing is no longer a byte-
-   for-byte instance of the ORIGINAL isotropic recipe (and, measured on a
-   real hard-set structure, a per-connector certificate alone still misses
-   genuine NON-adjacent-member collisions), a candidate row layout is
-   verified with a real, WHOLE-structure `overlap.check_overlaps` call
-   before being kept -- the same O(n) frozen checker the caller
-   re-verifies with regardless, so this is airtight rather than "provably
-   clean modulo one named primitive" the way rotation's targeted
-   `_capsule_clear` check is (see `_try_apply_exterior_rows`'s own
-   docstring).
+Per-branch ROTATION `theta_b` about its own attachment pivot
+(`closing_pair[0]`'s placed coordinate). The disk `envelope.branch_disk`
+proves sibling-disjoint is centered EXACTLY at that pivot, so a rigid
+rotation about it is an isometry fixing the disk -- every sibling/cousin
+disjointness relation is preserved AUTOMATICALLY, no re-verification
+needed. Rotation still moves area because the disk's CONTENTS are
+anisotropic (an elongated stem in a round disk): reorienting it changes
+where its far tip lands. The ONE primitive the disk argument does not
+cover is the branch's own DEPARTING backbone capsule `(j_b, j_b + 1)`
+(`j_b = closing_pair[1]`, `j_b + 1` the next sibling in structure order) --
+its far endpoint is fixed while its near endpoint rotates, so it is
+checked explicitly (`_capsule_clear`).
 
-**Scope, per the plan-critic's BLOCKING correction:** these are the only two
-DOFs built here. A per-loop RADIUS re-pack is deliberately NOT built: it
-would feed ANISOTROPIC (tangential) half-widths into `pack_loop_angles`,
-which only bounds PERPENDICULAR extent, so chord-disjoint anchors would no
+**Scope:** a per-loop RADIUS re-pack is deliberately NOT built: it would
+feed ANISOTROPIC (tangential) half-widths into `pack_loop_angles`, which
+only bounds PERPENDICULAR extent, so chord-disjoint anchors would no
 longer imply disjoint subtrees (see `compaction.py`'s "local GUESS not
 PROOF" scope-limitation docstring) -- not certificate-clean. Radius
 tightening is already available, checker-gated, via
 `compaction.compact_layout`; this module does not reimplement it.
 
-**Pipeline placement -- why the two DOFs are NOT one combined pass:**
-`rotate_branches` needs the sibling-disk disjointness relation to be
-LITERALLY true at the coordinates it rotates -- true of the sound build's
-own output (that is exactly what `envelope.py` proves), but NOT true once
-`compaction.compact_layout` has already re-packed siblings closer together
-using tighter TANGENTIAL half-widths instead of full isotropic
-`branch_reach` (measured directly: running rotation after compaction
-produced real overlaps on a real hard-set structure). So `rotate_branches`
-must run on the SOUND, pre-compaction layout. `fold_exterior`, in contrast,
-does not lean on any PRIOR disjointness relation -- it re-derives a brand
-new arrangement from each member's own CURRENT isotropic footprint
-(measured fresh from placed coordinates, like `compaction._tangential_
-half_width` does for its own re-pack), so it is sound regardless of when it
-runs, and is most effective placed AFTER compaction: only once compaction
-has tightened every subtree does the exterior's own 1-D line become the
-dominant remaining sprawl (measured: on the SOUND layout the isotropic
-bulk of a big rRNA dwarfs the exterior line entirely, hiding the fold's
-own win; after compaction it dominates). So the intended pipeline is
-`sound -> rotate_branches -> compaction.compact_layout -> fold_exterior`,
-each stage independently checker-gated (`engine._compact_or_keep`).
+**Pipeline placement:** `rotate_branches` needs the sibling-disk
+disjointness relation to be LITERALLY true at the coordinates it rotates --
+true of the sound build's own output (that is exactly what `envelope.py`
+proves), but NOT true once `compaction.compact_layout` has already
+re-packed siblings closer together using tighter TANGENTIAL half-widths
+instead of full isotropic `branch_reach` (measured directly: running
+rotation after compaction produced real overlaps on a real hard-set
+structure). So `rotate_branches` must run on the SOUND, pre-compaction
+layout: `sound -> rotate_branches -> compaction.compact_layout`, each
+stage independently checker-gated (`engine._compact_or_keep`).
 
 **Safety, unconditional:** every accepted move here is followed by the
 caller's whole-structure `check_overlaps` (`engine._compact_or_keep`), with
 a monotone revert to the best already-known-clean layout on any failure --
-so a bug in either targeted certificate can only ever cost a lost (reverted)
+so a bug in the targeted certificate can only ever cost a lost (reverted)
 gain, never a silent overlap.
+
+**History:** an earlier version also carried an exterior 2-D FOLD DOF
+(wrapping the exterior's open line into rows). It was verified sound but
+was rejected by the safety check (never beat the 1-line layout, or failed
+the whole-structure overlap check) on every real hard-set structure and
+every synthetic case engineered to favor it -- a confirmed no-op -- and
+was removed for leanness.
 """
 
 from __future__ import annotations
@@ -94,7 +65,7 @@ from rna_draw.overlap import OverlapParams
 from rna_draw.parameters import DrawParameters
 
 from . import compaction, envelope
-from .geometry_helpers import EXTERIOR_AXIS, Point, pack_line_positions, rotate
+from .geometry_helpers import Point, rotate
 
 # Wall-clock safety net, mirroring `compaction.COMPACTION_TIME_BUDGET_S`:
 # stop attempting further moves once this much time has elapsed, keeping
@@ -110,16 +81,6 @@ AREA_MIN_TIME_BUDGET_S = 4.0
 # "K ~= 8-16" range, kept at the low end since each candidate that survives
 # the cheap bbox-area proxy costs one O(n) certificate check.
 _ROTATION_SWEEP = 6
-
-# Row-count candidates the exterior fold tries (`_row_count_candidates`
-# always adds a size-aware `sqrt` guess on top of these).
-_EXTERIOR_ROW_GUESSES = (2, 3, 4)
-
-# `_lateral_extents`'/`_row_vertical_reach`'s own checker-clearance margin,
-# matching `compaction._TANGENTIAL_MARGIN`'s rationale exactly (a capsule
-# anchored near the measured boundary can still project its own half-width
-# almost entirely sideways).
-_FOLD_MARGIN = 20.0
 
 _AREA_EPS = 1e-9
 
@@ -200,52 +161,6 @@ def rotate_branches(
         deadline=deadline,
     )
     _process_loop(state, cache, tree.exterior)
-    return state.x, state.y
-
-
-def fold_exterior(
-    tree: StructureTree,
-    x: list[float],
-    y: list[float],
-    pair_map: Sequence[int],
-    params: DrawParameters,
-    overlap_params: OverlapParams,
-    margin_scale: float = 1.0,
-    time_budget_s: float = AREA_MIN_TIME_BUDGET_S,
-) -> tuple[list[float], list[float]]:
-    """DOF 2: minimize bbox area by folding the exterior's 1-D line into rows.
-
-    Sound at any pipeline position (re-derives each member's own extent
-    fresh from its CURRENT placement, `_exterior_extents`); most effective
-    AFTER `compaction.compact_layout` -- see the module docstring.
-
-    Args:
-        tree: The structure tree `x`/`y` was built from.
-        x: Checker-clean nucleotide x-coordinates (not mutated).
-        y: Checker-clean nucleotide y-coordinates (not mutated).
-        pair_map: Entry `i` holds the partner index of `i`, or `-1`.
-        params: Target geometry.
-        overlap_params: Checker geometry for every targeted certificate check.
-        margin_scale: The sound build's own margin multiplier.
-        time_budget_s: Wall-clock budget; `<= 0` disables the limit.
-
-    Returns:
-        `(x, y)`: a NEW pair of coordinate lists, with bbox area never
-        larger than the input's (the caller still does one final
-        whole-structure verification, `engine._compact_or_keep`).
-    """
-    deadline = time.monotonic() + time_budget_s if time_budget_s > 0 else None
-    state = _AreaMinState(
-        tree=tree,
-        x=list(x),
-        y=list(y),
-        pair_map=pair_map,
-        params=params,
-        overlap_params=overlap_params,
-        margin_scale=margin_scale,
-        deadline=deadline,
-    )
-    _apply_exterior_fold(state)
     return state.x, state.y
 
 
@@ -537,11 +452,6 @@ def _candidate_area(
     return _extent_area(_combine_extent(outside, subtree))
 
 
-def _bbox_area(x: Sequence[float], y: Sequence[float]) -> float:
-    """True bounding-box area of the whole structure's current coordinates."""
-    return max(max(x) - min(x), 1e-9) * max(max(y) - min(y), 1e-9)
-
-
 def _capsule_clear(
     x: Sequence[float], y: Sequence[float], pair_map: Sequence[int], params: OverlapParams, k: int
 ) -> bool:
@@ -551,12 +461,11 @@ def _capsule_clear(
     A targeted single-capsule-vs-all superset test, built entirely from the
     frozen checker's own read-only building blocks (`overlap.build_primitives`,
     `overlap.is_excluded`, `overlap.test_pair`) -- their semantics are never
-    touched. This is the one primitive a disk-preserving rotation, or an
-    exterior-fold row transition, can leave uncovered (see the module
-    docstring). A single fixed target against every other primitive is
-    already linear in structure size, the same order as building the
-    primitive list itself, so a spatial hash buys nothing here and is
-    skipped.
+    touched. This is the one primitive a disk-preserving rotation can leave
+    uncovered (see the module docstring). A single fixed target against
+    every other primitive is already linear in structure size, the same
+    order as building the primitive list itself, so a spatial hash buys
+    nothing here and is skipped.
 
     Args:
         x: Trial nucleotide x-coordinates for the whole structure.
@@ -580,363 +489,4 @@ def _capsule_clear(
     return True
 
 
-# --------------------------------------------------------------------------
-# DOF 2: exterior 2-D fold.
-# --------------------------------------------------------------------------
-
-
-def _apply_exterior_fold(state: _AreaMinState) -> None:
-    """Try folding the exterior's members from a 1-D line into a compact
-    2-D row grid, keeping the fold only if it strictly shrinks the true
-    bbox area and every exterior connecting capsule stays clear
-    (`_try_apply_exterior_rows`).
-
-    Args:
-        state: Area-minimization accumulators; mutated in place.
-    """
-    exterior = state.tree.exterior
-    members = exterior.members
-    if len(members) <= 1 or _deadline_hit(state):
-        return
-    branch_by_start = {b.start: b for b in exterior.children}
-    local_bboxes = _member_local_bboxes(state, members, branch_by_start)
-    pad = state.params.NODE_R + _FOLD_MARGIN * state.margin_scale
-    lateral_extents = _lateral_extents(local_bboxes, pad)
-    chosen = _best_row_layout(state, lateral_extents, local_bboxes, pad)
-    if chosen is None:
-        return
-    rows, anchors = chosen
-    if len(rows) <= 1:
-        return  # identical to the current 1-line layout; nothing to gain
-    _try_apply_exterior_rows(state, members, branch_by_start, anchors)
-
-
-def _lateral_extents(local_bboxes: list[Extent], pad: float) -> list[float]:
-    """Each member's own X-only (lateral) half-width, for WITHIN-row spacing.
-
-    Every exterior member's content is placed along `EXTERIOR_AXIS`
-    (straight down), so how far it reaches SIDEWAYS is a strictly smaller,
-    directional quantity than an isotropic disk radius -- using it (instead
-    of `envelope.branch_reach`, or a farthest-point-in-any-direction bound)
-    is what lets two same-row members sit as close as their actual sideways
-    footprints allow. Sound by the same argument `_row_y_offsets` uses:
-    `pack_line_positions`'s own proof only needs the X-distance between two
-    slots to exceed the sum of their X-half-widths, which holds regardless
-    of what SHAPE (disk, or this axis-aligned rectangle bound) fills that
-    half-width.
-
-    Args:
-        local_bboxes: Each member's own anchor-relative bbox
-            (`_member_local_bboxes`).
-        pad: A nucleotide disk radius plus checker-clearance margin, added
-            uniformly (mirroring `compaction._TANGENTIAL_MARGIN`'s own
-            rationale: a capsule's half-width can project almost entirely
-            sideways at the boundary).
-
-    Returns:
-        One half-width per member.
-    """
-    return [max(-dxmin, dxmax, 0.0) + pad for dxmin, dxmax, _dymin, _dymax in local_bboxes]
-
-
-def _row_count_candidates(m: int) -> list[int]:
-    """A small set of candidate row counts to try (clipped to `[1, m]`)."""
-    guesses = {1, max(1, round(math.sqrt(m))), *_EXTERIOR_ROW_GUESSES}
-    return sorted(r for r in guesses if 1 <= r <= m)
-
-
-def _partition_rows(lateral_extents: list[float], row_count: int) -> list[range]:
-    """Split members into `row_count` order-preserving, WIDTH-balanced chunks.
-
-    A real exterior mixes a few huge top-level branches with many tiny
-    bare tail nts (measured on a real hard-set structure); splitting by
-    equal MEMBER COUNT then leaves one row dominated by a single giant
-    branch and others nearly empty, which does not actually shrink the
-    bbox. Splitting by cumulative lateral width instead balances what
-    matters for area.
-
-    Args:
-        lateral_extents: Each member's own X-only half-width, in order.
-        row_count: Target number of rows (`>= 1`).
-
-    Returns:
-        `row_count` contiguous ranges of member positions covering
-        `range(len(lateral_extents))` (the last row may be short if
-        `row_count` does not evenly divide the total width).
-    """
-    m = len(lateral_extents)
-    target = sum(2.0 * e for e in lateral_extents) / row_count
-    rows: list[range] = []
-    start = 0
-    acc = 0.0
-    for i, extent in enumerate(lateral_extents):
-        acc += 2.0 * extent
-        at_row_budget = acc >= target and i > start
-        rows_remaining = len(rows) < row_count - 1
-        if at_row_budget and rows_remaining and i + 1 < m:
-            rows.append(range(start, i + 1))
-            start, acc = i + 1, 0.0
-    rows.append(range(start, m))
-    return rows
-
-
-def _row_vertical_reach(
-    rows: list[range], local_bboxes: list[Extent], pad: float
-) -> list[tuple[float, float]]:
-    """Each row's own `(down, up)` reach along `EXTERIOR_AXIS`.
-
-    Every exterior member's content is placed by continuing to advance
-    along `EXTERIOR_AXIS` from its own anchor (`_place_branch`'s recursion
-    never steps backward), so `down` (how far a row's worst member reaches
-    AWAY from its own line) and `up` (how far it reaches back TOWARD the
-    previous row, normally ~0) are the DIRECTIONAL quantities that actually
-    bound row-to-row clearance -- tighter than treating a row like an
-    isotropic disk (which the measured CRW_55320 case showed washes out
-    the fold's whole benefit: one tall branch's isotropic radius alone
-    would force every other row arbitrarily far away, even though that
-    branch never extends sideways or upward at all).
-
-    Args:
-        rows: Member-position ranges, one per row.
-        local_bboxes: Each member's own anchor-relative bbox
-            (`_member_local_bboxes`).
-        pad: A nucleotide disk radius plus checker-clearance margin, added
-            uniformly (see `_lateral_extents`).
-
-    Returns:
-        One `(down, up)` pair per row, both `>= pad`.
-    """
-    reach = []
-    for row in rows:
-        down = max(max(-local_bboxes[p][2] for p in row), 0.0) + pad
-        up = max(max(local_bboxes[p][3] for p in row), 0.0) + pad
-        reach.append((down, up))
-    return reach
-
-
-def _row_y_offsets(row_reach: list[tuple[float, float]], primary_space: float) -> list[float]:
-    """Cumulative along-axis offset for each row, gapped by adjacent reach.
-
-    SOUND by the same "sum of consecutive gaps" argument `pack_line_positions`
-    uses (its own docstring): row `k`'s offset exceeds row `k - 1`'s by at
-    least `down[k - 1] + up[k]`, so for ANY `i < j` (not just adjacent), the
-    total gap is at least `down[i] + up[j]` (the first and last terms of a
-    sum of non-negative gaps) -- enough that row `i`'s downward reach and
-    row `j`'s upward reach (each already inflated by `pad`,
-    `_row_vertical_reach`) never meet.
-
-    Args:
-        row_reach: Each row's own `(down, up)` (`_row_vertical_reach`).
-        primary_space: Minimum consecutive-row spacing floor.
-
-    Returns:
-        One along-axis offset per row, starting at `0.0`, strictly increasing.
-    """
-    offsets = [0.0]
-    for i in range(1, len(row_reach)):
-        gap = max(primary_space, row_reach[i - 1][0] + row_reach[i][1])
-        offsets.append(offsets[-1] + gap)
-    return offsets
-
-
-def _row_layout_positions(
-    rows: list[range],
-    lateral_extents: list[float],
-    local_bboxes: list[Extent],
-    pad: float,
-    primary_space: float,
-) -> list[Point]:
-    """Each member's `(x, row_y)` anchor for one row partition.
-
-    ROWS are spaced along `EXTERIOR_AXIS` by their own directional up/down
-    reach (`_row_y_offsets`); WITHIN a row, members are spaced along X by
-    their own directional lateral half-width (`_lateral_extents`) -- both
-    are tighter, directional analogues of `pack_line_positions`' isotropic
-    disk model, sound for the same reason (see each helper's own docstring).
-
-    Rows alternate direction (boustrophedon/"snake"), each one CONTINUING
-    from the X position the previous row ended at, rather than every row
-    independently restarting at `x = 0`: this is what keeps the new
-    row-TRANSITION capsule (the one primitive `_capsule_clear` must verify,
-    see the module docstring) short and close to vertical instead of a long
-    diagonal that cuts back across the whole structure -- measured on a
-    real hard-set structure, restarting every row at 0 left EVERY
-    transition capsule clipping unrelated content; alternating direction
-    fixed it. Reversing a row's own X-order is still sound: it is a pure
-    reflection + translation of that row's own `pack_line_positions` output,
-    which preserves every pairwise X-distance within the row exactly, so
-    the within-row disjointness proof is untouched.
-
-    Args:
-        rows: Member-position ranges, one per row, in structure order.
-        lateral_extents: Each member's own X-only half-width, aligned to position.
-        local_bboxes: Each member's own anchor-relative bbox.
-        pad: A nucleotide disk radius plus checker-clearance margin.
-        primary_space: Minimum consecutive-slot spacing floor.
-
-    Returns:
-        One `(x, y)` anchor per member position, in the same flat order as
-        `lateral_extents`.
-    """
-    row_reach = _row_vertical_reach(rows, local_bboxes, pad)
-    row_offsets = _row_y_offsets(row_reach, primary_space)
-    anchors: list[Point] = []
-    carry_x = 0.0
-    for row_index, (row, offset) in enumerate(zip(rows, row_offsets)):
-        row_y = offset * EXTERIOR_AXIS[1]
-        local_xs = pack_line_positions([lateral_extents[p] for p in row], primary_space)
-        direction = -1.0 if row_index % 2 else 1.0
-        xs = [carry_x + direction * local_x for local_x in local_xs]
-        anchors.extend((x_pos, row_y) for x_pos in xs)
-        carry_x = xs[-1]
-    return anchors
-
-
-def _member_local_bboxes(
-    state: _AreaMinState, members: list[int], branch_by_start: dict[int, Branch]
-) -> list[Extent]:
-    """Each member's own bbox extent RELATIVE to its current anchor.
-
-    Placing a member is a pure TRANSLATION (`_place_exterior_member`'s own
-    `_rigid_transform_range` call keeps `axis_dir` fixed at `EXTERIOR_AXIS`
-    in and out), so this local shape is EXACT and translation-invariant --
-    unlike the isotropic `extents` (a single radius, used only for the
-    disjointness packing math), this gives an accurate bbox-area proxy for
-    ranking candidate row layouts, since a real branch's true footprint is
-    usually far more anisotropic (tall and thin) than an isotropic disk.
-
-    Args:
-        state: Area-minimization accumulators (reads current coordinates).
-        members: `exterior.members`, in structure order.
-        branch_by_start: Maps a top-level branch's start index to itself.
-
-    Returns:
-        One `(dx_min, dx_max, dy_min, dy_max)` per member, relative to that
-        member's own current anchor point.
-    """
-    local: list[Extent] = []
-    for member in members:
-        branch = branch_by_start.get(member)
-        if branch is None:
-            local.append((0.0, 0.0, 0.0, 0.0))  # a single point; `pad` covers its own disk
-            continue
-        anchor = (state.x[branch.start], state.y[branch.start])
-        local.append(_anchor_relative_extent(state, branch.start, branch.end, anchor))
-    return local
-
-
-def _anchor_relative_extent(state: _AreaMinState, lo: int, hi: int, anchor: Point) -> Extent:
-    """The bbox extent of `[lo, hi]`'s CURRENT coordinates, relative to `anchor`."""
-    minx = min(state.x[k] - anchor[0] for k in range(lo, hi + 1))
-    maxx = max(state.x[k] - anchor[0] for k in range(lo, hi + 1))
-    miny = min(state.y[k] - anchor[1] for k in range(lo, hi + 1))
-    maxy = max(state.y[k] - anchor[1] for k in range(lo, hi + 1))
-    return (minx, maxx, miny, maxy)
-
-
-def _relative_extent(extent: Extent, anchor: Point) -> Extent:
-    """Shift an `anchor`-relative extent back to absolute coordinates."""
-    dxmin, dxmax, dymin, dymax = extent
-    return (anchor[0] + dxmin, anchor[0] + dxmax, anchor[1] + dymin, anchor[1] + dymax)
-
-
-def _row_layout_true_area(anchors: list[Point], local_bboxes: list[Extent]) -> float:
-    """The TRUE bbox area a candidate row layout would produce, exactly
-    (translation preserves every member's own shape -- see
-    `_member_local_bboxes`)."""
-    combined = _EMPTY_EXTENT
-    for anchor, local in zip(anchors, local_bboxes):
-        combined = _combine_extent(combined, _relative_extent(local, anchor))
-    return _extent_area(combined)
-
-
-def _best_row_layout(
-    state: _AreaMinState, lateral_extents: list[float], local_bboxes: list[Extent], pad: float
-) -> tuple[list[range], list[Point]] | None:
-    """The row partition with the smallest TRUE bbox area, if any beats 1 row.
-
-    Args:
-        state: Area-minimization accumulators.
-        lateral_extents: Each member's own X-only half-width (for
-            within-row disjointness packing).
-        local_bboxes: Each member's own anchor-relative bbox (for ranking
-            and row-to-row disjointness packing).
-        pad: A nucleotide disk radius plus checker-clearance margin.
-
-    Returns:
-        `(rows, anchors)` for the winning partition, or `None` if no
-        candidate could be evaluated (deadline hit mid-search).
-    """
-    m = len(lateral_extents)
-    best: tuple[list[range], list[Point]] | None = None
-    best_area = math.inf
-    for row_count in _row_count_candidates(m):
-        if _deadline_hit(state):
-            break
-        rows = _partition_rows(lateral_extents, row_count)
-        anchors = _row_layout_positions(
-            rows, lateral_extents, local_bboxes, pad, state.params.PRIMARY_SPACE
-        )
-        area = _row_layout_true_area(anchors, local_bboxes)
-        if area < best_area:
-            best_area, best = area, (rows, anchors)
-    return best
-
-
-def _try_apply_exterior_rows(
-    state: _AreaMinState,
-    members: list[int],
-    branch_by_start: dict[int, Branch],
-    anchors: list[Point],
-) -> None:
-    """Apply the candidate row layout in place; keep it iff sound, else revert.
-
-    Gated by a real, WHOLE-structure `overlap.check_overlaps` call, not a
-    targeted per-capsule certificate: unlike rotation's disk-preserving
-    argument (exactly one uncovered primitive per move, cheap to name and
-    check individually), the WITHIN-row X-packing's tighter (lateral-only,
-    not isotropic) extents only bound each member's own CONTENT relative to
-    its immediate structure-order neighbor -- measured on a real hard-set
-    structure, this leaves a genuine gap for NON-adjacent members (a small
-    branch's departure point can land on the "wrong" side of its own
-    anchor, or two members several rows apart can drift close), which a
-    connector-only check does not catch. `check_overlaps` already runs in
-    O(n) via the frozen checker's own spatial hash (the same order as
-    scanning every connector capsule individually, so this closes the gap
-    at no extra asymptotic cost) and is the SAME frozen predicate the
-    caller (`engine._compact_or_keep`) re-verifies with regardless -- using
-    it here directly, rather than a bespoke partial certificate, is both
-    simpler and airtight for this DOF.
-
-    Args:
-        state: Area-minimization accumulators; mutated in place.
-        members: `exterior.members`, in structure order.
-        branch_by_start: Maps a top-level branch's start index to itself.
-        anchors: One `(x, y)` anchor per member position.
-    """
-    before_area = _bbox_area(state.x, state.y)
-    saved_x, saved_y = list(state.x), list(state.y)
-    for member, anchor in zip(members, anchors):
-        _place_exterior_member(state, member, branch_by_start.get(member), anchor)
-    improved = _bbox_area(state.x, state.y) < before_area - _AREA_EPS
-    report = overlap.check_overlaps(state.x, state.y, state.pair_map, state.overlap_params)
-    if improved and report.passed:
-        return
-    state.x[:] = saved_x
-    state.y[:] = saved_y
-
-
-def _place_exterior_member(
-    state: _AreaMinState, member: int, branch: Branch | None, anchor: Point
-) -> None:
-    """Move one exterior member (a bare nt, or a whole branch subtree) to `anchor`."""
-    if branch is None:
-        state.x[member], state.y[member] = anchor
-        return
-    old_anchor = (state.x[branch.start], state.y[branch.start])
-    compaction._rigid_transform_range(
-        state.x, state.y, branch.start, branch.end, old_anchor, EXTERIOR_AXIS, anchor, EXTERIOR_AXIS
-    )
-
-
-__all__ = ["rotate_branches", "fold_exterior", "AREA_MIN_TIME_BUDGET_S"]
+__all__ = ["rotate_branches", "AREA_MIN_TIME_BUDGET_S"]

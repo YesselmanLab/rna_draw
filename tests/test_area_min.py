@@ -1,21 +1,8 @@
 """Tests for the provable area-minimization pass (`constructive/area_min.py`).
 
-Covers the two provably-clean DOFs (per-branch rotation about its own
-attachment pivot, and the exterior 2-D fold) plus the certificate helpers
-they share (`envelope.branch_disk`/`disks_disjoint`, `area_min._capsule_clear`).
-
-Honest note on the fold's measured behavior (see the module docstring's
-"Pipeline placement" section and the handoff report): on every real
-hard-set structure and every synthetic case tried during development, the
-row-based fold's candidate row layouts either fail the whole-structure
-`check_overlaps` gate `_try_apply_exterior_rows` applies or do not beat the
-1-line layout, so `fold_exterior` safely no-ops (monotone, never worse) far
-more often than it visibly changes anything. The tests below verify the
-SAFETY contract (never introduces an overlap, disks stay disjoint,
-monotone) unconditionally, and verify the STRICT-IMPROVEMENT contract
-wherever a real move is found (rotation reliably finds one; a hand-built
-fold scenario is used for the fold's own strict-improvement path since no
-natural corpus case triggered one within this session's search).
+Covers the one provably-clean DOF (per-branch rotation about its own
+attachment pivot) plus the certificate helpers it relies on
+(`envelope.branch_disk`/`disks_disjoint`, `area_min._capsule_clear`).
 
 Every test that runs the engine is `@pytest.mark.timeout`-marked (the hard
 requirement: the pure-Python engine must never hang the suite).
@@ -281,124 +268,6 @@ def _dom_axis_parallel_to_loop_axis(
         before = _bbox_area(x, y)
         rx, ry = area_min.rotate_branches(tree, x, y, pair_map, PARAMS, OVERLAP_PARAMS, cache)
         assert _bbox_area(rx, ry) <= before + 1e-6
-
-
-class TestFoldExterior:
-    """DOF 2: exterior 2-D fold."""
-
-    def test_row_helpers_are_internally_consistent(self) -> None:
-        """`_row_count_candidates`/`_partition_rows` cover every member
-        position exactly once, for a range of member counts."""
-        for m in (1, 2, 5, 12, 37):
-            lateral = [30.0] * m
-            for row_count in area_min._row_count_candidates(m):
-                rows = area_min._partition_rows(lateral, row_count)
-                covered = sorted(p for row in rows for p in row)
-                assert covered == list(range(m))
-                assert all(len(row) > 0 for row in rows)
-
-    def test_disks_stay_disjoint_after_a_hand_built_fold(self) -> None:
-        """A 2-row fold of two well-separated hairpins: each row's own
-        isotropic disk (radius = lateral extent) must stay disjoint from
-        the other row's, exactly the certificate `_row_y_offsets` proves."""
-        secstruct = "(((...)))" + "(((...)))"
-        _tree, pair_map, cache, x, y = _sound_layout(secstruct)
-        tree = build_structure_tree(pair_map)
-        branch_by_start = {b.start: b for b in tree.exterior.children}
-        members = tree.exterior.members
-        state = area_min._AreaMinState(
-            tree=tree,
-            x=list(x),
-            y=list(y),
-            pair_map=pair_map,
-            params=PARAMS,
-            overlap_params=OVERLAP_PARAMS,
-            margin_scale=1.0,
-            deadline=None,
-        )
-        local_bboxes = area_min._member_local_bboxes(state, members, branch_by_start)
-        pad = PARAMS.NODE_R + area_min._FOLD_MARGIN
-        lateral = area_min._lateral_extents(local_bboxes, pad)
-        rows = area_min._partition_rows(lateral, 2)
-        anchors = area_min._row_layout_positions(
-            rows, lateral, local_bboxes, pad, PARAMS.PRIMARY_SPACE
-        )
-        disks = [(anchor, extent) for anchor, extent in zip(anchors, lateral)]
-        row_a_disks = [disks[p] for p in rows[0]]
-        row_b_disks = [disks[p] for p in rows[1]] if len(rows) > 1 else []
-        for center_a, radius_a in row_a_disks:
-            for center_b, radius_b in row_b_disks:
-                dist = ((center_a[0] - center_b[0]) ** 2 + (center_a[1] - center_b[1]) ** 2) ** 0.5
-                assert dist >= radius_a + radius_b - 1e-6
-
-    @pytest.mark.timeout(TIMEOUT)
-    def test_fold_exterior_never_worsens_or_dirties(self) -> None:
-        secstruct = make_multiloop(6, 8, 3)
-        tree, pair_map, cache, x, y = _sound_layout(secstruct)
-        cx, cy = _compact(tree, x, y, pair_map, cache)
-        before = _bbox_area(cx, cy)
-        fx, fy = area_min.fold_exterior(tree, cx, cy, pair_map, PARAMS, OVERLAP_PARAMS)
-        assert check_overlaps(fx, fy, pair_map, OVERLAP_PARAMS).passed
-        assert _bbox_area(fx, fy) <= before + 1e-6
-
-    def test_fold_strictly_shrinks_a_hand_built_size_disparity_case(self) -> None:
-        """A width-balanced row split of a hand-built exterior (five short
-        slots + one much taller one -- the "many small + one huge branch"
-        shape a real dense rRNA's exterior showed during development) beats
-        the 1-line layout on the TRUE bbox-area ranking
-        (`_row_layout_true_area`): isolating the huge slot in its own row
-        avoids paying its height cost `N` times over, confirming the fold's
-        area math finds a real win when size disparity is present (even
-        though, on the real hard-set structure measured, every row count
-        that beat 1-line also failed the connecting-capsule certificate and
-        was correctly rejected -- see the module/class docstring)."""
-        pad = PARAMS.NODE_R + area_min._FOLD_MARGIN
-        local_bboxes = [(-8.3, 31.3, -103.0, 0.0)] * 5 + [(-8.3, 31.3, -443.0, 0.0)]
-        lateral = area_min._lateral_extents(local_bboxes, pad)
-        one_row = area_min._partition_rows(lateral, 1)
-        four_row = area_min._partition_rows(lateral, 4)
-        anchors_one = area_min._row_layout_positions(
-            one_row, lateral, local_bboxes, pad, PARAMS.PRIMARY_SPACE
-        )
-        anchors_four = area_min._row_layout_positions(
-            four_row, lateral, local_bboxes, pad, PARAMS.PRIMARY_SPACE
-        )
-        area_one = area_min._row_layout_true_area(anchors_one, local_bboxes)
-        area_four = area_min._row_layout_true_area(anchors_four, local_bboxes)
-        assert area_four < area_one
-
-    @pytest.mark.timeout(60)
-    @pytest.mark.parametrize("seed", range(15))
-    def test_fuzz_fold_never_introduces_overlap(self, seed: int) -> None:
-        secstruct = random_structure(seed, 200)
-        try:
-            tree, pair_map, cache, x, y = _sound_layout(secstruct)
-        except EngineError:
-            return
-        cx, cy = _compact(tree, x, y, pair_map, cache)
-        fx, fy = area_min.fold_exterior(tree, cx, cy, pair_map, PARAMS, OVERLAP_PARAMS)
-        assert check_overlaps(fx, fy, pair_map, OVERLAP_PARAMS).passed
-
-
-def _compact(
-    tree: StructureTree,
-    x: list[float],
-    y: list[float],
-    pair_map: list[int],
-    cache: envelope.ReachCache,
-) -> tuple[list[float], list[float]]:
-    """Run M3 compaction, falling back to the sound `(x, y)` if it comes
-    back dirty (compaction's own known, pre-existing, checker-gated
-    scope-limitation -- see `compaction.py`'s module docstring -- so tests
-    that feed its output onward must replicate the same fallback
-    `engine._compact_or_keep` always applies, or a dirty COMPACTION input
-    would masquerade as an area_min bug)."""
-    from rna_draw.layout.constructive import compaction
-
-    cx, cy = compaction.compact_layout(tree, x, y, pair_map, PARAMS, OVERLAP_PARAMS, cache)
-    if check_overlaps(cx, cy, pair_map, OVERLAP_PARAMS).passed:
-        return cx, cy
-    return x, y
 
 
 class TestEngineIntegration:
