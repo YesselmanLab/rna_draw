@@ -9,13 +9,13 @@ radius in the adaptive range. That single total is the optimization target:
 lower is better, 0 is the goal.
 
 The engine is pluggable (`--engine`) so successive levers -- puzzler option
-sweeps, the naview/turtle portfolio, and eventually an altered resolver --
-are all measured against the *same* frozen structure set and the *same*
-frozen M2 checker (`check_overlaps`), so the number is comparable across
-iterations.
+sweeps, the turtle portfolio, and eventually an altered resolver -- are all
+measured against the *same* frozen structure set and the *same* frozen M2
+checker (`check_overlaps`), so the number is comparable across iterations.
 
-REENTRANCY: naview holds file-scope globals, so the gate parallelizes with
-processes (`ProcessPoolExecutor`), never threads. See
+PARALLELISM: the gate runs one process per structure (never threads). This
+bounds turtle's known upstream per-call memory leak via worker recycling
+and lets a stuck C resolver be hard-killed on timeout. See
 `rna_draw/layout/vienna.py`.
 
 Usage:
@@ -199,8 +199,8 @@ def run_gate(engine_name: str, workers: int, set_path: Path) -> None:
     One process per structure, at most `workers` concurrent. A child still
     running after `PER_STRUCT_TIMEOUT_S` is terminated and recorded as an
     error -- the only way to bound puzzler's uninterruptible C hangs at high
-    clearance. Process-based (never threads) also satisfies naview's
-    non-reentrancy.
+    clearance. Process-based (never threads) also caps turtle's known
+    upstream per-call memory leak via worker recycling.
     """
     items = json.loads(set_path.read_text())
     ctx = mp.get_context("fork")

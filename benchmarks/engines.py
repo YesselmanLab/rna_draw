@@ -22,7 +22,6 @@ from rna_draw.layout.production import (
     PostPassEngine,
 )
 from rna_draw.layout.vienna import (
-    ViennaNaviewEngine,
     ViennaPuzzlerEngine,
     ViennaTurtleEngine,
 )
@@ -32,7 +31,6 @@ from rna_draw.render_rna import get_pairmap_from_secstruct
 
 _SIMPLE = {
     "puzzler": ViennaPuzzlerEngine,
-    "naview": ViennaNaviewEngine,
     "turtle": ViennaTurtleEngine,
 }
 
@@ -56,8 +54,8 @@ def _best_witnesses(x, y, pair_map) -> int:
 class PortfolioEngine:
     """Try each sub-engine, keep the layout with the fewest overlaps.
 
-    The user's "different potential algorithms": puzzler/naview/turtle fail
-    on different structures, so per-structure best-of-three should beat any
+    The user's "different potential algorithms": puzzler/turtle fail on
+    different structures, so per-structure best-of-two should beat any
     single engine. Ranks candidates by best-achievable witness count over
     the adaptive radius range; ties keep the earlier (more conventional)
     engine.
@@ -66,7 +64,7 @@ class PortfolioEngine:
     name = "portfolio"
 
     def __init__(self) -> None:
-        self._subs = [ViennaPuzzlerEngine(), ViennaNaviewEngine(), ViennaTurtleEngine()]
+        self._subs = [ViennaPuzzlerEngine(), ViennaTurtleEngine()]
 
     def layout(self, structure: str):
         pair_map = get_pairmap_from_secstruct(structure)

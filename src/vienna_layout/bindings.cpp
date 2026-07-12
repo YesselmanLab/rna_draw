@@ -1,16 +1,19 @@
 // pybind11 bindings for ViennaRNA's in-process secondary-structure layout
-// algorithms (puzzler, naview, turtle), exposed to Python as
+// algorithms (puzzler, turtle), exposed to Python as
 // `rna_draw._vienna_layout`.
 //
-// REENTRANCY: RNApuzzler and RNAturtle are reentrant (no mutable file-scope
-// state). naview is NOT -- `naview.o` in libRNA.a reads/writes file-scope
-// mutable BSS globals (`_bases`, `_nbase`, `_loops`, `_loop_count`,
-// `_regions`, `_root`, `_lencut`). Two concurrent calls to
-// `vrna_plot_coords_naview` in one address space corrupt each other and
-// silently return garbage coordinates. Callers MUST NOT invoke the naview
-// binding from more than one thread at a time in this process; a benchmark
-// harness that parallelizes naview must use process-based parallelism
-// (`ProcessPoolExecutor`/`multiprocessing`), never a thread pool.
+// STANDALONE BUILD: the two vendored layout translation units
+// (`vendor/RNApuzzler/{RNApuzzler,RNAturtle}.c`) are compiled directly into
+// this extension against a ~120 LOC compat shim
+// (`vendor/vrna_compat.c`, providing `vrna_alloc` + `vrna_ptable`), so this
+// module links NO `libRNA.a` -- rna_draw has no ViennaRNA runtime
+// dependency. (The naview binding was dropped: it lived only in
+// `libRNA.a`'s non-reentrant `naview.o`, and per-structure benchmarking
+// showed it never rescues a puzzler-dirty structure -- a documented
+// dead-end.)
+//
+// REENTRANCY: both RNApuzzler and RNAturtle are reentrant (no mutable
+// file-scope state), so both bindings are safe to call concurrently.
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -25,11 +28,10 @@
 // ViennaRNA's headers do not wrap their declarations in `extern "C"`
 // (verified: only 2 of 208 headers in this install do), so a C++
 // translation unit including them gets C++-mangled declarations that do
-// not match the plain C symbols in libRNA.a -- wrap the include ourselves.
-//
-// vrna_config.h must be included before plotting/layouts.h: layouts.h
-// gates its naview include behind `#ifdef VRNA_WITH_NAVIEW_LAYOUT`, which
-// vrna_config.h is what defines.
+// not match the plain C symbols the vendored layout objects export -- wrap
+// the include ourselves. The vendored `RNApuzzler.c`/`RNAturtle.c` define
+// these entry points; we only need the installed headers here for their
+// declarations (the include paths are still on the build's search path).
 // clang-format off
 extern "C" {
 #include <ViennaRNA/vrna_config.h>
@@ -105,11 +107,9 @@ void validate_well_nested(const std::string& structure) {
 
 /// Reject the empty structure before it reaches the C API.
 ///
-/// Verified (M5.1 spike): `vrna_plot_coords_naview("")` ABORTS (SIGABRT,
-/// not a clean 0 return) -- puzzler/turtle already return 0 cleanly for
-/// this case (caught by the `n == 0` check after the call), but naview
-/// does not, so every binding rejects it uniformly up front instead of
-/// relying on that post-call check.
+/// puzzler/turtle return 0 cleanly for this case (caught by the `n == 0`
+/// check after the call); rejecting it up front keeps the guard uniform
+/// and self-documenting.
 void validate_nonempty(const std::string& structure) {
   if (structure.empty()) {
     throw std::runtime_error("vrna_plot_coords_* requires a non-empty structure");
@@ -123,10 +123,10 @@ void validate_nonempty(const std::string& structure) {
 /// return -- it loops effectively forever (its iterative
 /// intersection-resolution never converges on a degenerate zero-nucleotide
 /// loop) -- and `vrna_plot_coords_turtle("().()")` SEGFAULTS on the same
-/// input (naview alone tolerates it). This is the same degenerate shape
-/// that already crashes `render_rna.py`'s tree recursion (see
-/// `rna_draw.layout.base.has_empty_loop`); guard uniformly across all
-/// three engines rather than special-case per algorithm.
+/// input. This is the same degenerate shape that already crashes
+/// `render_rna.py`'s tree recursion (see
+/// `rna_draw.layout.base.has_empty_loop`); guard uniformly across both
+/// engines rather than special-case per algorithm.
 void validate_no_empty_loop(const std::string& structure) {
   if (structure.find("()") != std::string::npos) {
     throw std::invalid_argument(
@@ -146,26 +146,6 @@ CoordVectors plot_coords_puzzler(const std::string& structure) {
   int n = vrna_plot_coords_puzzler(structure.c_str(), &x.ptr, &y.ptr, nullptr, nullptr);
   if (n == 0 || static_cast<size_t>(n) != structure.size()) {
     throw std::runtime_error("vrna_plot_coords_puzzler failed on structure of length " +
-                             std::to_string(structure.size()));
-  }
-  return to_vectors(x, y, n);
-}
-
-/// Call `vrna_plot_coords_naview(structure, &x, &y)`.
-///
-/// NOT REENTRANT (see file header) -- caller must not invoke this from more
-/// than one thread at a time in this process. Unlike puzzler/turtle,
-/// naview tolerates a bare empty loop `"()"` (verified: returns sane
-/// coordinates), so `validate_no_empty_loop` is deliberately NOT applied
-/// here -- it would needlessly reject input naview can actually handle.
-CoordVectors plot_coords_naview(const std::string& structure) {
-  validate_nonempty(structure);
-  validate_well_nested(structure);
-  MallocBuffer<float> x;
-  MallocBuffer<float> y;
-  int n = vrna_plot_coords_naview(structure.c_str(), &x.ptr, &y.ptr);
-  if (n == 0 || static_cast<size_t>(n) != structure.size()) {
-    throw std::runtime_error("vrna_plot_coords_naview failed on structure of length " +
                              std::to_string(structure.size()));
   }
   return to_vectors(x, y, n);
@@ -252,11 +232,9 @@ size_t sizeof_puzzler_options() { return sizeof(vrna_plot_options_puzzler_t); }
 
 PYBIND11_MODULE(_vienna_layout, m) {
   m.doc() =
-      "In-process bindings to ViennaRNA's puzzler/naview/turtle layout "
-      "algorithms. naview is NOT reentrant (file-scope globals in "
-      "naview.o) -- callers must serialize naview calls within a process "
-      "and use process-based (not thread-based) parallelism across "
-      "structures.";
+      "In-process bindings to ViennaRNA's puzzler/turtle layout algorithms, "
+      "compiled from a vendored, standalone copy of the layout core (no "
+      "libRNA.a link). Both engines are reentrant.";
 
   m.def("version", &version, "Compiled-against ViennaRNA version string.");
   m.def("abi_version", &abi_version,
@@ -276,9 +254,6 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "clearance so puzzler resolves near-touches rna_draw's checker "
         "flags; <= 0 or 1.0 == stock). Defaults match plot_coords_puzzler "
         "exactly. Returns (x, y).");
-  m.def("plot_coords_naview", &plot_coords_naview, py::arg("structure"),
-        "Lay out a dot-bracket structure with naview; returns (x, y). "
-        "NOT reentrant -- see module docstring.");
   m.def("plot_coords_turtle", &plot_coords_turtle, py::arg("structure"),
         "Lay out a dot-bracket structure with RNAturtle; returns (x, y).");
 }

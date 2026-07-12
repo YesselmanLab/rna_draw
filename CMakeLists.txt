@@ -20,27 +20,31 @@ execute_process(
 )
 find_package(pybind11 CONFIG REQUIRED)
 
-# ViennaRNA (RNAlib) lives in the active conda/micromamba environment --
-# confirmed present at $CONDA_PREFIX/{include,lib} (see plan Step 0).
+# ViennaRNA HEADERS live in the active conda/micromamba environment --
+# confirmed present at $CONDA_PREFIX/include (see plan Step 0). Only the
+# headers are needed now: the layout core is vendored and compiled
+# standalone (see below), so libRNA.a is NO LONGER a link input and there is
+# no ViennaRNA runtime dependency.
 if(NOT DEFINED ENV{CONDA_PREFIX})
   message(FATAL_ERROR "CONDA_PREFIX is not set -- run the build via 'micromamba run -n py3 ...'")
 endif()
 set(VIENNA_PREFIX "$ENV{CONDA_PREFIX}")
 
-# Vendored (editable) copy of RNApuzzler/RNAturtle -- see
-# src/vienna_layout/vendor/README.md. Compiled directly into this target
-# (hybrid build) instead of relying on the prebuilt libRNA.a for these two
-# algorithms, so their source can be edited in-tree. Static archives only
-# pull an object for a symbol that is still undefined at link time, so
-# these compiled-in definitions of vrna_plot_coords_puzzler[_pt],
-# vrna_plot_options_puzzler[_free], and vrna_plot_coords_turtle[_pt]
-# pre-empt (and are never overridden by) the stock objects in libRNA.a --
-# libRNA.a is still linked below, but only for symbols this vendored code
-# does not define.
-set(VENDOR_PUZZLER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vienna_layout/vendor/RNApuzzler")
+# Vendored, STANDALONE copy of RNApuzzler/RNAturtle -- see
+# src/vienna_layout/vendor/README.md. These two translation units define
+# every layout entry point this extension calls
+# (vrna_plot_coords_puzzler[_pt], vrna_plot_options_puzzler[_free],
+# vrna_plot_coords_turtle[_pt]). They reference EXACTLY TWO ViennaRNA
+# library symbols -- vrna_alloc and vrna_ptable -- which are supplied by the
+# ~120 LOC compat shim vrna_compat.c (faithful copies of the upstream 2.7.0
+# sources; see that file's header). With the shim in the target, the whole
+# layout core links WITHOUT libRNA.a: rna_draw has no ViennaRNA runtime dep.
+set(VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vienna_layout/vendor")
+set(VENDOR_PUZZLER_DIR "${VENDOR_DIR}/RNApuzzler")
 set(VENDOR_PUZZLER_SOURCES
   "${VENDOR_PUZZLER_DIR}/RNApuzzler.c"
   "${VENDOR_PUZZLER_DIR}/RNAturtle.c"
+  "${VENDOR_DIR}/vrna_compat.c"
 )
 
 pybind11_add_module(_vienna_layout
@@ -67,32 +71,32 @@ set_source_files_properties(${VENDOR_PUZZLER_SOURCES} PROPERTIES
 target_compile_options(_vienna_layout PRIVATE -fno-lto)
 target_link_options(_vienna_layout PRIVATE -fno-lto)
 
-find_library(VIENNA_RNA_LIB RNA PATHS "${VIENNA_PREFIX}/lib" REQUIRED NO_DEFAULT_PATH)
-find_package(Threads REQUIRED)
-
+# No libRNA.a: the vendored layout core + vrna_compat.c are self-contained,
+# needing only libc/libm/libstdc++.
 target_link_libraries(_vienna_layout PRIVATE
-  "${VIENNA_RNA_LIB}"
-  Threads::Threads
   stdc++
   m
 )
 
 install(TARGETS _vienna_layout DESTINATION rna_draw)
 
-# `ctest` smoke test (no Python/pybind11 in the loop): proves this CMake
-# build links `libRNA.a` correctly. The full behavior contract (parity,
-# malformed input, memory, ABI) lives in `tests/test_vienna_binding.py`.
+# `ctest` smoke test (no Python/pybind11 in the loop): proves the vendored
+# layout core + vrna_compat.c shim link and run STANDALONE, with libRNA.a
+# UNLINKED. The full behavior contract (parity, malformed input, memory,
+# ABI) lives in `tests/test_vienna_binding.py`.
 enable_testing()
-add_executable(test_puzzler_smoke src/vienna_layout/tests/test_puzzler_smoke.cpp)
+add_executable(test_puzzler_smoke
+  src/vienna_layout/tests/test_puzzler_smoke.cpp
+  ${VENDOR_PUZZLER_SOURCES}
+)
 target_include_directories(test_puzzler_smoke PRIVATE
   "${VIENNA_PREFIX}/include"
   "${VIENNA_PREFIX}/include/ViennaRNA"
+  "${VENDOR_PUZZLER_DIR}"
 )
 target_compile_options(test_puzzler_smoke PRIVATE -fno-lto)
 target_link_options(test_puzzler_smoke PRIVATE -fno-lto)
 target_link_libraries(test_puzzler_smoke PRIVATE
-  "${VIENNA_RNA_LIB}"
-  Threads::Threads
   stdc++
   m
 )

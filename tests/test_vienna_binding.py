@@ -1,14 +1,13 @@
 """Tests for the in-process ViennaRNA bindings (`rna_draw._vienna_layout`)
-and the three `LayoutEngine`s built on top of them
+and the two `LayoutEngine`s built on top of them
 (`rna_draw.layout.vienna`).
 
 Covers: coordinate parity against the subprocess `PuzzlerEngine` oracle
 (including >=2 structures puzzler lays out DIRTY, so the parity gate is
 non-vacuous), malformed/empty/pseudoknot input handling (must raise, never
 segfault), the ABI version/sizeof drift guard, memory-safety stress loops
-(proving the RAII `free()` path runs), and that all three engines slot
-into `layout_guaranteed` honestly (clean or flagged, never a silent
-overlap).
+(proving the RAII `free()` path runs), and that both engines slot into
+`layout_guaranteed` honestly (clean or flagged, never a silent overlap).
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from rna_draw.layout.pipeline import (
     resolve_engine,
 )
 from rna_draw.layout.puzzler import PuzzlerEngine
-from rna_draw.layout.vienna import ViennaNaviewEngine, ViennaPuzzlerEngine, ViennaTurtleEngine
+from rna_draw.layout.vienna import ViennaPuzzlerEngine, ViennaTurtleEngine
 from rna_draw.overlap import OverlapParams, check_overlaps
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
@@ -119,22 +118,21 @@ class TestMalformedInputBindingLevel:
 
     BINDING_FNS = [
         vienna_layout.plot_coords_puzzler,
-        vienna_layout.plot_coords_naview,
         vienna_layout.plot_coords_turtle,
     ]
 
     @pytest.mark.parametrize("secstruct", ["(", ")", "((", "))", ")(", "[.]"])
-    @pytest.mark.parametrize("fn_index", range(3))
+    @pytest.mark.parametrize("fn_index", range(2))
     def test_malformed_input_raises_value_error(self, fn_index: int, secstruct: str) -> None:
         with pytest.raises(ValueError):
             self.BINDING_FNS[fn_index](secstruct)
 
-    @pytest.mark.parametrize("fn_index", range(3))
+    @pytest.mark.parametrize("fn_index", range(2))
     def test_empty_structure_raises_runtime_error(self, fn_index: int) -> None:
         with pytest.raises(RuntimeError):
             self.BINDING_FNS[fn_index]("")
 
-    @pytest.mark.parametrize("fn_index", range(3))
+    @pytest.mark.parametrize("fn_index", range(2))
     def test_single_nucleotide_succeeds(self, fn_index: int) -> None:
         x, y = self.BINDING_FNS[fn_index](".")
         assert len(x) == 1
@@ -147,9 +145,8 @@ class TestEmptyLoopGuard:
     `vrna_plot_coords_puzzler("().()")` LOOPS (does not return; its
     iterative intersection-resolution never converges on a
     zero-nucleotide loop) and `vrna_plot_coords_turtle` SEGFAULTS on the
-    same input -- naview alone tolerates it. `@pytest.mark.timeout` caps
-    each case so a regression that reintroduces the hang fails fast
-    instead of hanging the whole suite.
+    same input. `@pytest.mark.timeout` caps each case so a regression that
+    reintroduces the hang fails fast instead of hanging the whole suite.
     """
 
     @pytest.mark.timeout(5)
@@ -161,12 +158,6 @@ class TestEmptyLoopGuard:
     def test_turtle_raises_value_error_not_segfaults(self) -> None:
         with pytest.raises(ValueError, match="empty loop"):
             vienna_layout.plot_coords_turtle("().()")
-
-    @pytest.mark.timeout(5)
-    def test_naview_tolerates_empty_loop(self) -> None:
-        x, y = vienna_layout.plot_coords_naview("().()")
-        assert len(x) == 5
-        assert len(y) == 5
 
     @pytest.mark.timeout(5)
     @pytest.mark.parametrize("engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine])
@@ -190,12 +181,6 @@ class TestEmptyLoopGuard:
         assert result.flagged is True
         assert result.engine_name == "constructive"
         assert result.report.passed is True
-
-    @pytest.mark.timeout(5)
-    def test_naview_pipeline_succeeds_directly(self) -> None:
-        result = layout_guaranteed("().()", engine=ViennaNaviewEngine())
-        assert result.flagged is False
-        assert result.engine_name == "naview"
 
 
 class TestPuzzlerOptsResolverLevers:
@@ -269,21 +254,21 @@ class TestPuzzlerOptsResolverLevers:
 class TestMalformedInputEngineLevel:
     """The `LayoutEngine` wrappers guard with `is_pseudoknot_free` first."""
 
-    ENGINES = [ViennaPuzzlerEngine(), ViennaNaviewEngine(), ViennaTurtleEngine()]
+    ENGINES = [ViennaPuzzlerEngine(), ViennaTurtleEngine()]
 
     @pytest.mark.parametrize("secstruct", ["([)]", "((", "(]"])
-    @pytest.mark.parametrize("engine_index", range(3))
+    @pytest.mark.parametrize("engine_index", range(2))
     def test_pseudoknot_or_unbalanced_raises_unavailable(
         self, engine_index: int, secstruct: str
     ) -> None:
         with pytest.raises(EngineUnavailableError):
             self.ENGINES[engine_index].layout(secstruct)
 
-    @pytest.mark.parametrize("engine_index", range(3))
+    @pytest.mark.parametrize("engine_index", range(2))
     def test_empty_structure_returns_empty_lists(self, engine_index: int) -> None:
         assert self.ENGINES[engine_index].layout("") == ([], [])
 
-    @pytest.mark.parametrize("engine_index", range(3))
+    @pytest.mark.parametrize("engine_index", range(2))
     def test_single_nucleotide_returns_origin(self, engine_index: int) -> None:
         assert self.ENGINES[engine_index].layout(".") == ([0.0], [0.0])
 
@@ -366,18 +351,13 @@ class TestMemorySafety:
             vienna_layout.plot_coords_puzzler, iterations=2000, bound_bytes=5_000_000
         )
 
-    def test_naview_no_leak_over_2000_calls(self) -> None:
-        self._assert_bounded_growth(
-            vienna_layout.plot_coords_naview, iterations=2000, bound_bytes=5_000_000
-        )
-
     def test_turtle_leak_is_bounded_known_upstream_issue(self) -> None:
-        # KNOWN UPSTREAM BUG (verified against libRNA.a with a standalone C
-        # harness that frees x/y/arc_coords correctly, outside Python/pybind
-        # entirely): `vrna_plot_coords_turtle` leaks internally,
-        # proportional to structure length, independent of this binding's
-        # free() calls (which do run -- puzzler/naview with the identical
-        # call pattern do not leak). Not fixable from this binding; tracked
+        # KNOWN UPSTREAM BUG (verified with a standalone C harness that
+        # frees x/y/arc_coords correctly, outside Python/pybind entirely):
+        # `vrna_plot_coords_turtle` leaks internally, proportional to
+        # structure length, independent of this binding's free() calls
+        # (which do run -- puzzler with the identical call pattern does not
+        # leak). Not fixable from this binding; tracked
         # here with a generous bound so a REGRESSION (leak rate getting much
         # worse) is still caught, without blocking M5.1 on an upstream fix.
         self._assert_bounded_growth(
@@ -413,7 +393,7 @@ class TestAbiDriftGuard:
     def test_wrong_sizeof_raises_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(vienna_layout, "sizeof_puzzler_options", lambda: -1)
         with pytest.raises(EngineUnavailableError):
-            resolve_engine("naview")
+            resolve_engine("turtle")
 
     def test_matching_abi_does_not_raise(self) -> None:
         engine = resolve_engine("turtle")
@@ -421,26 +401,11 @@ class TestAbiDriftGuard:
         assert engine.name == "turtle"
 
 
-class TestNaviewSingleThreaded:
-    """naview is NOT reentrant (see `bindings.cpp`/`vienna.py` docstrings);
-    this test only exercises it single-threaded, and checks the coordinates
-    it returns are sane (finite, non-degenerate).
-    """
-
-    def test_produces_sane_finite_coords(self) -> None:
-        secstruct = random_structure(seed=7, n=200)
-        x, y = ViennaNaviewEngine().layout(secstruct)
-        assert len(x) == len(secstruct)
-        assert all(v == v and abs(v) < 1e8 for v in x)  # v == v excludes NaN
-        assert all(v == v and abs(v) < 1e8 for v in y)
-
-
 class TestResolveEngineNewNames:
     @pytest.mark.parametrize(
         "name, expected_class",
         [
             ("vienna_puzzler", ViennaPuzzlerEngine),
-            ("naview", ViennaNaviewEngine),
             ("turtle", ViennaTurtleEngine),
         ],
     )
@@ -459,9 +424,7 @@ class TestEnginesNeverSilentlyOverlapInPipeline:
     """
 
     @pytest.mark.timeout(10)
-    @pytest.mark.parametrize(
-        "engine_factory", [ViennaPuzzlerEngine, ViennaNaviewEngine, ViennaTurtleEngine]
-    )
+    @pytest.mark.parametrize("engine_factory", [ViennaPuzzlerEngine, ViennaTurtleEngine])
     @pytest.mark.parametrize("seed", range(5))
     @pytest.mark.parametrize("n", [5, 20, 60])
     def test_never_silent_overlap(self, engine_factory: type, seed: int, n: int) -> None:
@@ -472,9 +435,9 @@ class TestEnginesNeverSilentlyOverlapInPipeline:
     def test_curated_puzzler_clean_case_is_clean_and_unflagged_for_vienna_puzzler(self) -> None:
         # This structure was hand-picked (see `test_puzzler_engine.py`) as
         # one the SUBPROCESS puzzler lays out checker-clean; only assert
-        # the equivalent in-process engine matches that -- naview/turtle
-        # use a different algorithm and are not expected to agree (the
-        # general never-silent-overlap property above already covers them).
+        # the equivalent in-process engine matches that -- turtle uses a
+        # different algorithm and is not expected to agree (the general
+        # never-silent-overlap property above already covers it).
         secstruct = CLEAN_STRUCTURES["curated_puzzler_clean"]
         result = layout_guaranteed(secstruct, engine=ViennaPuzzlerEngine())
         assert result.flagged is False

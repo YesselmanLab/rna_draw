@@ -1,4 +1,4 @@
-"""In-process `LayoutEngine`s for ViennaRNA's puzzler/naview/turtle.
+"""In-process `LayoutEngine`s for ViennaRNA's puzzler/turtle.
 
 Each engine calls the compiled `rna_draw._vienna_layout` extension
 (`src/vienna_layout/bindings.cpp`) directly -- no subprocess, no EPS
@@ -6,16 +6,12 @@ parsing -- unlike `PuzzlerEngine` (`rna_draw/layout/puzzler.py`), which is
 KEPT UNCHANGED as the parity oracle these were verified against (see
 `tests/test_vienna_binding.py`).
 
-REENTRANCY (read before calling `ViennaNaviewEngine` from a thread pool):
-`naview` is NOT reentrant -- `naview.o` in `libRNA.a` reads/writes
-file-scope mutable BSS globals (`_bases`, `_nbase`, `_loops`,
-`_loop_count`, `_regions`, `_root`, `_lencut`). Two concurrent
-`ViennaNaviewEngine.layout()` calls in one process corrupt each other and
-return silently garbage coordinates. `ViennaPuzzlerEngine` and
-`ViennaTurtleEngine` have no such restriction (RNApuzzler/RNAturtle keep
-no mutable file-scope state). A benchmark harness that parallelizes over
-structures MUST use process-based parallelism (`ProcessPoolExecutor`), not
-threads, whenever naview is in the engine set.
+Both `ViennaPuzzlerEngine` and `ViennaTurtleEngine` are reentrant
+(RNApuzzler/RNAturtle keep no mutable file-scope state), so they are safe
+to call concurrently. The extension no longer links `libRNA.a`: the two
+vendored layout translation units are compiled standalone against a ~120
+LOC compat shim (`src/vienna_layout/vendor/vrna_compat.c`), so rna_draw
+has no ViennaRNA runtime dependency.
 """
 
 from __future__ import annotations
@@ -137,19 +133,6 @@ class ViennaPuzzlerEngine(_ViennaEngine):
         return _vienna_layout.plot_coords_puzzler
 
 
-class ViennaNaviewEngine(_ViennaEngine):
-    """Lays out a structure with ViennaRNA's naview, in-process.
-
-    NOT REENTRANT -- see module docstring. Do not call this engine from
-    more than one thread at a time in this process.
-    """
-
-    name = "naview"
-
-    def _coord_fn(self) -> CoordFn:
-        return _vienna_layout.plot_coords_naview
-
-
 class ViennaTurtleEngine(_ViennaEngine):
     """Lays out a structure with ViennaRNA's turtle, in-process."""
 
@@ -162,7 +145,6 @@ class ViennaTurtleEngine(_ViennaEngine):
 __all__ = [
     "EXPECTED_PUZZLER_OPTIONS_SIZEOF",
     "EXPECTED_VIENNA_ABI_VERSION",
-    "ViennaNaviewEngine",
     "ViennaPuzzlerEngine",
     "ViennaTurtleEngine",
 ]

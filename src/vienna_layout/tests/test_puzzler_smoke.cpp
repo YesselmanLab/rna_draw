@@ -2,7 +2,8 @@
 // Python/pybind11 in the loop) and checks the returned coordinate count
 // matches the structure length. `tests/test_vienna_binding.py` covers the
 // full behavior contract (parity, malformed input, memory, ABI); this
-// test only proves the CMake build links `libRNA.a` correctly.
+// test only proves the vendored layout core + vrna_compat.c shim link and
+// run STANDALONE, with libRNA.a UNLINKED.
 
 #include <cstdlib>
 #include <cstring>

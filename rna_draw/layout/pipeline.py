@@ -27,14 +27,12 @@ from .puzzler import PuzzlerEngine
 from .vienna import (
     EXPECTED_PUZZLER_OPTIONS_SIZEOF,
     EXPECTED_VIENNA_ABI_VERSION,
-    ViennaNaviewEngine,
     ViennaPuzzlerEngine,
     ViennaTurtleEngine,
 )
 
 _VIENNA_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
     "vienna_puzzler": ViennaPuzzlerEngine,
-    "naview": ViennaNaviewEngine,
     "turtle": ViennaTurtleEngine,
 }
 
@@ -86,7 +84,7 @@ def resolve_engine(name: str) -> LayoutEngine | None:
 
     Args:
         name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"production"`,
-            `"constructive"`, `"vienna_puzzler"`, `"naview"`, `"turtle"`.
+            `"constructive"`, `"vienna_puzzler"`, `"turtle"`.
 
     Returns:
         `None` for `"auto"` (the pipeline uses `default_engine()`), or a
