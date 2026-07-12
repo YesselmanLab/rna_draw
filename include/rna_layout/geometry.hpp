@@ -37,6 +37,12 @@ inline constexpr double kTwoPi = 2.0 * kPi;
 /// (`config.cpp`), matching the vendored `EPSILON_3` (`definitions.inc`).
 inline constexpr double kEpsilon3 = 1e-3;
 
+/// The vendored `EPSILON_0` (`definitions.inc:61`): the resolver's radius-
+/// growth guard in `cfg_apply_changes`/`config.cpp` (a shrink is only
+/// honored once the new minimum radius exceeds the old radius by more than
+/// this much; otherwise the loop is grown by a fixed 5% instead).
+inline constexpr double kEpsilon0 = 1.0;
+
 /// The vendored `EPSILON_7` (`definitions.inc:63`): the general-purpose
 /// floating-point tie-break tolerance used at circle/line-tangency and
 /// degenerate-geometry boundaries throughout the config-tree/bounding-box

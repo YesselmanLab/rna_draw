@@ -3,20 +3,17 @@
 /**
  * @file puzzler.hpp
  * @brief The RNApuzzler orchestration entry point, ported from
- *        `vrna_plot_coords_puzzler_pt` (`RNApuzzler.c:391`) -- Milestone A
- *        step 6 ("finalization with resolver OFF").
+ *        `vrna_plot_coords_puzzler_pt` (`RNApuzzler.c:391`).
  *
- * THIS SLICE ONLY WIRES THE RESOLVER-OFF PATH: `layout_puzzler` requires
- * `PuzzlerOptions::check_sibling == false`, `check_ancestor == false`, and
- * `optimize == false` (it throws otherwise) -- the intersection RESOLVER
- * itself (`checkNodeAgainstAncestors`, `checkSiblings`, `optimizeTree`) is
- * Milestone A steps 7-9, not yet ported. With those three options false,
- * the vendored driver `checkAndFixIntersections` is PROVABLY a no-op (see
- * `puzzler.cpp`'s doc comment on `run_config_tree_pipeline`), so this port
- * skips implementing/calling it rather than porting dead code early --
- * everything downstream of it (`determine_nucleotide_coordinates`,
- * `resolve_exterior_children_intersection`) is real, always-on
- * finalization, ported in full this step.
+ * SCOPE (Milestone A step 7): `layout_puzzler` now runs the SIBLING
+ * intersection resolver (`check_and_fix_intersections`, `resolve.hpp`) when
+ * `PuzzlerOptions::check_sibling` is `true`. `check_ancestor` and `optimize`
+ * MUST still both be `false` (it throws otherwise) -- the ANCESTOR path
+ * (`checkNodeAgainstAncestors`) is Milestone A step 8 and `optimizeTree` is
+ * step 9, neither yet ported. `determine_nucleotide_coordinates` and
+ * `resolve_exterior_children_intersection` (Milestone A step 6) are
+ * unaffected -- always-on finalization downstream of whatever the resolver
+ * (or its absence) left behind.
  */
 
 #include <string>
@@ -35,11 +32,10 @@ namespace rna_layout {
  * `resolve_exterior_children_intersection`.
  *
  * @param pair_table 1-indexed pair table (`make_pair_table`'s output).
- * @param opts Layout options; `check_sibling`, `check_ancestor`, and
- *     `optimize` MUST all be `false` (see this file's header).
+ * @param opts Layout options; `check_ancestor` and `optimize` MUST both be
+ *     `false` (see this file's header); `check_sibling` may be `true`.
  * @return `Coords` of size `pair_table[0]`.
- * @throws std::logic_error If any of `check_sibling`/`check_ancestor`/
- *     `optimize` is `true`.
+ * @throws std::logic_error If `check_ancestor` or `optimize` is `true`.
  * @throws std::invalid_argument If @p pair_table is empty (length `<= 0`).
  */
 [[nodiscard]] Coords layout_puzzler(const std::vector<int>& pair_table, const PuzzlerOptions& opts);

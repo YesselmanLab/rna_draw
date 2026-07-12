@@ -87,6 +87,12 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired);
 /// equivalent here to "has no parent" since only the root has no parent.
 [[nodiscard]] bool is_exterior(const TreeNode& node);
 
+/// Whether @p node is a multiloop (a non-root node with more than one
+/// child). Mirrors `isMultiLoop` (`configtree.inc:590`); used by the
+/// resolver's `calc_deltas` (Milestone A step 7) to decide whether a bend
+/// can be pushed to a higher tree level instead of the current loop.
+[[nodiscard]] bool is_multi_loop(const TreeNode& node);
+
 /// @p node's loop center, i.e. its `LoopBox::center`. Mirrors
 /// `getLoopCenter` (`configtree.inc:1021`). `node.lbox` must be set (not
 /// the root).
@@ -115,5 +121,24 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired);
  * @param vector The translation to apply.
  */
 void translate_bounding_boxes(TreeNode& node, Vec2 vector);
+
+/**
+ * Apply a resolver config change to @p tree's own `Config` (radius + arc
+ * angles), then recompute every canonical box in @p tree's subtree from the
+ * new geometry. Ported from `applyChangesToConfigAndBoundingBoxes`
+ * (`configtree.inc:419`); the resolver's one and only path from "a config
+ * delta was decided" to "the tree reflects it" (Milestone A step 7+).
+ *
+ * @param tree The node whose `Config` changes; must not be the root.
+ * @param delta_cfg Per-arc angle deltas, one entry per `tree.cfg->arcs`
+ *     (radians); see `config.hpp`'s `cfg_apply_changes`.
+ * @param radius_new Forwarded to `cfg_apply_changes` verbatim (`-1.0` is
+ *     the resolver's usual "grow-only, recompute the minimum" sentinel).
+ * @param paired Distance between the two bases of a base pair.
+ * @param unpaired Default backbone-step distance.
+ */
+void apply_changes_to_config_and_bounding_boxes(TreeNode& tree,
+                                                const std::vector<double>& delta_cfg,
+                                                double radius_new, double paired, double unpaired);
 
 }  // namespace rna_layout

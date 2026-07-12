@@ -2,13 +2,15 @@
 
 /**
  * @file config.hpp
- * @brief Per-loop drawing config generation, ported from `drawingconfig.inc`.
+ * @brief Per-loop drawing config generation + mutation, ported from
+ *        `drawingconfig.inc`.
  *
- * Scope note: only the "generate a default config for every loop" half of
- * `drawingconfig.inc` is ported this slice (`cfgGenerateConfig` and the
- * radius helpers it needs) -- the turtle-base pass never calls the
- * mutate-in-place half (`cfgApplyChanges`/`cfgIsValid`), which belongs to
- * the resolver (Milestone A step 7+).
+ * `generate_config`/`approximate_config_*` (Milestone A step 2) build the
+ * turtle-base pass's initial `Config`s. `cfg_is_valid`/`cfg_apply_changes`
+ * (Milestone A step 7) are the resolver's mutate-in-place half -- the
+ * turtle-base pass never calls them; `config_tree.hpp`'s
+ * `apply_changes_to_config_and_bounding_boxes` is their only caller,
+ * applying a resolver-decided angle change then recomputing boxes.
  */
 
 #include <vector>
@@ -82,5 +84,46 @@ namespace rna_layout {
  * @return The fitted radius, `>= 0`.
  */
 [[nodiscard]] double approximate_config_radius(const Config& cfg, double unpaired, double paired);
+
+/**
+ * Whether adding @p delta_cfg (one entry per `cfg.arcs`, radians) to
+ * @p cfg's current arc angles would leave every arc angle in `(0, 2*pi)`
+ * AND the arcs still summing to `2*pi` (within `geom::kEpsilon3`). Ported
+ * from `cfgIsValid` (`drawingconfig.inc:704`) -- the resolver's sole gate
+ * before ever mutating a `Config` (Milestone A step 7+).
+ *
+ * Deviation from the reference: the vendored function also accepts a NULL
+ * `deltaCfg` (returning `0`/invalid unconditionally) -- every caller in this
+ * port always supplies a real, same-length `delta_cfg`, so that branch is
+ * omitted rather than modeled with `std::optional` for a case that can
+ * never occur.
+ *
+ * @param cfg The config being tested (unchanged).
+ * @param delta_cfg Per-arc angle deltas to test, same length as `cfg.arcs`.
+ */
+[[nodiscard]] bool cfg_is_valid(const Config& cfg, const std::vector<double>& delta_cfg);
+
+/**
+ * Mutate @p cfg in place: add @p delta_cfg to each arc angle (if non-empty),
+ * then set a new radius per @p radius_new's sentinel meaning. Ported from
+ * `cfgApplyChanges` (`drawingconfig.inc:647`) -- preserves its exact
+ * radius-sentinel semantics (`> 0`: at least @p radius_new, floored at the
+ * loop's minimum; `== 0`: exactly the minimum (may shrink); `== -1`: the
+ * minimum, but only grows -- a shrink is instead approximated by a fixed 5%
+ * increase over the OLD radius, `EPSILON_0`-gated).
+ *
+ * @param cfg The config to mutate.
+ * @param delta_cfg Per-arc angle deltas to add, one per `cfg.arcs`; an empty
+ *     vector skips the angle-adjustment step entirely (mirrors the
+ *     vendored `deltaCfg == NULL` branch, used when only the radius should
+ *     change).
+ * @param radius_new The new-radius sentinel; see above.
+ * @param unpaired Default backbone-step distance (feeds
+ *     `approximate_config_radius`, i.e. the loop's minimum feasible radius).
+ * @param paired Distance between the two bases of a base pair (same).
+ * @return The radius `cfg.radius` was actually set to.
+ */
+double cfg_apply_changes(Config& cfg, const std::vector<double>& delta_cfg, double radius_new,
+                         double unpaired, double paired);
 
 }  // namespace rna_layout

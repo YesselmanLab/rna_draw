@@ -35,6 +35,7 @@
 #include "rna_layout/intersect_tree.hpp"
 #include "rna_layout/pair_table.hpp"
 #include "rna_layout/puzzler.hpp"
+#include "rna_layout/resolve.hpp"
 #include "rna_layout/turtle.hpp"
 
 namespace py = pybind11;
@@ -197,6 +198,75 @@ CoordVectors plot_coords_puzzler_resolver_off(const std::string& structure) {
   return {std::move(coords.x), std::move(coords.y)};
 }
 
+/// `layout_puzzler` with `check_sibling` forced true and
+/// `check_ancestor`/`optimize` forced false -- the Python-facing entry
+/// point for the SIBLING-only resolver path (Milestone A step 7), so
+/// `tests/test_native_parity.py` can call it without constructing a
+/// `PuzzlerOptions` binding. `check_exterior`/`allow_flipping`/`clearance`/
+/// `max_config_changes` stay at `rna_layout::PuzzlerOptions`'s own
+/// defaults, matching the vendored oracle's
+/// `plot_coords_puzzler_sibling_only` counterpart
+/// (`src/vienna_layout/bindings.cpp`).
+CoordVectors plot_coords_puzzler_sibling_only(const std::string& structure) {
+  rna_layout::PuzzlerOptions opts;
+  opts.check_sibling = true;
+  opts.check_ancestor = false;
+  opts.optimize = false;
+  rna_layout::Coords coords = rna_layout::layout_puzzler(structure, opts);
+  return {std::move(coords.x), std::move(coords.y)};
+}
+
+/// `rna_layout::ChangeTraceEntry` -> the same field-name `py::dict` shape
+/// the vendored oracle's `vendor_instrument.c` change-trace JSON dump uses
+/// (Milestone A step 7's change-trace parity gate), so
+/// `tests/test_native_parity.py` compares both sides without a
+/// native/vendored-specific code path.
+py::object to_python(const rna_layout::ChangeTraceEntry& entry) {
+  py::dict result;
+  result["node_id"] = entry.node_id;
+  result["type"] = rna_layout::intersection_type_to_string(entry.type);
+  result["deltas"] = entry.deltas;
+  result["accepted"] = entry.accepted;
+  return std::move(result);
+}
+
+/// Run the turtle pass + config-tree build + `update_bounding_boxes` +
+/// SIBLING-only `check_and_fix_intersections` on `structure`, and return the
+/// ORDERED sequence of config-change decisions the resolver made (Milestone
+/// A step 7's `dump_change_trace` parity seam) as a `list[dict]`. Mirrors
+/// `plot_coords_puzzler_sibling_only`'s pipeline but exposes the resolver's
+/// internal decisions rather than only the final coordinates.
+py::list dump_change_trace_binding(const std::string& structure, double paired, double unpaired,
+                                   double clearance, int max_config_changes) {
+  validate_dump_tree_input(structure);
+  const std::vector<int> pair_table = rna_layout::make_pair_table(structure);
+  const rna_layout::TurtleLayout turtle =
+      rna_layout::run_turtle_layout(pair_table, paired, unpaired);
+  const double bulge_dist = rna_layout::stem_bulge_distance(unpaired);
+
+  std::unique_ptr<rna_layout::TreeNode> tree = rna_layout::build_config_tree(
+      pair_table, turtle.base_info, turtle.configs, turtle.coords, bulge_dist);
+  rna_layout::update_bounding_boxes(*tree, paired, unpaired);
+
+  rna_layout::PuzzlerOptions opts;
+  opts.paired = paired;
+  opts.unpaired = unpaired;
+  opts.clearance = clearance;
+  opts.check_sibling = true;
+  opts.check_ancestor = false;
+  opts.optimize = false;
+
+  rna_layout::ResolverState state;
+  state.max_config_changes = max_config_changes <= 0 ? 25000 : max_config_changes;
+  rna_layout::check_and_fix_intersections(tree.get(), opts, state);
+
+  py::list result;
+  for (const rna_layout::ChangeTraceEntry& entry : state.trace) {
+    result.append(to_python(entry));
+  }
+  return result;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_layout_core, m) {
@@ -237,4 +307,19 @@ PYBIND11_MODULE(_layout_core, m) {
         "resolver disabled (check_sibling/check_ancestor/optimize all "
         "false; Milestone A step 6) -- for parity testing against the "
         "vendored oracle's plot_coords_puzzler_resolver_off. Returns (x, y).");
+
+  m.def("plot_coords_puzzler_sibling_only", &plot_coords_puzzler_sibling_only, py::arg("structure"),
+        "Lay out a dot-bracket structure with the native RNApuzzler port, "
+        "SIBLING intersection resolver only (check_sibling true, "
+        "check_ancestor/optimize false; Milestone A step 7) -- for parity "
+        "testing against the vendored oracle's "
+        "plot_coords_puzzler_sibling_only. Returns (x, y).");
+
+  m.def("dump_change_trace", &dump_change_trace_binding, py::arg("structure"),
+        py::arg("paired") = 35.0, py::arg("unpaired") = 25.0, py::arg("clearance") = 1.0,
+        py::arg("max_config_changes") = 25000,
+        "The ordered sequence of config-change decisions the SIBLING "
+        "resolver made (Milestone A step 7) for parity testing against the "
+        "vendored oracle's dump_change_trace; list[dict] of (node_id, type, "
+        "deltas, accepted).");
 }

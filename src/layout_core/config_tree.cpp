@@ -6,8 +6,10 @@
 #include "rna_layout/config_tree.hpp"
 
 #include <cmath>
+#include <vector>
 
 #include "rna_layout/bounding_boxes.hpp"
+#include "rna_layout/config.hpp"
 #include "rna_layout/geometry.hpp"
 
 namespace rna_layout {
@@ -28,14 +30,15 @@ void build_loop_children(TreeNode& node, int loop_start, int& node_id,
 void build_tree_stem(TreeNode& parent, int& node_id, int stem_start,
                      const std::vector<int>& pair_table, const std::vector<BaseInfo>& base_info,
                      const std::vector<Config>& configs) {
-  ++node_id;  // Assigned to the child about to be created; not stored (see
-              // `config_tree.hpp`'s DFS pre-order note in `build_config_tree`).
+  ++node_id;  // Assigned to the child about to be created (see `tree.hpp`'s
+              // `TreeNode::id` doc comment for the matching vendored order).
   int i = stem_start;
   while (!base_info[i].loop_id.has_value()) {
     ++i;
   }
 
   TreeNode* child = parent.add_child();
+  child->id = node_id;
   child->loop_start = i;
   child->stem_start = stem_start;
   // Same invariant/tradeoff as `turtle.cpp`'s `configs[base_info[start]
@@ -86,6 +89,7 @@ std::unique_ptr<TreeNode> build_config_tree(const std::vector<int>& pair_table,
                                             const std::vector<Config>& configs,
                                             const Coords& coords, double bulge_dist) {
   auto root = std::make_unique<TreeNode>();
+  root->id = 0;  // Matches the vendored root's `id == 0` (`isExterior`).
   root->loop_start = 1;
   root->stem_start = -1;
   // `root->cfg` stays `std::nullopt`: the exterior loop has no Config
@@ -201,6 +205,8 @@ void update_bounding_boxes(TreeNode& node, double paired, double unpaired) {
 
 bool is_exterior(const TreeNode& node) { return node.parent == nullptr; }
 
+bool is_multi_loop(const TreeNode& node) { return !is_exterior(node) && node.children.size() > 1; }
+
 // NOLINTBEGIN(bugprone-unchecked-optional-access) -- same invariant as
 // `update_bounding_boxes`'s block comment above: `lbox`/`sbox` are set on
 // every non-root node these getters are documented (`config_tree.hpp`) to
@@ -232,6 +238,13 @@ void translate_bounding_boxes(TreeNode& node, Vec2 vector) {
   for (auto& child : node.children) {
     translate_bounding_boxes(*child, vector);
   }
+}
+
+void apply_changes_to_config_and_bounding_boxes(TreeNode& tree,
+                                                const std::vector<double>& delta_cfg,
+                                                double radius_new, double paired, double unpaired) {
+  cfg_apply_changes(*tree.cfg, delta_cfg, radius_new, unpaired, paired);
+  update_bounding_boxes(tree, paired, unpaired);
 }
 // NOLINTEND(bugprone-unchecked-optional-access)
 

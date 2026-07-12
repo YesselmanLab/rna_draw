@@ -244,6 +244,72 @@ void gen_handle_stem(int base_nr, const std::vector<int>& pair_table,
 
 }  // namespace
 
+bool cfg_is_valid(const Config& cfg, const std::vector<double>& delta_cfg) {
+  double sum_angles = 0.0;
+  bool valid_single_angles = true;
+
+  for (std::size_t current_arc = 0; current_arc < cfg.arcs.size(); ++current_arc) {
+    const double angle = cfg.arcs[current_arc].angle + delta_cfg[current_arc];
+    sum_angles += angle;
+
+    const bool valid_angle = 0.0 < angle && angle < geom::kTwoPi;
+    valid_single_angles = valid_single_angles && valid_angle;
+  }
+
+  const bool valid_sum_angles = std::fabs(sum_angles - geom::kTwoPi) < geom::kEpsilon3;
+  return valid_single_angles && valid_sum_angles;
+}
+
+namespace {
+
+/// Ported from `cfgUpdateMinRadius` (`drawingconfig.inc:636`): exactly
+/// `approximate_config_radius`, given a new name here since
+/// `cfg_apply_changes` reads it as "the smallest radius this config's
+/// current arcs can be drawn at", not as a general-purpose radius fit.
+double cfg_min_radius(const Config& cfg, double unpaired, double paired) {
+  return approximate_config_radius(cfg, unpaired, paired);
+}
+
+}  // namespace
+
+double cfg_apply_changes(Config& cfg, const std::vector<double>& delta_cfg, double radius_new,
+                         double unpaired, double paired) {
+  if (!delta_cfg.empty()) {
+    for (std::size_t current_arc = 0; current_arc < cfg.arcs.size(); ++current_arc) {
+      cfg.arcs[current_arc].angle += delta_cfg[current_arc];
+    }
+  }
+
+  const double old_radius = cfg.radius;
+  double new_radius = -1.0;
+  if (radius_new > 0.0) {
+    // The minimum of valid and input as the new radius.
+    cfg.min_radius = cfg_min_radius(cfg, unpaired, paired);
+    new_radius = std::fmax(radius_new, cfg.min_radius);
+    cfg.radius = new_radius;
+  } else if (radius_new == 0.0) {
+    // The minRadius as new value (allows shrinking a loop).
+    cfg.min_radius = cfg_min_radius(cfg, unpaired, paired);
+    new_radius = cfg.min_radius;
+    cfg.radius = new_radius;
+  } else if (radius_new == -1.0) {
+    // The minRadius as new value (forbids shrinking a loop).
+    cfg.min_radius = cfg_min_radius(cfg, unpaired, paired);
+    if (cfg.min_radius - geom::kEpsilon0 > old_radius) {
+      new_radius = cfg.min_radius;
+    } else {
+      constexpr double kDefaultIncrease = 1.05;
+      new_radius = old_radius * kDefaultIncrease;
+    }
+    cfg.radius = new_radius;
+  }
+  // All other inputs are unhandled (vendored default: `newRadius = -1.0`,
+  // returned WITHOUT touching `cfg.radius`) -- no caller in this port passes
+  // any other value, so that branch is omitted rather than modeled.
+
+  return new_radius;
+}
+
 std::vector<Config> generate_config(const std::vector<int>& pair_table, double unpaired,
                                     double paired, std::vector<BaseInfo>& base_info) {
   std::vector<Config> configs;

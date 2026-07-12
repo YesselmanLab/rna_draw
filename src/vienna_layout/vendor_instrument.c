@@ -52,6 +52,32 @@
  * this file adds, is NOT an edit to vendored logic (same "second
  * independent copy of the .inc amalgam, in this TU" mechanism the rest of
  * this file already uses -- see the header above).
+ *
+ * MILESTONE A STEP 7 addition: `rnadraw_oracle_dump_change_trace` runs the
+ * T0 tree, then `checkAndFixIntersections` with `checkSiblingIntersections
+ * = 1` / `checkAncestorIntersections = 0` / `optimize = 0` (the SIBLING-only
+ * resolver path), and returns the ORDERED sequence of config-change
+ * decisions it made. This is the ONE dump that genuinely needs
+ * MACRO INTERPOSITION proper (not just "a second independent copy of the
+ * .inc amalgam" like every dump above): the private, `static`
+ * `checkAndApplyConfigChanges` (`handleConfigChanges.inc:55`) is called
+ * from INSIDE this TU's own copy of `handleSiblingIntersections.inc`'s
+ * private call graph, so there is no external hook to attach to -- instead,
+ * `#define checkAndApplyConfigChanges <renamed>` before including
+ * `handleConfigChanges.inc` renames the REAL implementation, then this file
+ * defines its OWN `checkAndApplyConfigChanges` (under the original name,
+ * the only symbol left with that name once the rename's header guard
+ * prevents a second, unrenamed definition) that records a trace entry
+ * around a call to the renamed real one. Every later `#include` in this
+ * TU's copy of the amalgam (`handleSiblingIntersections.inc`,
+ * `handleAncestorIntersections.inc`, `resolveIntersections.inc`) then calls
+ * THIS wrapper for every `checkAndApplyConfigChanges(...)` call site,
+ * because C's header guards make `handleConfigChanges.inc` a no-op the
+ * second time any of them `#include`s it. This is the mechanism the plan's
+ * cpp-reviewer refinement #2 named ("MACRO INTERPOSITION ... consistent
+ * with the existing rna_draw fork practice") -- it edits NO vendored `.inc`
+ * logic (the renamed function's BODY, copied verbatim by the preprocessor,
+ * is untouched).
  */
 
 #include <ViennaRNA/structures/pairtable.h>
@@ -61,6 +87,8 @@
 #include <string.h>
 
 #include "includes/boundingBoxes.inc"
+#include "includes/boundingWedge.inc"
+#include "includes/calcDeltas.inc"
 #include "includes/configtree.inc"
 #include "includes/coordinates.inc"
 #include "includes/definitions.inc"
@@ -442,10 +470,170 @@ char* rnadraw_oracle_dump_detections(const char* structure, double paired, doubl
   return buf.data;
 }
 
+/*---------------------------------------------------------------------------
+ *  Change trace (Milestone A step 7) -- MACRO INTERPOSITION, see this
+ *  file's header for the full mechanism explanation.
+ *--------------------------------------------------------------------------*/
+
+/* Growable list of trace entries, filled by the `checkAndApplyConfigChanges`
+ * wrapper below and read back out by `rnadraw_oracle_dump_change_trace`. */
+typedef struct {
+  int node_id;
+  intersectionType type;
+  double* deltas;
+  int num_deltas;
+  short accepted;
+} trace_entry_t;
+
+typedef struct {
+  trace_entry_t* items;
+  int count;
+  int capacity;
+} trace_list_t;
+
+/* Non-NULL only for the duration of one `rnadraw_oracle_dump_change_trace`
+ * call (single-threaded, same discipline `rnadraw_clearance_value`,
+ * `definitions.inc:39`, already uses for its own call-scoped global). */
+static trace_list_t* g_trace = NULL;
+
+static void trace_list_init(trace_list_t* list) {
+  list->capacity = 16;
+  list->count = 0;
+  list->items = (trace_entry_t*)vrna_alloc((size_t)list->capacity * sizeof(trace_entry_t));
+}
+
+static void trace_list_free(trace_list_t* list) {
+  for (int i = 0; i < list->count; i++) free(list->items[i].deltas);
+  free(list->items);
+}
+
+static void trace_list_push(trace_list_t* list, trace_entry_t entry) {
+  if (list->count >= list->capacity) {
+    list->capacity *= 2;
+    list->items = (trace_entry_t*)realloc(list->items, (size_t)list->capacity * sizeof(trace_entry_t));
+  }
+  list->items[list->count++] = entry;
+}
+
+/* Renames the REAL `checkAndApplyConfigChanges` definition
+ * (`handleConfigChanges.inc:55`) for the duration of this one `#include`;
+ * the vendored BODY is copied by the preprocessor unmodified. */
+#define checkAndApplyConfigChanges rnadraw_traced_checkAndApplyConfigChanges_real
+#include "includes/handleConfigChanges.inc"
+#undef checkAndApplyConfigChanges
+
+/* The trace-recording wrapper: the ONLY definition left under the original
+ * name in this TU (`handleConfigChanges.inc`'s header guard makes every
+ * later `#include` of it, from `handleSiblingIntersections.inc`/
+ * `handleAncestorIntersections.inc`, a no-op) -- so every
+ * `checkAndApplyConfigChanges(...)` call site the resolver's private call
+ * graph makes, from here on in this TU, resolves to this wrapper. */
+PRIVATE short checkAndApplyConfigChanges(treeNode* tree, double* deltaCfg,
+                                         const intersectionType it,
+                                         vrna_plot_options_puzzler_t* puzzler) {
+  short changed = rnadraw_traced_checkAndApplyConfigChanges_real(tree, deltaCfg, it, puzzler);
+
+  if (g_trace != NULL) {
+    int num_deltas = tree->cfg->numberOfArcs;
+    trace_entry_t entry;
+
+    entry.node_id = getNodeID(tree);
+    entry.type = it;
+    entry.num_deltas = num_deltas;
+    /* `deltaCfg` was mutated IN PLACE by the "fix too small changes" step
+     * inside the real function above -- read AFTER the call, matching the
+     * native side's capture point (`config_changes.cpp`'s
+     * `check_and_apply_config_changes`, which records post-adjustment). */
+    entry.deltas = (double*)vrna_alloc((size_t)num_deltas * sizeof(double));
+    for (int i = 0; i < num_deltas; i++) entry.deltas[i] = deltaCfg[i];
+    entry.accepted = changed;
+
+    trace_list_push(g_trace, entry);
+  }
+
+  return changed;
+}
+
+#include "includes/handleSiblingIntersections.inc"
+#include "includes/handleAncestorIntersections.inc"
+#include "includes/resolveIntersections.inc"
+
+/*
+ * Returns a malloc'd JSON array of `[{"node_id":.., "type":"BRA",
+ * "deltas":[...], "accepted":true}, ...]`: the ORDERED sequence of
+ * config-change decisions `checkAndFixIntersections` made on `structure`'s
+ * T1 tree with `checkSiblingIntersections = 1`, `checkAncestorIntersections
+ * = 0`, `optimize = 0` (the SIBLING-only resolver path, Milestone A step
+ * 7) -- see `include/rna_layout/resolve.hpp`'s `ChangeTraceEntry`, which
+ * this exactly mirrors. Caller owns the returned buffer; free() it.
+ * Returns NULL on a malformed/degenerate structure.
+ *
+ * WARNING (see `benchmarks/hard_set_sibling_only_oracle_hangs.json`): the
+ * vendored `checkAndFixIntersections` does not terminate on every
+ * structure under this option combination -- callers MUST NOT invoke this
+ * on a structure from that exclusion list (or any other not already known
+ * to terminate) without an external timeout; this file adds none, per its
+ * "expose dumps, don't change vendored logic" scope.
+ */
+char* rnadraw_oracle_dump_change_trace(const char* structure, double paired, double unpaired,
+                                       int max_config_changes) {
+  t1_tree_t built;
+
+  if (!build_t1_tree(structure, paired, unpaired, &built)) return NULL;
+
+  vrna_plot_options_puzzler_t* puzzler_options = vrna_plot_options_puzzler();
+
+  puzzler_options->paired = paired;
+  puzzler_options->unpaired = unpaired;
+  puzzler_options->checkSiblingIntersections = 1;
+  puzzler_options->checkAncestorIntersections = 0;
+  puzzler_options->optimize = 0;
+  puzzler_options->numberOfChangesAppliedToConfig = 0;
+  puzzler_options->maximumNumberOfConfigChangesAllowed =
+      (max_config_changes <= 0) ? 25000 : max_config_changes;
+
+  trace_list_t trace;
+
+  trace_list_init(&trace);
+  g_trace = &trace;
+  checkAndFixIntersections(built.tree, 0, puzzler_options);
+  g_trace = NULL;
+
+  strbuf_t buf;
+
+  strbuf_init(&buf);
+  strbuf_append(&buf, "[");
+  for (int i = 0; i < trace.count; i++) {
+    if (i > 0) strbuf_append(&buf, ",");
+
+    trace_entry_t* entry = &trace.items[i];
+    strbuf_append(&buf, "{\"node_id\":");
+    strbuf_append_int(&buf, entry->node_id);
+    strbuf_append(&buf, ",\"type\":\"");
+    strbuf_append(&buf, intersectionTypeToString(entry->type));
+    strbuf_append(&buf, "\",\"deltas\":[");
+    for (int j = 0; j < entry->num_deltas; j++) {
+      if (j > 0) strbuf_append(&buf, ",");
+      strbuf_append_double(&buf, entry->deltas[j]);
+    }
+    strbuf_append(&buf, "],\"accepted\":");
+    strbuf_append(&buf, entry->accepted ? "true" : "false");
+    strbuf_append(&buf, "}");
+  }
+  strbuf_append(&buf, "]");
+
+  trace_list_free(&trace);
+  vrna_plot_options_puzzler_free(puzzler_options);
+  t1_tree_free(&built);
+
+  return buf.data;
+}
+
 const char* rnadraw_oracle_instrumentation_version(void) {
-  return "vendor_instrument v2: turtle dump + dump_tree (config tree + "
+  return "vendor_instrument v3: turtle dump + dump_tree (config tree + "
          "bounding boxes, Milestone A step 4) + dump_detections "
-         "(intersection detection set, Milestone A step 5); see this "
-         "file's header for the macro-interposition mechanism "
-         "dump_change_trace will use.";
+         "(intersection detection set, Milestone A step 5) + "
+         "dump_change_trace (SIBLING resolver config-change trace, "
+         "Milestone A step 7, via macro-interposition on "
+         "checkAndApplyConfigChanges -- see this file's header).";
 }

@@ -1,8 +1,9 @@
-// ctest: `rna_layout::layout_puzzler` (`puzzler.hpp`), Milestone A step 6
-// ("finalization with resolver OFF"). Parity against the vendored oracle is
-// a Python-level concern (`tests/test_native_parity.py`); this proves the
-// native resolver-off pipeline runs, guards its resolver-on precondition,
-// and produces sane, deterministic output.
+// ctest: `rna_layout::layout_puzzler` (`puzzler.hpp`), Milestone A steps 6-7
+// ("finalization with resolver OFF" + the SIBLING intersection resolver).
+// Parity against the vendored oracle is a Python-level concern
+// (`tests/test_native_parity.py`); this proves the native pipeline runs,
+// guards its ancestor/optimize preconditions, and produces sane,
+// deterministic output with `check_sibling` on or off.
 
 #include "rna_layout/puzzler.hpp"
 
@@ -38,25 +39,22 @@ PuzzlerOptions resolver_off_options() {
   return opts;
 }
 
-void test_resolver_on_options_throw() {
+void test_default_options_throw() {
+  // Defaults are ancestor-ON and optimize-ON (both not yet ported).
   bool threw = false;
   try {
-    const Coords unused =
-        layout_puzzler(std::string("((((....))))"), PuzzlerOptions{});  // defaults are resolver-ON
+    const Coords unused = layout_puzzler(std::string("((((....))))"), PuzzlerOptions{});
     (void)unused;
   } catch (const std::logic_error&) {
     threw = true;
   }
-  expect(threw, "layout_puzzler: resolver-on options (the default PuzzlerOptions) throw");
+  expect(threw, "layout_puzzler: the default PuzzlerOptions (ancestor+optimize ON) throw");
 }
 
-void test_each_resolver_flag_individually_throws() {
+void test_ancestor_or_optimize_alone_throws_but_sibling_alone_does_not() {
   for (bool sibling : {true, false}) {
     for (bool ancestor : {true, false}) {
       for (bool optimize : {true, false}) {
-        if (!sibling && !ancestor && !optimize) {
-          continue;  // the one allowed combination
-        }
         PuzzlerOptions opts = resolver_off_options();
         opts.check_sibling = sibling;
         opts.check_ancestor = ancestor;
@@ -69,10 +67,39 @@ void test_each_resolver_flag_individually_throws() {
         } catch (const std::logic_error&) {
           threw = true;
         }
-        expect(threw, "layout_puzzler: any single resolver flag set throws");
+        const bool should_throw = ancestor || optimize;
+        expect(threw == should_throw,
+               "layout_puzzler: throws iff check_ancestor or optimize is requested "
+               "(check_sibling alone is Milestone A step 7, implemented)");
       }
     }
   }
+}
+
+void test_sibling_resolver_produces_sane_coordinates() {
+  const std::string structure = "((((...)))(((...)))(((...))))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  const Coords coords = layout_puzzler(structure, opts);
+
+  expect(coords.x.size() == structure.size(),
+         "layout_puzzler (sibling on): output length matches input length");
+  for (std::size_t i = 0; i < coords.x.size(); ++i) {
+    expect(std::isfinite(coords.x[i]), "layout_puzzler (sibling on): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]), "layout_puzzler (sibling on): every y coordinate is finite");
+  }
+}
+
+void test_sibling_resolver_is_deterministic() {
+  const std::string structure = "((((..((((....))))..))))(((...)))(((...)))(((...)))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  const Coords first = layout_puzzler(structure, opts);
+  const Coords second = layout_puzzler(structure, opts);
+  expect(first.x == second.x,
+         "layout_puzzler (sibling on): repeated calls produce identical x coordinates");
+  expect(first.y == second.y,
+         "layout_puzzler (sibling on): repeated calls produce identical y coordinates");
 }
 
 void test_resolver_off_produces_sane_coordinates() {
@@ -120,10 +147,12 @@ void test_malformed_input_throws() {
 }  // namespace
 
 int main() {
-  test_resolver_on_options_throw();
-  test_each_resolver_flag_individually_throws();
+  test_default_options_throw();
+  test_ancestor_or_optimize_alone_throws_but_sibling_alone_does_not();
   test_resolver_off_produces_sane_coordinates();
   test_resolver_off_is_deterministic();
+  test_sibling_resolver_produces_sane_coordinates();
+  test_sibling_resolver_is_deterministic();
   test_malformed_input_throws();
 
   if (g_failures > 0) {

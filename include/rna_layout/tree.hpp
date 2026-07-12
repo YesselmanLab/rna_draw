@@ -35,6 +35,25 @@ struct TreeNode {
   TreeNode* parent = nullptr;
   std::vector<std::unique_ptr<TreeNode>> children;
 
+  /// DFS pre-order node id, matching the vendored `treeNode.id`
+  /// (`configtree.inc`'s `treeHandleStem`, `++(*nodeID)` immediately before
+  /// recursing): `0` for the root (the exterior loop), assigned in
+  /// left-to-right discovery order for every other node by
+  /// `build_config_tree`. `-1` until then (a default-constructed or
+  /// test-built `TreeNode` that never went through `build_config_tree`).
+  ///
+  /// Added in Milestone A step 7 (the resolver): `check_and_fix_intersections`
+  /// (`resolve.hpp`)'s restart control flow compares node ids the same way
+  /// the vendored driver's `getNodeID` does, and the change-trace
+  /// instrumentation (`ChangeTraceEntry::node_id`) identifies the node a
+  /// config change was applied to. `debug_dump.hpp`'s `dump_tree` predates
+  /// this field and still computes its own, independent DFS-pre-order
+  /// numbering (documented there) -- the two agree by construction (same
+  /// traversal order) but are not the same code path; left as-is rather than
+  /// refactored to reuse this field, since that dump is already
+  /// parity-validated and out of this step's scope.
+  int id = -1;
+
   std::optional<Config> cfg;
   int loop_start = -1;
   int stem_start = -1;
