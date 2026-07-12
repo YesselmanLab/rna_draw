@@ -6,7 +6,6 @@
 
 #include <cstdlib>
 #include <iostream>
-#include <stdexcept>
 
 #include "../resolve_internal.hpp"
 #include "rna_layout/config_tree.hpp"
@@ -169,19 +168,18 @@ void test_driver_combines_sibling_and_ancestor_checks() {
          "check_and_fix_intersections: sibling+ancestor resolved the forced collision");
 }
 
-void test_driver_throws_when_optimize_requested() {
+void test_driver_runs_with_optimize_requested() {
+  // Milestone A step 9: `optimize` is real now (`optimize_test.cpp` covers
+  // it directly) -- this just confirms the ancestor-resolver driver no
+  // longer rejects it (it used to throw, pre-step-9).
   const auto tree = rna_layout::test::build_updated_tree("((((...))))", kPaired, kUnpaired);
   PuzzlerOptions opts = ancestor_only_options();
   opts.optimize = true;
   ResolverState state;
 
-  bool threw = false;
-  try {
-    check_and_fix_intersections(tree.get(), opts, state);
-  } catch (const std::logic_error&) {
-    threw = true;
-  }
-  expect(threw, "check_and_fix_intersections: optimize == true throws (Milestone A step 9)");
+  TreeNode* result = check_and_fix_intersections(tree.get(), opts, state);
+  expect(result == nullptr,
+         "check_and_fix_intersections: optimize == true no longer throws (Milestone A step 9)");
 }
 
 }  // namespace
@@ -192,7 +190,7 @@ int main() {
   test_driver_resolves_a_colliding_ancestor_pair_end_to_end();
   test_driver_is_a_no_op_on_an_already_clean_tree();
   test_driver_combines_sibling_and_ancestor_checks();
-  test_driver_throws_when_optimize_requested();
+  test_driver_runs_with_optimize_requested();
 
   if (g_failures > 0) {
     std::cerr << "resolve_ancestors_test: " << g_failures << " failure(s)\n";

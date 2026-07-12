@@ -38,6 +38,7 @@ import pytest
 import rna_draw._layout_core as native_layout
 import rna_draw._vienna_layout as vienna_layout
 from rna_draw.layout.base import has_empty_loop, is_pseudoknot_free, iter_adaptive_params
+from rna_draw.layout.production import PRODUCTION_CLEARANCE_LADDER
 from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
@@ -102,6 +103,14 @@ SIBLING_ANCESTOR_ORACLE_HANGS_PATH = (
     Path(__file__).parent.parent / "benchmarks" / "hard_set_sibling_ancestor_oracle_hangs.json"
 )
 
+# Milestone A step 9 (OPTIMIZE resolver pass -- the FULL production config:
+# checkSibling=1/checkAncestor=1/optimize=1). Same idea as
+# `SIBLING_ANCESTOR_ORACLE_HANGS_PATH`; see that file's own `_comment` for
+# why it is (and this one is expected to stay) EMPTY.
+FULL_ORACLE_HANGS_PATH = (
+    Path(__file__).parent.parent / "benchmarks" / "hard_set_full_oracle_hangs.json"
+)
+
 
 def _turtle_usable(structure: str) -> bool:
     """Whether both engines' shared malformed-input guards accept `structure`."""
@@ -144,6 +153,22 @@ def _sibling_ancestor_safe_hard_set_structures() -> list[str]:
     PATH`'s doc comment).
     """
     hangs = _sibling_ancestor_oracle_hangs()
+    return [s for s in _hard_set_structures() if s not in hangs]
+
+
+def _full_oracle_hangs() -> set[str]:
+    import json
+
+    return set(json.loads(FULL_ORACLE_HANGS_PATH.read_text())["structures"])
+
+
+def _full_safe_hard_set_structures() -> list[str]:
+    """`_hard_set_structures()`, minus the FULL-config (Milestone A step 9)
+    vendored-oracle-hangs exclusion list -- the corpus every FULL-config
+    oracle-comparison test uses. See `FULL_ORACLE_HANGS_PATH`'s doc comment
+    (currently empty, like its sibling+ancestor counterpart).
+    """
+    hangs = _full_oracle_hangs()
     return [s for s in _hard_set_structures() if s not in hangs]
 
 
@@ -898,6 +923,197 @@ class TestSiblingAncestorCheckerEquivalence:
         )
         assert not worse, f"native strictly worse than vendored on: {worse}"
         assert native_clean_rate >= vendored_clean_rate
+
+
+# ---------------------------------------------------------------------------
+# Milestone A step 9: SIBLING + ANCESTOR + OPTIMIZE together -- the FULL
+# production config (`rna_layout::PuzzlerOptions{}`'s own defaults reproduce
+# the vendored `vrna_plot_options_puzzler()`'s defaults field-for-field, see
+# `puzzler.hpp`'s file header). `native_layout.plot_coords_puzzler_full` /
+# `vienna_layout.plot_coords_puzzler_opts` are both-sides entry points.
+#
+# CHANGE-TRACE PARITY, INHERITED (not re-tested here): `optimize_tree`/
+# `optimize_node` (`src/layout_core/optimize.cpp`, `optimize2.cpp`) never
+# call `check_and_apply_config_changes` -- verified directly by inspection
+# (that function is called from exactly two places in the whole native tree,
+# `resolve_ancestors.cpp` and `resolve_siblings.cpp`; grep confirms this).
+# `ResolverState.trace` is therefore BYTE-IDENTICAL whether `optimize` is on
+# or off, for a fixed `check_sibling`/`check_ancestor` setting -- the
+# SIBLING+ANCESTOR change-trace parity `TestSiblingAncestorChangeTraceParity`
+# already establishes (100% prefix agreement, 0 pre-tie-break divergences,
+# per the Milestone A step 8 commit) covers the FULL config's change-trace
+# behavior too; there is nothing new for `optimize` to diverge on there.
+# ---------------------------------------------------------------------------
+
+
+def _full_coords(
+    structure: str,
+    engine: ModuleType,
+    allow_flipping: bool = False,
+    max_config_changes: int = 0,
+    clearance: float = 1.0,
+) -> np.ndarray:
+    fn = (
+        engine.plot_coords_puzzler_full
+        if engine is native_layout
+        else engine.plot_coords_puzzler_opts
+    )
+    x, y = fn(structure, allow_flipping, max_config_changes, clearance)
+    return np.column_stack([x, y])
+
+
+def _assert_full_coords_parity(structure: str, clearance: float = 1.0) -> float:
+    """Coord half of plan criterion 4 for the FULL (SIBLING+ANCESTOR+
+    OPTIMIZE) resolver, at a given `clearance`: native
+    `plot_coords_puzzler_full` vs the vendored oracle's
+    `plot_coords_puzzler_opts` counterpart. Same float32-return-type
+    precision-ceiling reasoning as every other coord-parity assertion in
+    this module.
+    """
+    native_xy = _full_coords(structure, native_layout, clearance=clearance)
+    oracle_xy = _full_coords(structure, vienna_layout, clearance=clearance)
+
+    native_f32_xy: np.ndarray = native_xy.astype(np.float32).astype(np.float64)
+    tight_diff = _max_aligned_diff(native_f32_xy, oracle_xy)
+    assert tight_diff <= TIGHT_TOL, (
+        f"{structure!r} (clearance={clearance}): full-config float32-rounded aligned diff "
+        f"{tight_diff} exceeds the {TIGHT_TOL} parity gate"
+    )
+    return tight_diff
+
+
+class TestFullCoordParity:
+    """Plan criterion 4's coord half (Milestone A step 9), at the FULL
+    production config's default clearance (1.0): native vs vendored, over
+    the hand/motif corpus (none of which hang the vendored oracle) + the
+    oracle-safe subset of the hard set (`_full_safe_hard_set_structures`,
+    currently the whole hard set -- see `FULL_ORACLE_HANGS_PATH`).
+    """
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_full_parity(self, name: str) -> None:
+        _assert_full_coords_parity(HAND_STRUCTURES[name])
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_full_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.plot_coords_puzzler_full(structure, False, 0, 1.0)
+        second = native_layout.plot_coords_puzzler_full(structure, False, 0, 1.0)
+        assert first == second
+
+    def test_full_parity_over_safe_hard_set(self) -> None:
+        structures = _full_safe_hard_set_structures()
+        assert len(structures) > 400, "expected the full hard set to be oracle-safe"
+
+        diffs = [_assert_full_coords_parity(s) for s in structures]
+        assert max(diffs) <= TIGHT_TOL
+        print(
+            f"\nhard_set FULL-config coord parity: n={len(structures)}, "
+            f"max_diff={max(diffs):.3e}, mean_diff={sum(diffs) / len(diffs):.3e}"
+        )
+
+
+class TestFullCheckerEquivalence:
+    """Plan criterion 4a (Milestone A step 9), the PRIMARY FULL-config gate:
+    run the frozen `check_overlaps` checker on both engines' FULL-config
+    output, rescaled to `DrawParameters.PRIMARY_SPACE` the same way a
+    production `LayoutEngine` would (`rescale_coords`). Require, per
+    structure, `native_min_witnesses <= vendored_min_witnesses` (never
+    worse) and, in aggregate, `native_clean_rate >= vendored_clean_rate` on
+    the oracle-safe hard set.
+    """
+
+    def test_never_worse_and_clean_rate_over_safe_hard_set(self) -> None:
+        structures = _full_safe_hard_set_structures()
+        assert len(structures) > 400, "expected the full hard set to be oracle-safe"
+
+        target_step = DrawParameters().PRIMARY_SPACE
+        native_clean = 0
+        vendored_clean = 0
+        worse: list[str] = []
+
+        for structure in structures:
+            pair_map = get_pairmap_from_secstruct(structure)
+            native_x, native_y = _full_coords(structure, native_layout).T.tolist()
+            vendored_x, vendored_y = _full_coords(structure, vienna_layout).T.tolist()
+            native_x, native_y = rescale_coords(native_x, native_y, target_step)
+            vendored_x, vendored_y = rescale_coords(vendored_x, vendored_y, target_step)
+
+            native_witnesses = _min_witnesses(native_x, native_y, pair_map)
+            vendored_witnesses = _min_witnesses(vendored_x, vendored_y, pair_map)
+
+            if native_witnesses <= vendored_witnesses:
+                pass
+            else:
+                worse.append(structure)
+            if native_witnesses == 0:
+                native_clean += 1
+            if vendored_witnesses == 0:
+                vendored_clean += 1
+
+        native_clean_rate = native_clean / len(structures)
+        vendored_clean_rate = vendored_clean / len(structures)
+        print(
+            f"\nhard_set FULL-config checker-equivalence: n={len(structures)}, "
+            f"native_clean_rate={native_clean_rate:.4f}, "
+            f"vendored_clean_rate={vendored_clean_rate:.4f}, worse={len(worse)}"
+        )
+        assert not worse, f"native strictly worse than vendored on: {worse}"
+        assert native_clean_rate >= vendored_clean_rate
+
+
+# `EscalatingClearanceEngine.__init__`'s own default `levels` (production.py)
+# -- the broader ladder `EscalatingClearanceEngine()` (used with pseudoknots
+# by other callers) tries; `PRODUCTION_CLEARANCE_LADDER`, imported above, is
+# its shipped (`production_engine()`) subset, capped at 1.5. Duplicated here
+# as a plain tuple (rather than instantiating the engine, which also asserts
+# the ViennaRNA ABI) since only the constant is needed.
+FULL_CONFIG_CLEARANCE_LADDER: tuple[float, ...] = (1.0, 1.25, 1.5, 1.75, 2.0)
+assert set(PRODUCTION_CLEARANCE_LADDER) <= set(FULL_CONFIG_CLEARANCE_LADDER), (
+    "PRODUCTION_CLEARANCE_LADDER should be a subset of the broader default ladder"
+)
+
+
+class TestFullVsShippedProduction:
+    """The FULL-config native/vendored coord parity above, ONLY at
+    `clearance=1.0`. `rna_draw.layout.production`'s SHIPPED engine
+    (`EscalatingClearanceEngine`, wrapped by a separate, Python-only local
+    overlap post-pass out of this port's scope -- see that module's
+    docstring) calls the exact same vendored entry point
+    (`_vienna_layout.plot_coords_puzzler_opts`) at EVERY level of
+    `PRODUCTION_CLEARANCE_LADDER` (`(1.0, 1.25, 1.5)`, what `production_
+    engine()` actually ships) and, in the broader default ladder,
+    `FULL_CONFIG_CLEARANCE_LADDER` (`(1.0, 1.25, 1.5, 1.75, 2.0)`). This
+    class extends the coord-parity gate to EVERY one of those clearance
+    values, over the hand corpus plus a bounded stride sample of the hard
+    set (kept smaller than the other FULL-config suites -- this is
+    `len(levels)`x the per-structure cost) -- proving that swapping the
+    vendored call for `plot_coords_puzzler_full` inside
+    `EscalatingClearanceEngine._layout_at_clearance` would reproduce
+    (float32-truncation-aware) exactly what the shipped pipeline consumes
+    today, at every clearance it actually tries.
+    """
+
+    @pytest.mark.parametrize("clearance", FULL_CONFIG_CLEARANCE_LADDER)
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_full_parity_at_shipped_clearance_hand_corpus(
+        self, name: str, clearance: float
+    ) -> None:
+        _assert_full_coords_parity(HAND_STRUCTURES[name], clearance=clearance)
+
+    def test_full_parity_at_shipped_clearance_over_hard_set_sample(self) -> None:
+        structures = _full_safe_hard_set_structures()
+        assert len(structures) > 400, "expected the full hard set to be oracle-safe"
+        sample = structures[::5]  # bounded stride sample, see class docstring
+
+        max_diff = 0.0
+        for clearance in FULL_CONFIG_CLEARANCE_LADDER:
+            diffs = [_assert_full_coords_parity(s, clearance=clearance) for s in sample]
+            max_diff = max(max_diff, max(diffs))
+        print(
+            f"\nhard_set FULL-config vs-shipped-production coord parity: "
+            f"n={len(sample)}, levels={FULL_CONFIG_CLEARANCE_LADDER}, max_diff={max_diff:.3e}"
+        )
 
 
 @pytest.mark.skipif(

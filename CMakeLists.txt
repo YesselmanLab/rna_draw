@@ -173,6 +173,8 @@ set(RNA_LAYOUT_CORE_SOURCES
   src/layout_core/rotation_angle2.cpp
   src/layout_core/exterior_boxes.cpp
   src/layout_core/resolve_ancestors.cpp
+  src/layout_core/optimize.cpp
+  src/layout_core/optimize2.cpp
   src/layout_core/resolve.cpp
   src/layout_core/puzzler.cpp
   src/layout_core/debug_dump.cpp
@@ -194,7 +196,8 @@ install(TARGETS _layout_core DESTINATION rna_draw)
 foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test
                              bounding_boxes_test config_tree_test bounding_wedge_test
                              intersections_test intersect_tree_test puzzler_test
-                             deltas_test resolve_siblings_test resolve_ancestors_test)
+                             deltas_test resolve_siblings_test resolve_ancestors_test
+                             optimize_test)
   add_executable(${rna_layout_test_name} src/layout_core/tests/${rna_layout_test_name}.cpp)
   target_link_libraries(${rna_layout_test_name} PRIVATE rna_layout_core)
   target_compile_options(${rna_layout_test_name} PRIVATE ${RNA_DRAW_FP_FLAGS})

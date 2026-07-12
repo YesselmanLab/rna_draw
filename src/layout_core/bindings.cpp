@@ -9,10 +9,12 @@
  * its own pair-table conversion (`pair_table.hpp`) and value types
  * (`types.hpp`).
  *
- * SCOPE (Milestone A step 3): only `layout_turtle` is wired up. The
- * resolver-backed `layout_puzzler` is a later step (`.claude/plans/
- * current-plan.md`'s port order, steps 6-10) and is deliberately absent
- * here rather than declared-and-stubbed.
+ * SCOPE (Milestone A step 9, COMPLETE): `layout_turtle` and the full
+ * resolver-backed `layout_puzzler` (SIBLING + ANCESTOR + OPTIMIZE, gated
+ * independently) are both wired up; `plot_coords_puzzler_full` is the
+ * FULL production-config entry point (see its own doc comment). This
+ * module is still parity-only -- `rna_draw.layout.pipeline.resolve_engine`
+ * /`default_engine` are not touched here (Milestone A step 10).
  *
  * `dump_tree` (Milestone A step 4) is PARITY-ONLY instrumentation: it runs
  * the turtle pass + config-tree build + `update_bounding_boxes` and returns
@@ -234,6 +236,29 @@ CoordVectors plot_coords_puzzler_sibling_ancestor(const std::string& structure) 
   return {std::move(coords.x), std::move(coords.y)};
 }
 
+/// `layout_puzzler` with `check_sibling`/`check_ancestor`/`optimize`/
+/// `check_exterior` all left at `PuzzlerOptions`'s own defaults (`true`) --
+/// the Milestone A step 9 FULL production-config entry point, exposing the
+/// same three resolver levers `rna_draw.layout.production` actually calls
+/// on the vendored side (`_vienna_layout.plot_coords_puzzler_opts`):
+/// `allow_flipping`, `max_config_changes` (`<= 0` -> the engine's own
+/// 25000 default), and `clearance`. `PuzzlerOptions{}`'s defaults already
+/// reproduce the vendored `vrna_plot_options_puzzler()`'s defaults
+/// field-for-field (see `puzzler.hpp`'s file header), so this is the
+/// native counterpart of the vendored oracle's `plot_coords_puzzler_opts`
+/// -- and, transitively, of the SHIPPED production pipeline
+/// (`rna_draw.layout.production`), which calls that same vendored entry
+/// point at a sequence of clearance values.
+CoordVectors plot_coords_puzzler_full(const std::string& structure, bool allow_flipping,
+                                      int max_config_changes, double clearance) {
+  rna_layout::PuzzlerOptions opts;
+  opts.allow_flipping = allow_flipping;
+  opts.max_config_changes = max_config_changes;
+  opts.clearance = clearance;
+  rna_layout::Coords coords = rna_layout::layout_puzzler(structure, opts);
+  return {std::move(coords.x), std::move(coords.y)};
+}
+
 /// `rna_layout::ChangeTraceEntry` -> the same field-name `py::dict` shape
 /// the vendored oracle's `vendor_instrument.c` change-trace JSON dump uses
 /// (Milestone A step 7's change-trace parity gate), so
@@ -257,8 +282,7 @@ py::object to_python(const rna_layout::ChangeTraceEntry& entry) {
 /// pipeline but exposes the resolver's internal decisions rather than only
 /// the final coordinates.
 py::list dump_change_trace_binding(const std::string& structure, double paired, double unpaired,
-                                   double clearance, int max_config_changes,
-                                   bool check_ancestor) {
+                                   double clearance, int max_config_changes, bool check_ancestor) {
   validate_dump_tree_input(structure);
   const std::vector<int> pair_table = rna_layout::make_pair_table(structure);
   const rna_layout::TurtleLayout turtle =
@@ -293,9 +317,11 @@ py::list dump_change_trace_binding(const std::string& structure, double paired, 
 PYBIND11_MODULE(_layout_core, m) {
   m.doc() =
       "Owned modern-C++ port of RNApuzzler/RNAturtle's layout core "
-      "(rna_layout namespace). This build exposes the turtle-base engine "
-      "only; the resolver-backed puzzler engine lands in a later "
-      "Milestone A step. No ViennaRNA header/runtime dependency.";
+      "(rna_layout namespace). Exposes both the turtle-base engine and the "
+      "full resolver-backed puzzler engine (SIBLING + ANCESTOR + OPTIMIZE); "
+      "parity-only for now -- not yet wired into rna_draw's production "
+      "engine selection (Milestone A step 10). No ViennaRNA header/runtime "
+      "dependency.";
 
   m.def("plot_coords_turtle", &plot_coords_turtle, py::arg("structure"),
         "Lay out a dot-bracket structure with the native RNAturtle port; "
@@ -343,6 +369,19 @@ PYBIND11_MODULE(_layout_core, m) {
         "check_ancestor both true, optimize false; Milestone A step 8) -- "
         "for parity testing against the vendored oracle's "
         "plot_coords_puzzler_sibling_ancestor. Returns (x, y).");
+
+  m.def("plot_coords_puzzler_full", &plot_coords_puzzler_full, py::arg("structure"),
+        py::arg("allow_flipping") = false, py::arg("max_config_changes") = 0,
+        py::arg("clearance") = 1.0,
+        "Lay out a dot-bracket structure with the native RNApuzzler port, "
+        "ALL THREE resolver stages on (SIBLING + ANCESTOR + OPTIMIZE; "
+        "Milestone A step 9 -- the FULL production config, matching "
+        "PuzzlerOptions{}'s own defaults) -- for parity testing against "
+        "the vendored oracle's plot_coords_puzzler_opts, and transitively "
+        "against the shipped production pipeline "
+        "(rna_draw.layout.production). Exposes the same three resolver "
+        "levers: allow_flipping, max_config_changes (<= 0 uses the "
+        "engine's default), and clearance. Returns (x, y).");
 
   m.def("dump_change_trace", &dump_change_trace_binding, py::arg("structure"),
         py::arg("paired") = 35.0, py::arg("unpaired") = 25.0, py::arg("clearance") = 1.0,

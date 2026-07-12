@@ -40,22 +40,27 @@ PuzzlerOptions resolver_off_options() {
   return opts;
 }
 
-void test_default_options_throw() {
-  // Defaults are ancestor-ON and optimize-ON (both not yet ported).
-  bool threw = false;
-  try {
-    const Coords unused = layout_puzzler(std::string("((((....))))"), PuzzlerOptions{});
-    (void)unused;
-  } catch (const std::logic_error&) {
-    threw = true;
+void test_default_options_produce_sane_coordinates() {
+  // Milestone A step 9: the defaults (sibling+ancestor+optimize all ON,
+  // matching the vendored `vrna_plot_options_puzzler()` -- see
+  // `puzzler.hpp`'s file header) are now the FULL, real pipeline.
+  const std::string structure = "((((...)))((....(((.....))).))(((...))))";
+  const Coords coords = layout_puzzler(structure, PuzzlerOptions{});
+
+  expect(coords.x.size() == structure.size(),
+         "layout_puzzler (default options): output length matches input length");
+  for (std::size_t i = 0; i < coords.x.size(); ++i) {
+    expect(std::isfinite(coords.x[i]),
+           "layout_puzzler (default options): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]),
+           "layout_puzzler (default options): every y coordinate is finite");
   }
-  expect(threw, "layout_puzzler: the default PuzzlerOptions (ancestor+optimize ON) throw");
 }
 
-void test_only_optimize_throws() {
-  // Milestone A step 8: `check_sibling`/`check_ancestor` are both real now
-  // (independently or together); only `optimize` (Milestone A step 9) still
-  // throws.
+void test_every_resolver_combination_runs_without_throwing() {
+  // Milestone A step 9: every combination of check_sibling/check_ancestor/
+  // optimize is now real (none throws) -- unlike pre-step-9, where
+  // optimize == true always threw.
   for (bool sibling : {true, false}) {
     for (bool ancestor : {true, false}) {
       for (bool optimize : {true, false}) {
@@ -64,16 +69,10 @@ void test_only_optimize_throws() {
         opts.check_ancestor = ancestor;
         opts.optimize = optimize;
 
-        bool threw = false;
-        try {
-          const Coords unused = layout_puzzler(std::string("((((....))))"), opts);
-          (void)unused;
-        } catch (const std::logic_error&) {
-          threw = true;
-        }
-        expect(threw == optimize,
-               "layout_puzzler: throws iff optimize is requested (check_sibling/"
-               "check_ancestor, alone or together, are Milestone A steps 7-8, implemented)");
+        const Coords coords = layout_puzzler(std::string("((((....))))"), opts);
+        expect(coords.x.size() == 12,
+               "layout_puzzler: every check_sibling/check_ancestor/optimize combination "
+               "produces output of the expected length without throwing");
       }
     }
   }
@@ -109,6 +108,42 @@ void test_sibling_and_ancestor_resolver_is_deterministic() {
          "layout_puzzler (sibling+ancestor on): repeated calls produce identical y coordinates");
 }
 
+void test_full_pipeline_produces_sane_coordinates() {
+  // All three resolver stages on -- the FULL production config (Milestone A
+  // step 9): `resolver_off_options()` + explicit overrides, rather than
+  // `PuzzlerOptions{}`, so this stays independent of that struct's own
+  // defaults ever changing.
+  const std::string structure = "((((...)))((....(((.....))).))(((...))))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  opts.check_ancestor = true;
+  opts.optimize = true;
+  const Coords coords = layout_puzzler(structure, opts);
+
+  expect(coords.x.size() == structure.size(),
+         "layout_puzzler (full pipeline): output length matches input length");
+  for (std::size_t i = 0; i < coords.x.size(); ++i) {
+    expect(std::isfinite(coords.x[i]),
+           "layout_puzzler (full pipeline): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]),
+           "layout_puzzler (full pipeline): every y coordinate is finite");
+  }
+}
+
+void test_full_pipeline_is_deterministic() {
+  const std::string structure = "((((..((((....))))..))))(((...)))(((...)))(((...)))";
+  PuzzlerOptions opts = resolver_off_options();
+  opts.check_sibling = true;
+  opts.check_ancestor = true;
+  opts.optimize = true;
+  const Coords first = layout_puzzler(structure, opts);
+  const Coords second = layout_puzzler(structure, opts);
+  expect(first.x == second.x,
+         "layout_puzzler (full pipeline): repeated calls produce identical x coordinates");
+  expect(first.y == second.y,
+         "layout_puzzler (full pipeline): repeated calls produce identical y coordinates");
+}
+
 void test_ancestor_only_resolver_produces_sane_coordinates() {
   const std::string structure = "((((...)))((....(((.....))).))(((...))))";
   PuzzlerOptions opts = resolver_off_options();
@@ -119,8 +154,10 @@ void test_ancestor_only_resolver_produces_sane_coordinates() {
   expect(coords.x.size() == structure.size(),
          "layout_puzzler (ancestor on): output length matches input length");
   for (std::size_t i = 0; i < coords.x.size(); ++i) {
-    expect(std::isfinite(coords.x[i]), "layout_puzzler (ancestor on): every x coordinate is finite");
-    expect(std::isfinite(coords.y[i]), "layout_puzzler (ancestor on): every y coordinate is finite");
+    expect(std::isfinite(coords.x[i]),
+           "layout_puzzler (ancestor on): every x coordinate is finite");
+    expect(std::isfinite(coords.y[i]),
+           "layout_puzzler (ancestor on): every y coordinate is finite");
   }
 }
 
@@ -195,8 +232,8 @@ void test_malformed_input_throws() {
 }  // namespace
 
 int main() {
-  test_default_options_throw();
-  test_only_optimize_throws();
+  test_default_options_produce_sane_coordinates();
+  test_every_resolver_combination_runs_without_throwing();
   test_resolver_off_produces_sane_coordinates();
   test_resolver_off_is_deterministic();
   test_sibling_resolver_produces_sane_coordinates();
@@ -204,6 +241,8 @@ int main() {
   test_ancestor_only_resolver_produces_sane_coordinates();
   test_sibling_and_ancestor_resolver_produces_sane_coordinates();
   test_sibling_and_ancestor_resolver_is_deterministic();
+  test_full_pipeline_produces_sane_coordinates();
+  test_full_pipeline_is_deterministic();
   test_malformed_input_throws();
 
   if (g_failures > 0) {

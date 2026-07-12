@@ -4,16 +4,15 @@
  * @file resolve.hpp
  * @brief The intersection-resolver driver, ported from
  *        `resolveIntersections.inc:24 checkAndFixIntersections` (Milestone A
- *        step 7 landed the SIBLING path; step 8 adds the ANCESTOR path).
+ *        step 7 landed the SIBLING path; step 8 the ANCESTOR path; step 9
+ *        the OPTIMIZE pass).
  *
- * SCOPE (Milestone A step 8): the SIBLING (`check_sibling`) and ANCESTOR
- * (`check_ancestor`) resolution paths are both real -- `check_and_fix_
- * intersections` only requires `opts.optimize == false` (throws otherwise).
- * `optimizeTree` (`optimize.inc`, Milestone A step 9) is not ported -- its
- * gate is preserved in the driver's control flow (matching the reference's
- * exact shape) but throws if reached, rather than being silently skipped or
- * approximated. See `puzzler.cpp`'s call site for how `PuzzlerOptions` is
- * validated before this ever runs.
+ * SCOPE (Milestone A step 9, COMPLETE): all three resolver stages are real
+ * -- `check_and_fix_intersections` accepts any combination of
+ * `opts.check_sibling`/`opts.check_ancestor`/`opts.optimize`. With every
+ * flag `true` (`PuzzlerOptions`'s own defaults), this driver reproduces the
+ * vendored `checkAndFixIntersections`'s full default (PRODUCTION) behavior
+ * -- see `puzzler.cpp`'s call site.
  *
  * MUTATION MODEL: unlike every earlier Milestone A step (pure construction/
  * detection over an already-built tree), this driver MUTATES the tree in
@@ -101,9 +100,8 @@ struct ResolverState {
  * (`resolveIntersections.inc:24`); see this file's header for scope.
  *
  * @param node The (sub)tree to resolve; mutated in place.
- * @param opts Resolver options; `optimize` MUST be `false` (see this file's
- *     header). `check_ancestor`/`check_sibling` may each independently be
- *     `true` or `false`.
+ * @param opts Resolver options; `check_ancestor`/`check_sibling`/`optimize`
+ *     may each independently be `true` or `false`.
  * @param state Resolver-wide mutable state (change counter + trace),
  *     threaded through and updated in place.
  * @return Non-`nullptr` ONLY from an internal RECURSIVE call, meaning "an
@@ -115,8 +113,6 @@ struct ResolverState {
  *     `is_multi_loop` are both `false` for the root by definition), so every
  *     non-null return is fully absorbed at some node strictly below the
  *     root before ever reaching this function's outermost call.
- * @throws std::logic_error If @p opts requests the not-yet-ported optimize
- *     pass.
  */
 TreeNode* check_and_fix_intersections(TreeNode* node, const PuzzlerOptions& opts,
                                       ResolverState& state);

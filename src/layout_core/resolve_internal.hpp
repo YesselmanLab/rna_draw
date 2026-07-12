@@ -5,9 +5,10 @@
  * @brief Private declarations shared across the resolver's translation
  *        units (`deltas.cpp`, `config_changes.cpp`, `resolve_siblings.cpp`,
  *        `resolve_ancestors.cpp`, `exterior_boxes.cpp`, `rotation_angle.cpp`,
- *        `rotation_angle2.cpp`, `resolve.cpp`) -- the `*_impl.hpp`
- *        convention `.claude/plans/current-plan.md`'s directory layout note
- *        describes, never installed under `include/rna_layout`.
+ *        `rotation_angle2.cpp`, `optimize.cpp`, `optimize2.cpp`,
+ *        `resolve.cpp`) -- the `*_impl.hpp` convention `.claude/plans/
+ *        current-plan.md`'s directory layout note describes, never
+ *        installed under `include/rna_layout`.
  *
  * Every vendored counterpart declared here was `PRIVATE` (a `static`
  * function local to the `.inc` amalgam, `resolveIntersections.inc`'s
@@ -187,8 +188,8 @@ enum class SiblingCheckResult : std::uint8_t {
 ///     loop that was already going to be excluded -- see the vendored
 ///     `switch` this ports verbatim).
 [[nodiscard]] std::vector<TreeNode*> construct_reduced_intersection_path(TreeNode& ancestor,
-                                                                          TreeNode& intersector,
-                                                                          IntersectionType it);
+                                                                         TreeNode& intersector,
+                                                                         IntersectionType it);
 
 /// The clockwise (`1`) / counter-clockwise (`-1`) / degenerate (`0`)
 /// rotation sense of @p path (as `construct_reduced_intersection_path`
@@ -220,10 +221,10 @@ enum class SiblingCheckResult : std::uint8_t {
  *     `nullptr` otherwise.
  */
 [[nodiscard]] TreeNode* fix_intersection_with_ancestor(TreeNode& ancestor, TreeNode& rotation_node,
-                                                        TreeNode& intersector, int rotation_index,
-                                                        short rotation_sign, IntersectionType it,
-                                                        const PuzzlerOptions& opts,
-                                                        ResolverState& state);
+                                                       TreeNode& intersector, int rotation_index,
+                                                       short rotation_sign, IntersectionType it,
+                                                       const PuzzlerOptions& opts,
+                                                       ResolverState& state);
 
 /**
  * Try to fix the ancestor-intersection between @p ancestor and
@@ -254,7 +255,7 @@ enum class SiblingCheckResult : std::uint8_t {
  *     or none could be fixed.
  */
 [[nodiscard]] TreeNode* check_node_against_ancestors(TreeNode& node, const PuzzlerOptions& opts,
-                                                      ResolverState& state);
+                                                     ResolverState& state);
 
 /**
  * Rebuild @p exterior's synthetic `LoopBox`/`StemBox`/`Aabb` so it can be
@@ -330,5 +331,180 @@ void setup_exterior_bounding_boxes(TreeNode& exterior, const TreeNode& top_level
                                                  Vec2 mobile_circle_center,
                                                  double mobile_circle_radius, Vec2 rotation_center,
                                                  short rotation_sign, double clearance);
+
+/*=============================================================================
+ *  Optimization pass (Milestone A step 9), ported from `optimize.inc`
+ *  (977 LOC) -- `optimize.cpp` implements the standalone geometry/config
+ *  helpers below; `optimize2.cpp` implements `optimize_node`/
+ *  `optimize_tree_recursive`/`optimize_tree` (the driver-facing entry
+ *  point `resolve.cpp` calls).
+ *
+ *  SCOPE NOTE (dead code NOT ported, verified by inspection of
+ *  `optimize.inc`): three vendored "strategy" enums
+ *  (`increaseStrategy`/`searchStrategy`/`distributionStrategy`) each select
+ *  a HARDCODED, never-varied branch (`INCREASE_ALL_OTHER`/`LINEAR_SEARCH`/
+ *  `DISTRIBUTE_PROPORTIONALLY` -- every other branch is unreachable dead
+ *  code: `computeIncreasesLeftNeighbor`/`RightNeighbor`/`BothNeighbors`,
+ *  `shrinkLoopRadiusBinarySearch`, `computeDeltasDistributeEqually`). This
+ *  port inlines each live branch directly into the entry point the
+ *  vendored dispatcher wrapped (`compute_increases`, `shrink_loop_radius`,
+ *  `compute_deltas` below) rather than porting a permanently-single-armed
+ *  `switch`.
+ *============================================================================*/
+
+/// Whether @p node -- a DIRECT CHILD of the exterior root, or any other
+/// non-root node -- intersects any node of @p subtree or @p ancestor_list.
+/// Mirrors `checkIntersections` (`optimize.inc:55`): `intersect_node_lists
+/// (subtree, subtree, ...) || intersect_node_lists(subtree, ancestor_list,
+/// ...)`.
+[[nodiscard]] bool check_optimize_intersections(const std::vector<const TreeNode*>& subtree,
+                                                const std::vector<const TreeNode*>& ancestor_list,
+                                                const PuzzlerOptions& opts);
+
+/**
+ * Shrink @p node's loop radius as far as possible without creating a new
+ * intersection against @p subtree/@p ancestor_list, via a 10-step linear
+ * search from `cfg.min_radius` up toward the current radius. Ported from
+ * `shrinkLoopRadius`/`shrinkLoopRadiusLinearSearch` (`optimize.inc:229,77`)
+ * -- see this section's SCOPE NOTE for why the (permanently unreachable)
+ * binary-search variant is not ported.
+ *
+ * @return The shrinking ratio achieved (`new radius / old radius`, in
+ *     `(0, 1]`; `1.0` if nothing could shrink).
+ */
+[[nodiscard]] double shrink_loop_radius(TreeNode& node, const std::vector<const TreeNode*>& subtree,
+                                        const std::vector<const TreeNode*>& ancestor_list,
+                                        const PuzzlerOptions& opts);
+
+/**
+ * The angular space available to each of @p node's @p config_size arcs, in
+ * @p space (resized and fully overwritten): each arc's own bounding wedge
+ * subtracted from the gap up to its neighbors' wedges. Ported from
+ * `getSpaces` (`optimize.inc:269`).
+ *
+ * @param paired_angle The paired-base chord angle at @p node's CURRENT
+ *     radius (`geom::distance_to_angle(cfg.radius, opts.paired)`).
+ * @param clearance `PuzzlerOptions::clearance`, threaded to `bounding_wedge`
+ *     (the vendored `getBoundingWedge` reads the equivalent tolerance from
+ *     the process-global `epsilonFix` instead -- see this file's header).
+ */
+void get_spaces(const TreeNode& node, int config_size, double paired_angle, double clearance,
+                std::vector<double>& space);
+
+/**
+ * Apply @p target_config's arc angles and radius to @p node's `Config` (as
+ * per-arc deltas against its CURRENT angles, then @p target_config.radius
+ * as the new-radius sentinel), skipping the box rebuild entirely if nothing
+ * would actually change. Ported from `applyConfig`/`applyDeltas`
+ * (`optimize.inc:362,340`).
+ */
+void apply_config(TreeNode& node, const Config& target_config, const PuzzlerOptions& opts);
+
+/**
+ * The current angle between two unpaired bases, per arc of @p cfg, at
+ * @p paired_distance's paired-chord angle. Ported from `computeAlphas`
+ * (`optimize.inc:388`).
+ *
+ * VENDORED QUIRK preserved for fidelity (not a stylistic choice):
+ * `computeAlphas`'s `pairedDistance` parameter is declared `int` even
+ * though its only caller passes a `double` (`puzzler->paired`) -- an
+ * implicit truncation-toward-zero the vendored C compiles silently. This
+ * port's implementation (`optimize.cpp`) reproduces that truncation
+ * explicitly rather than inheriting it invisibly.
+ *
+ * @param alphas Out-param, resized to `cfg.arcs.size()` and fully
+ *     overwritten.
+ */
+void compute_alphas(std::vector<double>& alphas, const Config& cfg, double paired_distance);
+
+/// Every arc index except @p decrease_index, in order -- the set of arcs
+/// `optimize_node` widens to compensate for narrowing @p decrease_index.
+/// Mirrors the LIVE variant, `computeIncreasesAllOther`
+/// (`optimize.inc:412`) -- see this section's SCOPE NOTE.
+void compute_increases(std::vector<int>& increase, int decrease_index, int config_size);
+
+/**
+ * Per-arc angle deltas (@p deltas, fully overwritten): narrow
+ * @p decrease_index by @p decrease_angle, and distribute that angle back
+ * out across @p increase's arcs PROPORTIONALLY to each arc's
+ * `segments * alphas[index]` weight. Mirrors the LIVE variant,
+ * `computeDeltasDistributeProportionally` (`optimize.inc:547`) -- see this
+ * section's SCOPE NOTE.
+ */
+void compute_deltas(std::vector<double>& deltas, int decrease_index, double decrease_angle,
+                    const std::vector<ConfigArc>& cfg_arcs, const std::vector<double>& alphas,
+                    const std::vector<int>& increase);
+
+/**
+ * Apply @p deltas to @p node's `Config` (at its CURRENT radius), then
+ * linear-search back toward the ORIGINAL (pre-@p deltas) config for the
+ * first state along that line that does not intersect @p subtree/
+ * @p ancestor_list. Ported from `searchBestConfig` (`optimize.inc:612`).
+ *
+ * @param deltas The full-strength change to try; mutated in place (ends up
+ *     holding whatever fraction of the original @p deltas the accepted
+ *     state actually applied).
+ * @return Whether a non-intersecting state was found (and left applied).
+ */
+[[nodiscard]] bool search_best_config(TreeNode& node, std::vector<double>& deltas,
+                                      const std::vector<const TreeNode*>& subtree,
+                                      const std::vector<const TreeNode*>& ancestor_list,
+                                      const PuzzlerOptions& opts);
+
+/// Whether every one of @p alphas exceeds @p unpaired_angle -- i.e. every
+/// arc of the loop has room to shrink. Mirrors `canShrink`
+/// (`optimize.inc:665`).
+[[nodiscard]] bool can_shrink(const std::vector<double>& alphas, double unpaired_angle);
+
+/**
+ * Optimize @p node's own loop (shrink its radius, then trade angular space
+ * between arcs to shrink further), leaving the best (smallest-radius)
+ * `Config` found applied. Ported from `optimizeNode` (`optimize.inc:686`).
+ *
+ * @return The shrinking ratio achieved (`final radius / initial radius`,
+ *     in `(0, 1]`); increments `state.changes_applied` iff any improvement
+ *     was kept.
+ */
+[[nodiscard]] double optimize_node(TreeNode& node, const std::vector<const TreeNode*>& subtree,
+                                   const std::vector<const TreeNode*>& ancestor_list,
+                                   const PuzzlerOptions& opts, ResolverState& state);
+
+/**
+ * Recursively `optimize_node` every node of @p node's subtree (children
+ * first), re-running the whole subtree again whenever ANY node in it
+ * improved, until nothing improves further (or the config-change budget is
+ * exhausted). Ported from `optimizeTreeRecursive` (`optimize.inc:882`);
+ * `@p subtree`/`@p ancestor_list` are the FIXED lists `optimize_tree`
+ * collected relative to its own top-level `node` argument -- unchanged
+ * across this whole recursive descent, even though `optimize_node` is
+ * called on many different nodes within it.
+ *
+ * @return The product of every `optimize_node`/recursive-call ratio
+ *     encountered, in `(0, 1]`.
+ */
+[[nodiscard]] double optimize_tree_recursive(TreeNode& node,
+                                             const std::vector<const TreeNode*>& subtree,
+                                             const std::vector<const TreeNode*>& ancestor_list,
+                                             const PuzzlerOptions& opts, ResolverState& state);
+
+/**
+ * Optimize @p node's whole subtree in place: collect @p node's subtree and
+ * ancestor-chain node lists, and (only if that subtree does not already
+ * intersect its ancestors) run `optimize_tree_recursive` over it. Ported
+ * from `optimizeTree` (`optimize.inc:940`) -- `resolve.cpp`'s driver calls
+ * this once per node that satisfies its own optimize gate (mirroring
+ * `checkAndFixIntersections`'s "----- OPTIMIZATIONS -----" block,
+ * `resolveIntersections.inc:120-140`), which may be many nodes across one
+ * whole `check_and_fix_intersections` traversal, not just the tree's true
+ * root.
+ *
+ * @return The shrinking ratio achieved, in `(0, 1]`; `1.0` if @p opts
+ *     .optimize is `false` (mirrors the vendored early-return; never
+ *     actually reached from `resolve.cpp`'s call site, which only calls
+ *     this when `opts.optimize` is already `true`) or if @p node's subtree
+ *     already intersects an ancestor.
+ */
+[[nodiscard]] double optimize_tree(TreeNode& node, const PuzzlerOptions& opts,
+                                   ResolverState& state);
 
 }  // namespace rna_layout

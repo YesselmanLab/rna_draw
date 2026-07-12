@@ -23,29 +23,23 @@ namespace {
 /// (`RNApuzzler.c:460-461`), applied once per resolve pass.
 constexpr int kDefaultMaxConfigChanges = 25000;
 
-/// Throws if @p opts requests a not-yet-ported resolver stage. See
-/// `puzzler.hpp`'s file header: `check_sibling` (Milestone A step 7) and
-/// `check_ancestor` (step 8) are both real; `optimize` (step 9) is not.
-void require_optimize_off(const PuzzlerOptions& opts) {
-  if (opts.optimize) {
-    throw std::logic_error(
-        "rna_layout::layout_puzzler: the optimize pass is not implemented "
-        "yet (Milestone A step 9); pass a PuzzlerOptions with optimize = "
-        "false (check_sibling/check_ancestor may each be true or false).");
-  }
-}
-
 /**
  * Build the config tree and, if any of `check_exterior`/`check_sibling`/
  * `check_ancestor` is requested, canonicalize its boxes and run the
- * SIBLING/ANCESTOR resolver. Ported from `vrna_plot_coords_puzzler_pt`'s
- * setup through its `checkAndFixIntersections` call (`RNApuzzler.c:441-478`).
+ * SIBLING/ANCESTOR/OPTIMIZE resolver. Ported from
+ * `vrna_plot_coords_puzzler_pt`'s setup through its
+ * `checkAndFixIntersections` call (`RNApuzzler.c:441-478`).
  *
- * `require_optimize_off` (called by every public entry point before this
- * runs) guarantees `optimize == false`; if BOTH `check_sibling` and
- * `check_ancestor` are also false, `check_and_fix_intersections` is a no-op
- * (see `resolve.cpp`'s driver: with every gate false, its `while` loop runs
- * its guarded checks once, all skipped, and falls through untouched).
+ * DEVIATION NOTE (not a porting bug -- preserved verbatim from the
+ * reference): this gate does NOT test `opts.optimize` -- matching
+ * `RNApuzzler.c:472-474` exactly. If `check_exterior`/`check_sibling`/
+ * `check_ancestor` are ALL `false`, `check_and_fix_intersections` (and thus
+ * `optimize_tree`, gated inside it -- `resolve.cpp`) never runs at all,
+ * regardless of `opts.optimize`; if any one of the three is `true`,
+ * `check_and_fix_intersections` runs its (possibly all-skipped)
+ * sibling/ancestor checks once per node and then applies its own
+ * per-node `should_optimize_node` gate (`resolve.cpp`) before ever calling
+ * `optimize_tree`.
  */
 std::unique_ptr<TreeNode> run_config_tree_pipeline(const std::vector<int>& pair_table,
                                                    const TurtleLayout& turtle,
@@ -91,7 +85,6 @@ void validate_no_empty_loop(const std::string& structure) {
 }  // namespace
 
 Coords layout_puzzler(const std::vector<int>& pair_table, const PuzzlerOptions& opts) {
-  require_optimize_off(opts);
   validate_pair_table_nonempty(pair_table);
 
   const int length = pair_table[0];
