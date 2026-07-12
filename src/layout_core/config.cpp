@@ -207,6 +207,12 @@ void gen_handle_loop(int base_nr, const std::vector<int>& pair_table,
   int stem_count = 0;
   count_loop_members(pair_table, start, end, unpaired_count, stem_count);
 
+  // This bulge test (`stem_count == 2 && unpaired_count == 1`) MUST stay in
+  // lockstep with `turtle.cpp`'s independent bulge detector
+  // (`detect_bulge` + `n - m == 1`, `handle_loop`): if they ever disagree,
+  // a loop gets skipped here (no `Config`, no `loop_id`) but is walked as
+  // the non-bulge case there, and `configs[base_info[start].loop_id.value()]`
+  // (`turtle.cpp:277`) throws on the unset `optional`.
   const bool is_bulge = (stem_count == 2 && unpaired_count == 1);
   if (is_bulge) {
     const int stem_start = (pair_table[start + 1] == 0) ? start + 2 : start + 1;

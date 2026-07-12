@@ -23,10 +23,6 @@ namespace rna_layout {
 
 namespace {
 
-/// The exterior loop's starting y-coordinate, matching the vendored
-/// `EXTERIOR_Y` (`definitions.inc:18`).
-constexpr double kExteriorY = 100.0;
-
 // Mutually recursive: a stem's loop can contain child stems.
 void handle_stem(const std::vector<int>& pair_table, int i, double paired, double unpaired,
                  std::vector<BaseInfo>& base_info, const std::vector<Config>& configs,
@@ -489,7 +485,7 @@ Coords affine_to_cartesian(const std::vector<BaseInfo>& base_info, int length) {
   coords.y.resize(length);
 
   double angle = 0.0;
-  coords.x[0] = coords.y[0] = kExteriorY;
+  coords.x[0] = coords.y[0] = geom::kExteriorY;
   for (int i = 1; i < length; ++i) {
     angle -= base_info[i + 1].angle;
     coords.x[i] = coords.x[i - 1] + base_info[i].distance * std::cos(angle);
@@ -520,19 +516,27 @@ void validate_no_empty_loop(const std::string& structure) {
 
 }  // namespace
 
-Coords layout_turtle(const std::vector<int>& pair_table) {
+TurtleLayout run_turtle_layout(const std::vector<int>& pair_table, double paired, double unpaired) {
   const int length = pair_table[0];
-  constexpr double paired = 35.0;
-  constexpr double unpaired = 25.0;
 
-  std::vector<BaseInfo> base_info(length + 1);
-  for (BaseInfo& base : base_info) {
+  TurtleLayout layout;
+  layout.base_info.assign(length + 1, BaseInfo{});
+  for (BaseInfo& base : layout.base_info) {
     base.distance = unpaired;
   }
 
-  const std::vector<Config> configs = generate_config(pair_table, unpaired, paired, base_info);
-  compute_affine_coordinates(pair_table, paired, unpaired, base_info, configs);
-  return affine_to_cartesian(base_info, length);
+  layout.configs = generate_config(pair_table, unpaired, paired, layout.base_info);
+  compute_affine_coordinates(pair_table, paired, unpaired, layout.base_info, layout.configs);
+  layout.coords = affine_to_cartesian(layout.base_info, length);
+  return layout;
+}
+
+Coords layout_turtle(const std::vector<int>& pair_table) {
+  // Turtle's own hardcoded geometry constants -- see this function's doc
+  // comment in `turtle.hpp`.
+  constexpr double paired = 35.0;
+  constexpr double unpaired = 25.0;
+  return run_turtle_layout(pair_table, paired, unpaired).coords;
 }
 
 Coords layout_turtle(const std::string& dot_bracket) {

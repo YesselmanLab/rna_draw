@@ -135,7 +135,7 @@ target_include_directories(test_puzzler_smoke PRIVATE
   "${VIENNA_PREFIX}/include/ViennaRNA"
   "${VENDOR_PUZZLER_DIR}"
 )
-target_compile_options(test_puzzler_smoke PRIVATE -fno-lto)
+target_compile_options(test_puzzler_smoke PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
 target_link_options(test_puzzler_smoke PRIVATE -fno-lto)
 target_link_libraries(test_puzzler_smoke PRIVATE
   stdc++
@@ -148,15 +148,20 @@ add_test(NAME puzzler_smoke COMMAND test_puzzler_smoke)
 # A parallel, isolated tree (include/rna_layout, src/layout_core) -- no
 # ViennaRNA header/symbol dependency, validated against `_vienna_layout`
 # above as a differential parity oracle. See
-# `.claude/plans/current-plan.md` for the full port plan; this slice ships
-# the foundation value types + geometry/config helpers + the turtle-base
-# engine (`rna_layout::layout_turtle`) only.
+# `.claude/plans/current-plan.md` for the full port plan; this slice adds
+# the config-tree/bounding-box/wedge construction (Milestone A step 4) on
+# top of the foundation value types + geometry/config helpers + the
+# turtle-base engine (`rna_layout::layout_turtle`).
 # ---------------------------------------------------------------------------
 set(RNA_LAYOUT_CORE_SOURCES
   src/layout_core/geometry.cpp
   src/layout_core/config.cpp
   src/layout_core/pair_table.cpp
   src/layout_core/turtle.cpp
+  src/layout_core/bounding_boxes.cpp
+  src/layout_core/config_tree.cpp
+  src/layout_core/bounding_wedge.cpp
+  src/layout_core/debug_dump.cpp
 )
 
 add_library(rna_layout_core STATIC ${RNA_LAYOUT_CORE_SOURCES})
@@ -172,7 +177,8 @@ install(TARGETS _layout_core DESTINATION rna_draw)
 # ctest unit tests: pure C++, no Python/pybind11 in the loop (parity-vs-
 # oracle comparisons run at the Python level, `tests/test_native_parity.py`,
 # since that is where both compiled extensions are importable together).
-foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test)
+foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test
+                             bounding_boxes_test config_tree_test bounding_wedge_test)
   add_executable(${rna_layout_test_name} src/layout_core/tests/${rna_layout_test_name}.cpp)
   target_link_libraries(${rna_layout_test_name} PRIVATE rna_layout_core)
   target_compile_options(${rna_layout_test_name} PRIVATE ${RNA_DRAW_FP_FLAGS})

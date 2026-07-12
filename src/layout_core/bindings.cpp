@@ -13,15 +13,26 @@
  * resolver-backed `layout_puzzler` is a later step (`.claude/plans/
  * current-plan.md`'s port order, steps 6-10) and is deliberately absent
  * here rather than declared-and-stubbed.
+ *
+ * `dump_tree` (Milestone A step 4) is PARITY-ONLY instrumentation: it runs
+ * the turtle pass + config-tree build + `update_bounding_boxes` and returns
+ * the T1 tree/box dump `tests/test_native_parity.py` compares against the
+ * vendored oracle's `dump_tree` (`vendor_instrument.c`); no production path
+ * calls it.
  */
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "rna_layout/config_tree.hpp"
+#include "rna_layout/debug_dump.hpp"
+#include "rna_layout/pair_table.hpp"
 #include "rna_layout/turtle.hpp"
 
 namespace py = pybind11;
@@ -29,6 +40,23 @@ namespace py = pybind11;
 namespace {
 
 using CoordVectors = std::pair<std::vector<double>, std::vector<double>>;
+
+/// `dump_tree` calls `make_pair_table` directly (the pair-table overload of
+/// the turtle pass, not `layout_turtle(const std::string&)`), so it needs
+/// its own copy of the same two guards that overload applies
+/// (`turtle.cpp`'s `validate_nonempty`/`validate_no_empty_loop`) -- kept
+/// small and duplicated here rather than exposed from `turtle.cpp`, mirroring
+/// `src/vienna_layout/bindings.cpp`'s own precedent of duplicating guards on
+/// a directly-callable entry point.
+void validate_dump_tree_input(const std::string& structure) {
+  if (structure.empty()) {
+    throw std::invalid_argument("dump_tree requires a non-empty structure");
+  }
+  if (structure.find("()") != std::string::npos) {
+    throw std::invalid_argument(
+        "structure contains an empty loop \"()\": not supported by dump_tree");
+  }
+}
 
 /// Lay out `structure` with the native RNAturtle port; returns `(x, y)`.
 /// `rna_layout::layout_turtle` throws `std::invalid_argument` on malformed
@@ -39,6 +67,87 @@ using CoordVectors = std::pair<std::vector<double>, std::vector<double>>;
 CoordVectors plot_coords_turtle(const std::string& structure) {
   rna_layout::Coords coords = rna_layout::layout_turtle(structure);
   return {std::move(coords.x), std::move(coords.y)};
+}
+
+/// `rna_layout::DumpConfigArc`/`DumpConfig`/`DumpLoopBox`/`DumpStemBox` ->
+/// the same field-name `py::dict` shape the vendored oracle's
+/// `vendor_instrument.c` JSON dump uses, so `test_native_parity.py`
+/// compares both sides without a native/vendored-specific code path.
+py::object to_python(const rna_layout::DumpTreeNode& node) {
+  py::dict entry;
+  entry["id"] = node.id;
+  entry["parent_id"] = node.parent_id;
+  entry["loop_start"] = node.loop_start;
+  entry["stem_start"] = node.stem_start;
+
+  entry["cfg"] = py::none();
+  if (node.cfg.has_value()) {
+    py::list arcs;
+    for (const rna_layout::DumpConfigArc& arc : node.cfg->arcs) {
+      py::dict arc_dict;
+      arc_dict["segments"] = arc.segments;
+      arc_dict["angle"] = arc.angle;
+      arcs.append(std::move(arc_dict));
+    }
+    py::dict cfg;
+    cfg["radius"] = node.cfg->radius;
+    cfg["min_radius"] = node.cfg->min_radius;
+    cfg["default_radius"] = node.cfg->default_radius;
+    cfg["arcs"] = std::move(arcs);
+    entry["cfg"] = std::move(cfg);
+  }
+
+  entry["lbox"] = py::none();
+  if (node.lbox.has_value()) {
+    py::dict lbox;
+    lbox["cx"] = node.lbox->cx;
+    lbox["cy"] = node.lbox->cy;
+    lbox["r"] = node.lbox->r;
+    entry["lbox"] = std::move(lbox);
+  }
+
+  entry["sbox"] = py::none();
+  if (node.sbox.has_value()) {
+    py::dict sbox;
+    sbox["ax"] = node.sbox->ax;
+    sbox["ay"] = node.sbox->ay;
+    sbox["bx"] = node.sbox->bx;
+    sbox["by"] = node.sbox->by;
+    sbox["cx"] = node.sbox->cx;
+    sbox["cy"] = node.sbox->cy;
+    sbox["ex"] = node.sbox->ex;
+    sbox["ey"] = node.sbox->ey;
+    sbox["bulge_count"] = node.sbox->bulge_count;
+    sbox["bulge_dist"] = node.sbox->bulge_dist;
+    entry["sbox"] = std::move(sbox);
+  }
+
+  return std::move(entry);
+}
+
+/// Run the turtle pass + config-tree build + `update_bounding_boxes` on
+/// `structure` and return the T1 tree/box dump as a `list[dict]` (see
+/// `to_python`). Mirrors `RNApuzzler.c:421-476`'s setup through
+/// `updateBoundingBoxes` -- everything up to (not including) the resolver.
+/// Named distinctly from `rna_layout::dump_tree` (which this calls,
+/// qualified) -- this one is the Python-facing entry point, registered
+/// below as `_layout_core.dump_tree`.
+py::list dump_config_tree_binding(const std::string& structure, double paired, double unpaired) {
+  validate_dump_tree_input(structure);
+  const std::vector<int> pair_table = rna_layout::make_pair_table(structure);
+  const rna_layout::TurtleLayout turtle =
+      rna_layout::run_turtle_layout(pair_table, paired, unpaired);
+  const double bulge_dist = rna_layout::stem_bulge_distance(unpaired);
+
+  std::unique_ptr<rna_layout::TreeNode> tree = rna_layout::build_config_tree(
+      pair_table, turtle.base_info, turtle.configs, turtle.coords, bulge_dist);
+  rna_layout::update_bounding_boxes(*tree, paired, unpaired);
+
+  py::list result;
+  for (const rna_layout::DumpTreeNode& node : rna_layout::dump_tree(*tree)) {
+    result.append(to_python(node));
+  }
+  return result;
 }
 
 }  // namespace
@@ -61,4 +170,11 @@ PYBIND11_MODULE(_layout_core, m) {
   m.def("dump_turtle", &plot_coords_turtle, py::arg("structure"),
         "T0 turtle-coordinate dump for parity testing against the vendored "
         "oracle's dump_turtle; identical to plot_coords_turtle.");
+
+  m.def("dump_tree", &dump_config_tree_binding, py::arg("structure"), py::arg("paired") = 35.0,
+        py::arg("unpaired") = 25.0,
+        "T1 config-tree/bounding-box dump (post update_bounding_boxes, "
+        "pre-resolver) for parity testing against the vendored oracle's "
+        "dump_tree; list[dict], one entry per tree node in DFS pre-order "
+        "(id == its index; parent_id == -1 for the root).");
 }

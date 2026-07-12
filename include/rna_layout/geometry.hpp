@@ -12,12 +12,14 @@
  * here (`epsilon_recognize`/`epsilon_fix`), matching `PuzzlerOptions::clearance`
  * (`types.hpp`).
  *
- * Scope note: only the primitives the turtle-base pass and its config
- * generation need are ported this slice (angles, rotation, radius/angle
- * conversion). The remaining `vector_math.inc` primitives used only by the
- * resolver (circle/line intersection solvers) are ported alongside the
- * detection-predicate step (Milestone A step 5), which is where they are
- * first exercised.
+ * Scope note: the turtle-base pass's primitives (angles, rotation,
+ * radius/angle conversion) plus the config-tree/bounding-box/wedge
+ * primitives (`vector`, `normal`, `rotateVectorByAngle`,
+ * `isToTheRightPoint{Point,Vector}`, `anglePtPtPt2D`) needed by Milestone A
+ * step 4 are ported here. The remaining `vector_math.inc` primitives, used
+ * only by the resolver (circle/line intersection solvers, `solveSquare
+ * Equation`, `getCutPointsOf*`), are ported alongside the detection-predicate
+ * step (Milestone A step 5), which is where they are first exercised.
  */
 
 #include "rna_layout/types.hpp"
@@ -34,6 +36,20 @@ inline constexpr double kTwoPi = 2.0 * kPi;
 /// Newton-iteration convergence tolerance for `approximate_config_arc_radius`
 /// (`config.cpp`), matching the vendored `EPSILON_3` (`definitions.inc`).
 inline constexpr double kEpsilon3 = 1e-3;
+
+/// The vendored `EPSILON_7` (`definitions.inc:63`): the general-purpose
+/// floating-point tie-break tolerance used at circle/line-tangency and
+/// degenerate-geometry boundaries throughout the config-tree/bounding-box
+/// code (`updateBoundingBoxes`'s zero-length-stem guard,
+/// `config_tree.cpp`), in addition to `angle_between`'s `acos` domain guard.
+inline constexpr double kEpsilon7 = 1e-7;
+
+/// The exterior loop's fixed y-coordinate, matching the vendored
+/// `EXTERIOR_Y` (`definitions.inc:18`): the turtle-base pass's affine walk
+/// starts every base there (`turtle.cpp`), and `updateBoundingBoxes`
+/// (`config_tree.cpp`) re-anchors every exterior-loop child stem to the same
+/// line rather than a circular loop center.
+inline constexpr double kExteriorY = 100.0;
 
 /**
  * Length of @p v.
@@ -53,9 +69,10 @@ inline constexpr double kEpsilon3 = 1e-3;
 
 /**
  * The angle between two vectors, in `[0, pi]` radians. Mirrors
- * `angleBetweenVectors2D` (`vector_math.inc:459`), including its
+ * `angleBetweenVectors2D` (`vector_math.inc:459`) with the same
+ * normalize-then-dot expression tree (not just the equivalent math) and its
  * `EPSILON_7` guard against `acos` domain error at +-1 from floating-point
- * round-off.
+ * round-off -- see the fidelity note in `geometry.cpp`.
  */
 [[nodiscard]] double angle_between(Vec2 a, Vec2 b);
 
@@ -117,5 +134,47 @@ inline constexpr double kEpsilon3 = 1e-3;
  *     vendored stock constant (19.0).
  */
 [[nodiscard]] double epsilon_fix(double clearance);
+
+/**
+ * The vector from @p from to @p to. Mirrors `vector` (`vector_math.inc:753`);
+ * named `vector_from_to` here since `vector` collides with `std::vector`.
+ */
+[[nodiscard]] Vec2 vector_from_to(Vec2 from, Vec2 to);
+
+/**
+ * The unit vector perpendicular to @p v, rotated -90 degrees (i.e.
+ * `(v.y, -v.x)`, normalized). Mirrors `normal` (`vector_math.inc:763`).
+ */
+[[nodiscard]] Vec2 normal(Vec2 v);
+
+/**
+ * Rotate @p v clockwise (for positive @p angle_rad) about the origin.
+ * Mirrors `rotateVectorByAngle` (`vector_math.inc:554`), itself
+ * `rotatePointAroundPoint(v, {0,0}, angle)`.
+ */
+[[nodiscard]] Vec2 rotate_vector_by_angle(Vec2 v, double angle_rad);
+
+/**
+ * Whether @p point lies to the right of the directed line from
+ * @p line_start to @p line_end. Mirrors `isToTheRightPointPoint`
+ * (`vector_math.inc:392`), including its squared-distance-comparison
+ * implementation (no `sqrt`) -- preserved for expression-tree parity, not
+ * just for speed.
+ */
+[[nodiscard]] bool is_to_the_right_point_point(Vec2 line_start, Vec2 line_end, Vec2 point);
+
+/**
+ * Whether @p point lies to the right of the directed line starting at
+ * @p line_start with direction @p line_vector. Mirrors
+ * `isToTheRightPointVector` (`vector_math.inc:445`).
+ */
+[[nodiscard]] bool is_to_the_right_point_vector(Vec2 line_start, Vec2 line_vector, Vec2 point);
+
+/**
+ * The angle at @p center between the rays to @p p1 and @p p3. Mirrors
+ * `anglePtPtPt2D` (`vector_math.inc:489`): `angle_between(p1 - center,
+ * p3 - center)`.
+ */
+[[nodiscard]] double angle_pt_pt_pt(Vec2 p1, Vec2 center, Vec2 p3);
 
 }  // namespace rna_layout::geom

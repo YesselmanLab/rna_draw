@@ -10,33 +10,277 @@
  * do this). Their tree/box/config-change internals (configtree.inc,
  * handleConfigChanges.inc, ...) are PRIVATE (`static`) functions, invisible
  * from any other TU -- a plain wrapper TU (like this one) CANNOT call them
- * directly. To dump them WITHOUT editing vendored logic, later steps
- * compile a SECOND copy of the relevant .inc(s) into THIS TU using
- * MACRO INTERPOSITION: `#define <privateFunctionName> <shimName>` before
- * `#include`-ing the .inc, so every call the .inc's own code makes to that
- * function resolves to the shim instead, which can record its arguments
- * and then invoke the original body (still compiled, just under the shim's
- * name). This is the same technique the rna_draw fork already uses for
- * `rnadraw_clearance_value` (definitions.inc:39) and the
- * `max_config_changes` patch in RNApuzzler.c -- no vendored .inc file is
- * edited; only an oracle-only TU that never ships in a production build
- * includes it differently.
+ * directly. Rather than editing the vendored .inc files to expose them
+ * (forbidden -- see this repo's SAFETY rules), this TU `#include`s the SAME
+ * .inc amalgam a SECOND time, into ITS OWN translation unit: every
+ * `PRIVATE`/`static` function becomes locally callable here, with the exact
+ * same logic RNApuzzler.c's copy runs (C header guards are per-TU, so this
+ * compiles a second, independent copy -- exactly how RNApuzzler.c and
+ * RNAturtle.c already each get their own copy of the shared `.inc`s today).
+ * `MACRO INTERPOSITION` proper (`#define <name> <shim>` before an include,
+ * to redirect calls INSIDE an *existing* TU) is reserved for a later step
+ * that needs to observe calls RNApuzzler.c's own resolver makes internally
+ * (`dump_change_trace`, Milestone A step 7) -- this dump does not need
+ * that, since it drives the tree-build pipeline itself rather than
+ * observing another TU's private call graph. Only one piece of shared
+ * state crosses TUs: `rnadraw_clearance_value` (declared `extern` by
+ * `definitions.inc`, defined once in RNApuzzler.c) -- this dump does not
+ * touch it (uses the stock `epsilonRecognize`/`epsilonFix` via clearance
+ * 0 => `_rnadraw_clearance()` falls back to 1.0).
  *
- * THIS SLICE (Milestone A, turtle-base, steps 1-3): turtle has no private
- * tree/box state to intercept -- `vrna_plot_coords_turtle`/`_pt` are
- * already PUBLIC entry points, dumped directly by bindings.cpp's
- * `dump_turtle` (a plain alias of `plot_coords_turtle`, wired there, not
- * here). This file is a placeholder that (a) proves the
- * RNA_DRAW_BUILD_ORACLE CMake wiring compiles and links, and (b) names the
- * mechanism `dump_tree`/`dump_detections`/`dump_change_trace` will use once
- * the native side has a tree/detections/trace to compare against
- * (Milestone A steps 4, 5, and 7 respectively).
+ * THIS SLICE (Milestone A step 4): `rnadraw_oracle_dump_tree` runs the
+ * turtle pass + `buildConfigtree` + `updateBoundingBoxes` (mirroring
+ * `RNApuzzler.c:421-476`'s setup through the resolver -- the resolver
+ * itself is NOT run) and serializes the resulting T1 tree to JSON text, in
+ * the same field-name shape `bindings.cpp`'s `dump_config_tree_binding`
+ * (native `_layout_core.dump_tree`) returns as a `list[dict]`, so
+ * `tests/test_native_parity.py` can compare both sides after
+ * `json.loads()`.
  */
 
-const char *
-rnadraw_oracle_instrumentation_version(void)
-{
-  return "vendor_instrument v0: turtle dump only (see this file's header "
-         "for the macro-interposition mechanism planned tree/box/detection/"
-         "change-trace dumps will use)";
+#include <ViennaRNA/structures/pairtable.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "includes/boundingBoxes.inc"
+#include "includes/configtree.inc"
+#include "includes/coordinates.inc"
+#include "includes/definitions.inc"
+#include "includes/drawingconfig.inc"
+#include "includes/vector_math.inc"
+
+/*---------------------------------------------------------------------------
+ *  Growable string buffer (JSON text builder)
+ *--------------------------------------------------------------------------*/
+
+typedef struct {
+  char* data;
+  size_t length;
+  size_t capacity;
+} strbuf_t;
+
+static void strbuf_init(strbuf_t* buf) {
+  buf->capacity = 4096;
+  buf->length = 0;
+  buf->data = (char*)vrna_alloc(buf->capacity);
+  buf->data[0] = '\0';
+}
+
+static void strbuf_reserve(strbuf_t* buf, size_t extra) {
+  if (buf->length + extra + 1 <= buf->capacity) return;
+
+  while (buf->length + extra + 1 > buf->capacity) buf->capacity *= 2;
+
+  char* grown = (char*)realloc(buf->data, buf->capacity);
+  if (grown == NULL) {
+    free(buf->data);
+    // `fprintf_s` is a Windows/Annex-K-only extension, unavailable on this
+    // platform; this is a fixed literal (no untrusted format/length input).
+    // NOLINTNEXTLINE(clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling)
+    fprintf(stderr, "vendor_instrument: strbuf realloc failed\n");
+    exit(EXIT_FAILURE);
+  }
+  buf->data = grown;
+}
+
+static void strbuf_append(strbuf_t* buf, const char* text) {
+  size_t len = strlen(text);
+
+  strbuf_reserve(buf, len);
+  memcpy(buf->data + buf->length, text, len + 1);
+  buf->length += len;
+}
+
+/* Appends a formatted double with full round-trip precision. */
+static void strbuf_append_double(strbuf_t* buf, double value) {
+  char formatted[64];
+
+  snprintf(formatted, sizeof(formatted), "%.17g", value);
+  strbuf_append(buf, formatted);
+}
+
+static void strbuf_append_int(strbuf_t* buf, int value) {
+  char formatted[32];
+
+  snprintf(formatted, sizeof(formatted), "%d", value);
+  strbuf_append(buf, formatted);
+}
+
+/*---------------------------------------------------------------------------
+ *  Tree -> JSON
+ *--------------------------------------------------------------------------*/
+
+static void dump_config_json(strbuf_t* buf, const config* cfg) {
+  if (cfg == NULL) {
+    strbuf_append(buf, "null");
+    return;
+  }
+
+  strbuf_append(buf, "{\"radius\":");
+  strbuf_append_double(buf, cfg->radius);
+  strbuf_append(buf, ",\"min_radius\":");
+  strbuf_append_double(buf, cfg->minRadius);
+  strbuf_append(buf, ",\"default_radius\":");
+  strbuf_append_double(buf, cfg->defaultRadius);
+  strbuf_append(buf, ",\"arcs\":[");
+  for (int i = 0; i < cfg->numberOfArcs; i++) {
+    if (i > 0) strbuf_append(buf, ",");
+
+    strbuf_append(buf, "{\"segments\":");
+    strbuf_append_int(buf, cfg->cfgArcs[i].numberOfArcSegments);
+    strbuf_append(buf, ",\"angle\":");
+    strbuf_append_double(buf, cfg->cfgArcs[i].arcAngle);
+    strbuf_append(buf, "}");
+  }
+  strbuf_append(buf, "]}");
+}
+
+static void dump_lbox_json(strbuf_t* buf, const loopBox* lbox) {
+  if (lbox == NULL) {
+    strbuf_append(buf, "null");
+    return;
+  }
+
+  strbuf_append(buf, "{\"cx\":");
+  strbuf_append_double(buf, lbox->c[0]);
+  strbuf_append(buf, ",\"cy\":");
+  strbuf_append_double(buf, lbox->c[1]);
+  strbuf_append(buf, ",\"r\":");
+  strbuf_append_double(buf, lbox->r);
+  strbuf_append(buf, "}");
+}
+
+static void dump_sbox_json(strbuf_t* buf, const stemBox* sbox) {
+  if (sbox == NULL) {
+    strbuf_append(buf, "null");
+    return;
+  }
+
+  strbuf_append(buf, "{\"ax\":");
+  strbuf_append_double(buf, sbox->a[0]);
+  strbuf_append(buf, ",\"ay\":");
+  strbuf_append_double(buf, sbox->a[1]);
+  strbuf_append(buf, ",\"bx\":");
+  strbuf_append_double(buf, sbox->b[0]);
+  strbuf_append(buf, ",\"by\":");
+  strbuf_append_double(buf, sbox->b[1]);
+  strbuf_append(buf, ",\"cx\":");
+  strbuf_append_double(buf, sbox->c[0]);
+  strbuf_append(buf, ",\"cy\":");
+  strbuf_append_double(buf, sbox->c[1]);
+  strbuf_append(buf, ",\"ex\":");
+  strbuf_append_double(buf, sbox->e[0]);
+  strbuf_append(buf, ",\"ey\":");
+  strbuf_append_double(buf, sbox->e[1]);
+  strbuf_append(buf, ",\"bulge_count\":");
+  strbuf_append_int(buf, sbox->bulgeCount);
+  strbuf_append(buf, ",\"bulge_dist\":");
+  strbuf_append_double(buf, sbox->bulgeDist);
+  strbuf_append(buf, "}");
+}
+
+/* DFS pre-order, matching `id`'s own assignment order (`configtree.inc`'s
+ * `treeHandleStem`, `++(*nodeID)` immediately before recursing) -- see
+ * `include/rna_layout/debug_dump.hpp`'s matching note on the native side. */
+static void dump_node_json(strbuf_t* buf, const treeNode* node, short is_first) {
+  if (!is_first) strbuf_append(buf, ",");
+
+  strbuf_append(buf, "{\"id\":");
+  strbuf_append_int(buf, getNodeID(node));
+  strbuf_append(buf, ",\"parent_id\":");
+  strbuf_append_int(buf, getNodeID(getParent(node)));
+  strbuf_append(buf, ",\"loop_start\":");
+  strbuf_append_int(buf, node->loop_start);
+  strbuf_append(buf, ",\"stem_start\":");
+  strbuf_append_int(buf, node->stem_start);
+  strbuf_append(buf, ",\"cfg\":");
+  dump_config_json(buf, node->cfg);
+  strbuf_append(buf, ",\"lbox\":");
+  dump_lbox_json(buf, node->lBox);
+  strbuf_append(buf, ",\"sbox\":");
+  dump_sbox_json(buf, node->sBox);
+  strbuf_append(buf, "}");
+
+  for (int i = 0; i < node->childCount; i++) dump_node_json(buf, getChild(node, i), 0);
+}
+
+/*---------------------------------------------------------------------------
+ *  Public entry point
+ *--------------------------------------------------------------------------*/
+
+/*
+ * Runs the turtle pass + buildConfigtree + updateBoundingBoxes on
+ * `structure` (mirroring `RNApuzzler.c:421-476` through, but not
+ * including, the resolver) and returns a malloc'd JSON array of the
+ * resulting T1 tree, one object per node (see this file's header for the
+ * schema). Caller owns the returned buffer; free() it. Returns NULL on a
+ * malformed/degenerate structure (caller should treat that as an error,
+ * same contract as `vrna_plot_coords_puzzler` returning 0).
+ */
+char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpaired) {
+  short* pair_table = vrna_ptable(structure);
+
+  if (pair_table == NULL) return NULL;
+
+  int length = pair_table[0];
+
+  if (length <= 0) {
+    free(pair_table);
+    return NULL;
+  }
+
+  tBaseInformation* baseInformation = vrna_alloc((length + 1) * sizeof(tBaseInformation));
+
+  for (int i = 0; i <= length; i++) {
+    baseInformation[i].baseType = TYPE_BASE_NONE;
+    baseInformation[i].distance = unpaired;
+    baseInformation[i].angle = 0.0;
+    baseInformation[i].config = NULL;
+  }
+
+  cfgGenerateConfig(pair_table, baseInformation, unpaired, paired);
+  computeAffineCoordinates(pair_table, paired, unpaired, baseInformation);
+
+  double* x = (double*)vrna_alloc(length * sizeof(double));
+  double* y = (double*)vrna_alloc(length * sizeof(double));
+
+  affineToCartesianCoordinates(baseInformation, length, x, y);
+
+  double distBulge = sqrt(unpaired * unpaired - 0.25 * unpaired * unpaired);
+
+  treeNode* tree = buildConfigtree(pair_table, baseInformation, x, y, distBulge);
+
+  /* Fully-initialized defaults (same constructor `bindings.cpp`'s
+   * `PuzzlerOptions` RAII wrapper uses), overriding only the two fields
+   * `updateBoundingBoxes` reads. */
+  vrna_plot_options_puzzler_t* puzzler_options = vrna_plot_options_puzzler();
+
+  puzzler_options->paired = paired;
+  puzzler_options->unpaired = unpaired;
+  updateBoundingBoxes(tree, puzzler_options);
+  vrna_plot_options_puzzler_free(puzzler_options);
+
+  strbuf_t buf;
+
+  strbuf_init(&buf);
+  strbuf_append(&buf, "[");
+  dump_node_json(&buf, tree, 1);
+  strbuf_append(&buf, "]");
+
+  freeTree(tree);
+  free(x);
+  free(y);
+  free(baseInformation);
+  free(pair_table);
+
+  return buf.data;
+}
+
+const char* rnadraw_oracle_instrumentation_version(void) {
+  return "vendor_instrument v1: turtle dump + dump_tree (config tree + "
+         "bounding boxes, Milestone A step 4); see this file's header for "
+         "the macro-interposition mechanism dump_detections/"
+         "dump_change_trace will use.";
 }

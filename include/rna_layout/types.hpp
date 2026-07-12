@@ -81,8 +81,8 @@ struct BaseInfo {
 
 /**
  * An axis-aligned bounding circle around a loop. Mirrors `boundingBoxes_struct.h`'s
- * `loopBox`. Unused by the turtle-base pass; carried here so later steps
- * (config-tree/bounding-box construction) do not need a second value-type pass.
+ * `loopBox`. Built by `bounding_boxes.hpp`'s `build_loop_box` (Milestone A step 4);
+ * unused by the turtle-base pass itself.
  */
 struct LoopBox {
   Vec2 center;
@@ -90,16 +90,36 @@ struct LoopBox {
 };
 
 /**
+ * One "notch" a single unpaired base cuts into a `StemBox`'s rectangle,
+ * mirroring the vendored `stemBox::bulges[i]` (`double[4]`,
+ * `boundingBoxes.inc:452-465`): NOT a 2D point (an earlier plan draft's
+ * `std::vector<Vec2>` would silently drop two of the four fields every
+ * bulge geometry helper needs) but the tuple `createBulge` actually builds --
+ * a strand @ref sign plus three positions along the stem's `a`-axis
+ * (projections of the base before/at/after the bulge, via `getA`,
+ * `boundingBoxes.inc:412`).
+ */
+struct Bulge {
+  /// +1.0 for a bulge on the stem's "start" strand, -1.0 for its "end"
+  /// strand (`boundingBoxes.inc`'s `setBulges`, the two `bSign` call sites).
+  double sign = 0.0;
+  double a_prev = 0.0;
+  double a_this = 0.0;
+  double a_next = 0.0;
+};
+
+/**
  * An oriented bounding box around a stem, plus any bulge notches cut into it.
  * Mirrors `boundingBoxes_struct.h`'s `stemBox` (`a`/`b` unit directions,
- * `c` center, `e` half-extents). Unused by the turtle-base pass; see `LoopBox`.
+ * `c` center, `e` half-extents). Built by `bounding_boxes.hpp`'s
+ * `build_stem_box`; see `LoopBox`.
  */
 struct StemBox {
   Vec2 a;
   Vec2 b;
   Vec2 c;
   Vec2 e;
-  std::vector<Vec2> bulges;
+  std::vector<Bulge> bulges;
   double bulge_dist = 0.0;
 };
 

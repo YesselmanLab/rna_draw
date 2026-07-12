@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "rna_layout/types.hpp"
+
 namespace rna_layout {
 
 /// Per-nucleotide layout output, 0-indexed, one entry per sequence position.
@@ -23,6 +25,36 @@ struct Coords {
   std::vector<double> x{};
   std::vector<double> y{};
 };
+
+/**
+ * Everything the config-tree/bounding-box construction (`config_tree.hpp`,
+ * Milestone A step 4+) needs from the turtle-base pass, beyond the final
+ * Cartesian coordinates `layout_turtle` returns: the per-base `BaseInfo`
+ * (specifically each loop-opening base's `loop_id`) and the `Config`s
+ * themselves, both of which `layout_turtle` computes internally and
+ * discards. Kept here (not a `config_tree.hpp` type) since it is exactly
+ * `layout_turtle`'s own intermediate state, just not thrown away.
+ */
+struct TurtleLayout {
+  std::vector<BaseInfo> base_info{};
+  std::vector<Config> configs{};
+  Coords coords{};
+};
+
+/**
+ * Run the full turtle-base pass (`generate_config` ->
+ * `computeAffineCoordinates` -> `affineToCartesianCoordinates`) and return
+ * every piece of state it produces, not just the final coordinates --
+ * `layout_turtle` is a thin wrapper over this that keeps only `coords`.
+ *
+ * @param pair_table 1-indexed pair table (`make_pair_table`'s output).
+ * @param paired Distance between the two bases of a base pair.
+ * @param unpaired Default backbone-step distance between consecutive
+ *     unpaired (or loop-adjacent) bases.
+ * @return The turtle pass's full intermediate + final state.
+ */
+[[nodiscard]] TurtleLayout run_turtle_layout(const std::vector<int>& pair_table, double paired,
+                                             double unpaired);
 
 /**
  * Lay out @p pair_table with RNAturtle: generate a default per-loop

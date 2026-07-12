@@ -216,12 +216,34 @@ CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_f
 }
 
 // Defined in vendor_instrument.c, compiled in only when RNA_DRAW_BUILD_ORACLE
-// is on (see CMakeLists.txt); that file documents the macro-interposition
-// mechanism future dump_tree/dump_detections/dump_change_trace entry points
-// will use. Guarded by the same preprocessor define CMake sets for the
-// oracle build, so this binding module still links when the option is off.
+// is on (see CMakeLists.txt); that file documents the (macro-interposition-
+// adjacent) mechanism used to reach the vendored tree/box internals, and the
+// dump_detections/dump_change_trace entry points still to come. Guarded by
+// the same preprocessor define CMake sets for the oracle build, so this
+// binding module still links when the option is off.
 #ifdef RNA_DRAW_BUILD_ORACLE
 extern "C" const char* rnadraw_oracle_instrumentation_version(void);
+extern "C" char* rnadraw_oracle_dump_tree(const char* structure, double paired, double unpaired);
+
+/// T1 config-tree/bounding-box dump: calls `rnadraw_oracle_dump_tree`
+/// (`vendor_instrument.c`), which returns a malloc'd JSON string; copy it
+/// into a `std::string` and free the buffer (same `MallocBuffer` RAII
+/// pattern as `plot_coords_*`'s float/double output buffers, specialized
+/// for `char*` here since the buffer is NUL-terminated text, not a fixed-
+/// length numeric array).
+std::string dump_tree(const std::string& structure, double paired, double unpaired) {
+  validate_nonempty(structure);
+  validate_well_nested(structure);
+  validate_no_empty_loop(structure);
+  char* json = rnadraw_oracle_dump_tree(structure.c_str(), paired, unpaired);
+  if (json == nullptr) {
+    throw std::runtime_error("rnadraw_oracle_dump_tree failed on structure of length " +
+                             std::to_string(structure.size()));
+  }
+  std::string result(json);
+  std::free(json);
+  return result;
+}
 #endif
 
 /// The compiled-against ViennaRNA version, as a string (e.g. `"2.7.0"`).
@@ -275,7 +297,12 @@ PYBIND11_MODULE(_vienna_layout, m) {
   m.def("oracle_instrumentation_version", &rnadraw_oracle_instrumentation_version,
         "Marker string proving the RNA_DRAW_BUILD_ORACLE instrumentation TU "
         "(vendor_instrument.c) is compiled in; see that file for the "
-        "macro-interposition mechanism later dump_tree/dump_detections/"
-        "dump_change_trace entry points will use.");
+        "mechanism dump_detections/dump_change_trace entry points will use.");
+  m.def("dump_tree", &dump_tree, py::arg("structure"), py::arg("paired") = 35.0,
+        py::arg("unpaired") = 25.0,
+        "T1 config-tree/bounding-box dump (post updateBoundingBoxes, "
+        "pre-resolver), as a JSON string -- json.loads() it and compare "
+        "against the native rna_layout core's dump_tree (a list[dict] of "
+        "the same shape); only built when RNA_DRAW_BUILD_ORACLE is on.");
 #endif
 }

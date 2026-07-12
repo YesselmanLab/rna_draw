@@ -43,6 +43,11 @@ void test_angle_between() {
               "angle between identical vectors == 0");
   expect_near(geom::angle_between(Vec2{1, 0}, Vec2{-1, 0}), geom::kPi, 1e-9,
               "angle between opposite vectors == pi");
+  // A non-axis-aligned pair: order-only divergences (e.g. accidentally
+  // swapping the normalize-then-dot expression tree for dot-then-divide)
+  // are invisible on axis-aligned inputs but show up here.
+  expect_near(geom::angle_between(Vec2{2, 1}, Vec2{-1, 3}), 1.4288992721907325, 1e-9,
+              "angle between non-axis-aligned vectors {2,1} vs {-1,3}");
 }
 
 void test_degree_radian_round_trip() {

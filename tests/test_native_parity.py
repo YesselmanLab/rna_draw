@@ -26,6 +26,7 @@ separately reports the raw double-vs-oracle-float diff for transparency
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import ModuleType
@@ -40,13 +41,26 @@ from rna_draw.layout.base import has_empty_loop, is_pseudoknot_free
 TIGHT_TOL = 1e-6  # after float32-rounding native output; plan criterion 1
 RAW_DIFF_SAFETY_FACTOR = 8.0  # headroom over 1 ULP of float32 for the raw (informational) check
 
+# Plan criterion 2 ("Config tree + boxes (deterministic)"): config radius/
+# angle rel-tol, box-field abs-tol. Both sides dump full doubles as text
+# (`%.17g` on the vendored side, pybind11's native double marshalling on the
+# native side) -- unlike criterion 1's turtle coords, there is no float32
+# return-type ceiling here, so these tolerances are the actual gate, not a
+# precision-floor workaround. Empirically (see the module docstring's sibling
+# note in the handoff report) every hard_set/hand structure currently comes
+# back EXACTLY equal (0.0 diff); the tolerances are kept at the plan's
+# documented values rather than tightened further, to avoid a brittle gate
+# against legitimate tiny transcendental (asin/sqrt) ULP differences.
+TREE_CFG_REL_TOL = 1e-9
+TREE_BOX_ABS_TOL = 1e-6
+
 HAND_STRUCTURES: dict[str, str] = {
     "hairpin": "((((....))))",
     "bulge_near_strand": "(.((....)))",
     "bulge_far_strand": "(((....)).)",
     "internal_loop": "((((..((((....))))..))))",
     "multiloop_two_way": "((((...)))(((...))))",
-    "multiloop_three_way": "((" "(((...)))(((...)))(((...)))" "))",
+    "multiloop_three_way": "(((((...)))(((...)))(((...)))))",
     "stacked_helices": "((((((((....))))))))",
     "exterior_dangles_both_sides": "..((((....))))..",
     "multi_branch_exterior": "((....))..((....))..((....))",
@@ -183,6 +197,140 @@ class TestHardSetParity:
             f"\nhard_set turtle parity: n={len(structures)}, "
             f"max_diff={max(diffs):.3e}, mean_diff={sum(diffs) / len(diffs):.3e}"
         )
+
+
+def _tree_dumps(structure: str, paired: float = 35.0, unpaired: float = 25.0) -> tuple[list, list]:
+    """`(native, vendored)` T1 tree dumps for `structure`, both as
+    `list[dict]` (the vendored side is JSON text over the wire; decode it).
+    """
+    native_tree = native_layout.dump_tree(structure, paired, unpaired)
+    vendored_tree = json.loads(vienna_layout.dump_tree(structure, paired, unpaired))
+    return native_tree, vendored_tree
+
+
+def _assert_tree_topology_exact(native_tree: list, vendored_tree: list, structure: str) -> None:
+    """Plan criterion 2's topology half: identical node count, and for each
+    node (matched by DFS pre-order position -- both dumps use the same
+    order, see `debug_dump.hpp`) identical id/parent_id/loop_start/
+    stem_start.
+    """
+    assert len(native_tree) == len(vendored_tree), (
+        f"{structure!r}: node count differs (native={len(native_tree)}, "
+        f"vendored={len(vendored_tree)})"
+    )
+    for native_node, vendored_node in zip(native_tree, vendored_tree):
+        for key in ("id", "parent_id", "loop_start", "stem_start"):
+            assert native_node[key] == vendored_node[key], (
+                f"{structure!r} node {native_node['id']}: {key} differs "
+                f"(native={native_node[key]}, vendored={vendored_node[key]})"
+            )
+        assert (native_node["cfg"] is None) == (vendored_node["cfg"] is None), (
+            f"{structure!r} node {native_node['id']}: cfg presence differs"
+        )
+        assert (native_node["lbox"] is None) == (vendored_node["lbox"] is None), (
+            f"{structure!r} node {native_node['id']}: lbox presence differs"
+        )
+        assert (native_node["sbox"] is None) == (vendored_node["sbox"] is None), (
+            f"{structure!r} node {native_node['id']}: sbox presence differs"
+        )
+
+
+def _assert_rel_close(actual: float, expected: float, tol: float, what: str) -> None:
+    rel = abs(actual - expected) / max(abs(expected), 1e-12)
+    assert rel <= tol, (
+        f"{what}: rel diff {rel} exceeds {tol} (native={actual}, vendored={expected})"
+    )
+
+
+def _assert_abs_close(actual: float, expected: float, tol: float, what: str) -> None:
+    diff = abs(actual - expected)
+    assert diff <= tol, (
+        f"{what}: abs diff {diff} exceeds {tol} (native={actual}, vendored={expected})"
+    )
+
+
+def _assert_tree_numeric_parity(native_tree: list, vendored_tree: list, structure: str) -> None:
+    """Plan criterion 2's numeric half: config radius/angle rel-tol
+    `<= TREE_CFG_REL_TOL`, box fields abs-tol `<= TREE_BOX_ABS_TOL`.
+    """
+    for native_node, vendored_node in zip(native_tree, vendored_tree):
+        node_id = native_node["id"]
+        if native_node["cfg"] is not None:
+            for key in ("radius", "min_radius", "default_radius"):
+                _assert_rel_close(
+                    native_node["cfg"][key],
+                    vendored_node["cfg"][key],
+                    TREE_CFG_REL_TOL,
+                    f"{structure!r} node {node_id} cfg.{key}",
+                )
+            native_arcs = native_node["cfg"]["arcs"]
+            vendored_arcs = vendored_node["cfg"]["arcs"]
+            assert len(native_arcs) == len(vendored_arcs), (
+                f"{structure!r} node {node_id}: arc count differs "
+                f"(native={len(native_arcs)}, vendored={len(vendored_arcs)})"
+            )
+            for native_arc, vendored_arc in zip(native_arcs, vendored_arcs):
+                assert native_arc["segments"] == vendored_arc["segments"], (
+                    f"{structure!r} node {node_id}: arc segment count differs"
+                )
+                _assert_rel_close(
+                    native_arc["angle"],
+                    vendored_arc["angle"],
+                    TREE_CFG_REL_TOL,
+                    f"{structure!r} node {node_id} arc.angle",
+                )
+        if native_node["lbox"] is not None:
+            for key in ("cx", "cy", "r"):
+                _assert_abs_close(
+                    native_node["lbox"][key],
+                    vendored_node["lbox"][key],
+                    TREE_BOX_ABS_TOL,
+                    f"{structure!r} node {node_id} lbox.{key}",
+                )
+        if native_node["sbox"] is not None:
+            for key in ("ax", "ay", "bx", "by", "cx", "cy", "ex", "ey", "bulge_dist"):
+                _assert_abs_close(
+                    native_node["sbox"][key],
+                    vendored_node["sbox"][key],
+                    TREE_BOX_ABS_TOL,
+                    f"{structure!r} node {node_id} sbox.{key}",
+                )
+            assert native_node["sbox"]["bulge_count"] == vendored_node["sbox"]["bulge_count"], (
+                f"{structure!r} node {node_id}: bulge_count differs"
+            )
+
+
+def _assert_tree_parity(structure: str) -> None:
+    native_tree, vendored_tree = _tree_dumps(structure)
+    _assert_tree_topology_exact(native_tree, vendored_tree, structure)
+    _assert_tree_numeric_parity(native_tree, vendored_tree, structure)
+
+
+class TestTreeParity:
+    """Plan criterion 2 ("Config tree + boxes"): `dump_tree`@T1 (post
+    `update_bounding_boxes`, pre-resolver) topology EXACT + config/box
+    numeric parity, over the hand/motif corpus + the hard set.
+    """
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_tree_parity_on_hand_corpus(self, name: str) -> None:
+        _assert_tree_parity(HAND_STRUCTURES[name])
+
+    @pytest.mark.parametrize("name", sorted(HAND_STRUCTURES))
+    def test_native_tree_is_deterministic(self, name: str) -> None:
+        structure = HAND_STRUCTURES[name]
+        first = native_layout.dump_tree(structure)
+        second = native_layout.dump_tree(structure)
+        assert first == second
+
+    def test_tree_parity_over_hard_set(self) -> None:
+        structures = _hard_set_structures()
+        assert len(structures) > 400, "expected most of the hard set to be turtle-usable"
+
+        for structure in structures:
+            _assert_tree_parity(structure)
+
+        print(f"\nhard_set tree parity: n={len(structures)}, topology exact + numeric parity OK")
 
 
 @pytest.mark.skipif(
