@@ -10,6 +10,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 
+# Milestone A (cpp-layout-core): build the vendored C as a differential
+# parity ORACLE for the owned `rna_layout` native port (`include/rna_layout`,
+# `src/layout_core/`), on top of it staying the shipped production engine.
+# ON by default during the port (the parity tests need it); Milestone A's
+# final "retire" step flips this default off once the native engine takes
+# over production and the vendored code becomes opt-in only -- see
+# `.claude/plans/current-plan.md`, step 11.
+option(RNA_DRAW_BUILD_ORACLE
+  "Compile the vendored-C parity-oracle instrumentation (vendor_instrument.c) \
+alongside _vienna_layout, for differential testing against _layout_core." ON)
+
+# FP REPRODUCIBILITY (cpp-reviewer refinement #1): pin matched
+# floating-point flags across BOTH the native library/module and the
+# vendored oracle build, so the parity gates (turtle/box coordinate
+# agreement <=1e-6; criterion-3 detection-set equality, a thresholded
+# compare at the epsilonRecognize boundary, definitions.inc:59) cannot
+# FALSE-FAIL from FMA contraction or expression-reassociation differences
+# between the two "sides" of a same-compiler, same-flags build. Applied to
+# every native/oracle target below via `RNA_DRAW_FP_FLAGS`.
+# Residual note: `asin`/`acos`/`sqrt`/`cos`/`sin` calls are still routed
+# through the platform libm on both sides (same libm here, since both
+# targets compile in the same toolchain invocation) -- a genuine
+# cross-libm build would need a documented small transcendental tolerance
+# (a few ULP, i.e. ~1e-15 relative) on top of `-ffp-contract=off`; the
+# parity harness's 1e-6 turtle gate already has ample headroom over that.
+set(RNA_DRAW_FP_FLAGS -ffp-contract=off)
+
 # pybind11 is a build-system requirement (pyproject.toml [build-system]);
 # locate its CMake config via the interpreter that is actually building us,
 # rather than relying on scikit-build-core to pre-populate CMAKE_PREFIX_PATH.
@@ -52,6 +79,19 @@ pybind11_add_module(_vienna_layout
   ${VENDOR_PUZZLER_SOURCES}
 )
 
+# RNA_DRAW_BUILD_ORACLE-only: the parity-instrumentation TU (see that
+# file's header for the macro-interposition mechanism it names). Never
+# edits vendored .inc logic; only compiled into this same module so
+# `_vienna_layout` can expose oracle-only dumps behind the option.
+if(RNA_DRAW_BUILD_ORACLE)
+  target_sources(_vienna_layout PRIVATE src/vienna_layout/vendor_instrument.c)
+  target_compile_definitions(_vienna_layout PRIVATE RNA_DRAW_BUILD_ORACLE)
+  set_source_files_properties(src/vienna_layout/vendor_instrument.c PROPERTIES
+    LANGUAGE C
+    COMPILE_OPTIONS "-w"
+  )
+endif()
+
 target_include_directories(_vienna_layout PRIVATE
   "${VIENNA_PREFIX}/include"
   "${VIENNA_PREFIX}/include/ViennaRNA"
@@ -67,8 +107,9 @@ set_source_files_properties(${VENDOR_PUZZLER_SOURCES} PROPERTIES
 )
 
 # The archive was built without LTO (see RNAlib2.pc: `-fno-lto -Wl,-fno-lto`);
-# matching it avoids an LTO-mismatch link failure.
-target_compile_options(_vienna_layout PRIVATE -fno-lto)
+# matching it avoids an LTO-mismatch link failure. `RNA_DRAW_FP_FLAGS`: see
+# this file's top-of-file comment (FP reproducibility for the parity gates).
+target_compile_options(_vienna_layout PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
 target_link_options(_vienna_layout PRIVATE -fno-lto)
 
 # No libRNA.a: the vendored layout core + vrna_compat.c are self-contained,
@@ -101,3 +142,39 @@ target_link_libraries(test_puzzler_smoke PRIVATE
   m
 )
 add_test(NAME puzzler_smoke COMMAND test_puzzler_smoke)
+
+# ---------------------------------------------------------------------------
+# rna_layout: the owned modern-C++ port (Milestone A, cpp-layout-core).
+# A parallel, isolated tree (include/rna_layout, src/layout_core) -- no
+# ViennaRNA header/symbol dependency, validated against `_vienna_layout`
+# above as a differential parity oracle. See
+# `.claude/plans/current-plan.md` for the full port plan; this slice ships
+# the foundation value types + geometry/config helpers + the turtle-base
+# engine (`rna_layout::layout_turtle`) only.
+# ---------------------------------------------------------------------------
+set(RNA_LAYOUT_CORE_SOURCES
+  src/layout_core/geometry.cpp
+  src/layout_core/config.cpp
+  src/layout_core/pair_table.cpp
+  src/layout_core/turtle.cpp
+)
+
+add_library(rna_layout_core STATIC ${RNA_LAYOUT_CORE_SOURCES})
+target_include_directories(rna_layout_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_options(rna_layout_core PRIVATE ${RNA_DRAW_FP_FLAGS})
+
+pybind11_add_module(_layout_core src/layout_core/bindings.cpp)
+target_link_libraries(_layout_core PRIVATE rna_layout_core)
+target_compile_options(_layout_core PRIVATE ${RNA_DRAW_FP_FLAGS})
+
+install(TARGETS _layout_core DESTINATION rna_draw)
+
+# ctest unit tests: pure C++, no Python/pybind11 in the loop (parity-vs-
+# oracle comparisons run at the Python level, `tests/test_native_parity.py`,
+# since that is where both compiled extensions are importable together).
+foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test)
+  add_executable(${rna_layout_test_name} src/layout_core/tests/${rna_layout_test_name}.cpp)
+  target_link_libraries(${rna_layout_test_name} PRIVATE rna_layout_core)
+  target_compile_options(${rna_layout_test_name} PRIVATE ${RNA_DRAW_FP_FLAGS})
+  add_test(NAME ${rna_layout_test_name} COMMAND ${rna_layout_test_name})
+endforeach()

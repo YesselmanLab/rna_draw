@@ -1,0 +1,9 @@
+"""Type stub for the compiled `rna_draw._layout_core` pybind11 extension.
+
+The extension itself is built by `src/layout_core/bindings.cpp`
+(CMakeLists.txt) and installed alongside this package; it is not part of
+the source tree, so mypy needs this stub to type-check callers.
+"""
+
+def plot_coords_turtle(structure: str) -> tuple[list[float], list[float]]: ...
+def dump_turtle(structure: str) -> tuple[list[float], list[float]]: ...

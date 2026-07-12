@@ -215,6 +215,15 @@ CoordVectors plot_coords_puzzler_opts(const std::string& structure, bool allow_f
   return to_vectors(x, y, n);
 }
 
+// Defined in vendor_instrument.c, compiled in only when RNA_DRAW_BUILD_ORACLE
+// is on (see CMakeLists.txt); that file documents the macro-interposition
+// mechanism future dump_tree/dump_detections/dump_change_trace entry points
+// will use. Guarded by the same preprocessor define CMake sets for the
+// oracle build, so this binding module still links when the option is off.
+#ifdef RNA_DRAW_BUILD_ORACLE
+extern "C" const char* rnadraw_oracle_instrumentation_version(void);
+#endif
+
 /// The compiled-against ViennaRNA version, as a string (e.g. `"2.7.0"`).
 std::string version() { return VRNA_VERSION; }
 
@@ -256,4 +265,17 @@ PYBIND11_MODULE(_vienna_layout, m) {
         "exactly. Returns (x, y).");
   m.def("plot_coords_turtle", &plot_coords_turtle, py::arg("structure"),
         "Lay out a dot-bracket structure with RNAturtle; returns (x, y).");
+  m.def("dump_turtle", &plot_coords_turtle, py::arg("structure"),
+        "T0 turtle-coordinate dump for parity testing against the native "
+        "rna_layout core's dump_turtle; identical to plot_coords_turtle "
+        "(turtle has no separate pre-tree dump point -- it terminates "
+        "before any tree is built).");
+
+#ifdef RNA_DRAW_BUILD_ORACLE
+  m.def("oracle_instrumentation_version", &rnadraw_oracle_instrumentation_version,
+        "Marker string proving the RNA_DRAW_BUILD_ORACLE instrumentation TU "
+        "(vendor_instrument.c) is compiled in; see that file for the "
+        "macro-interposition mechanism later dump_tree/dump_detections/"
+        "dump_change_trace entry points will use.");
+#endif
 }

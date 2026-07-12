@@ -29,4 +29,4 @@ Checks: >
   -cppcoreguidelines-avoid-magic-numbers,
   -modernize-use-trailing-return-type
 WarningsAsErrors: ''
-HeaderFilterRegex: 'src/vienna_layout/.*'
+HeaderFilterRegex: 'src/vienna_layout/.*|include/rna_layout/.*|src/layout_core/.*'
