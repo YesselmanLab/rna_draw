@@ -26,8 +26,9 @@ tail, not the common case.
 
 ## Current best algorithm (the default engine)
 
-`rna_draw`'s `default_engine()` is `production_engine()` (in `rna_draw/layout/production.py`),
-run behind the checker-gated `layout_guaranteed`. Three stages:
+`rna_draw`'s `default_engine()` (in `rna_draw/layout/pipeline.py`) returns `production_engine()`
+(in `rna_draw/layout/production.py`), run behind the checker-gated `layout_guaranteed` (also in
+`pipeline.py`). The production primary itself has three stages:
 
 1. **Per-structure clearance escalation.** Lay out with ViennaRNA's RNApuzzler (vendored,
    in-process) at an increasing *intersection-clearance* factor (ladder `1.0, 1.25, 1.5×`). This
@@ -42,26 +43,112 @@ run behind the checker-gated `layout_guaranteed`. Three stages:
    applied only if the frozen checker reports **strictly fewer** overlaps, so the pass is monotone
    (never worse) and wall-clock bounded. Engine-agnostic; operates on coordinates + a pair map.
 
-3. **Checker-gated adaptive radius + 3-tier fallback.** Render at the largest disk radius in
-   `[0.8×, 1.0×]target` that passes the checker. If the production primary can't clear, the pipeline
-   falls through two more tiers, all checker-gated: (a) the **constructive engine** — an overlap-free-
-   *by-construction* layout (bounding-disk envelope tree, see below), which now catches most of what
-   used to hit the circle; (b) a guaranteed-clean **circle** as the final backstop. The honest
-   contract holds at every tier: every result is checker-clean or explicitly `flagged` — never a
-   silent overlap.
+3. **Checker-gated adaptive radius (`_largest_clean_node_r`).** Render at the largest disk radius in
+   `[floor, target]` that passes the checker — gate radius == render radius, so a "clean" result is
+   never silently overlapping at the radius actually drawn.
+
+## The 4-tier pipeline (`layout_guaranteed`)
+
+`layout_guaranteed` (`rna_draw/layout/pipeline.py`) tries an ordered chain, **every tier
+checker-gated** against the frozen `check_overlaps` — never a silent overlap:
+
+1. **Production primary** (`_try_primary`, the compact `production_engine` by default). Only
+   attempted when the input `is_pseudoknot_free`. Clean → `flagged=False`.
+2. **Constructive engine** (`_try_constructive_fallback`, `rna_draw/layout/constructive/`). An
+   overlap-free-*by-construction* layout (bounding-disk envelope tree, see below), gated exactly
+   like tier 1. It is checker-clean but honestly reported `flagged=True` (`engine_name="constructive"`),
+   because it is only reached when the compact primary was *not* clean.
+3. **Pseudoknot tier** (`_try_pseudoknot`, `rna_draw/layout/pseudoknot/`). Reached **only when the
+   input is not pseudoknot-free** (contains `[]{}<>`) — tiers 1–2 decline such input via their own
+   `is_pseudoknot_free` guard. Lays out a max-nested subset conventionally, then draws the crossing
+   pairs as checker-validated connectors (see below). `flagged=False` only if every crossing became a
+   clean in-plane connector; otherwise `flagged=True`.
+4. **Circle `SafeFallbackEngine`** (`_fallback_result`). The guaranteed-terminating last resort,
+   always `flagged=True`.
 
 ## The constructive engine (the fallback tier)
 
-A second, independent engine that lays a structure out overlap-free *by construction* rather than by
-repair — used when the compact production primary can't clear. It builds bottom-up over the loop/stem
-tree: each subtree is bounded by a **disk**, children are packed around a loop at angular half-widths
-`asin(r/d)` (provably disjoint, so siblings can't overlap), single-child bulges/internal loops are
-placed as straight continuations, and a checker-gated compaction pass tightens the result. It lays
-out **436/450 hard structures clean-by-construction (0 silent overlaps), including the deep-rRNA tail**
-production leaves to fallback. It is ~21× less compact than the production primary (so it stays a
-fallback, not a primary) but ~1600× *more* compact than the circle it replaces, and conventional in
-style. On the 450 hard set the pipeline now resolves as **86% production-primary (compact) + 11%
-constructive-fallback (clean, conventional-style) + 2% circle**, 0 silent overlaps.
+A second, independent engine (`rna_draw/layout/constructive/`) that lays a structure out overlap-free
+*by construction* rather than by repair — used when the compact production primary can't clear. It
+builds bottom-up over the loop/stem tree (`engine.py`):
+
+- **Bounding-disk envelope tree** (`envelope.py`). Each subtree is bounded by a **disk** centered
+  exactly on its attachment pivot; children are packed around a loop at angular half-widths
+  `asin(r/d)` (`geometry_helpers.pack_loop_angles`) — provably disjoint, so no two siblings' disks,
+  hence no two siblings' subtrees, can overlap. Disjointness is a construction-time *proof*, not a
+  post-hoc check.
+- **Straight-continuation fixes** to stop the envelope bound compounding on long chains. A
+  single-child bulge/interior loop is placed as a straight continuation of the parent stem's axis
+  (`_place_bulge`), so a bulge chain's reach grows linearly, not ~3× per level. A **degree-2
+  multiloop** (one large continuing branch + one small side branch, repeated deep in real rRNA) pins
+  its dominant child collinear too (`envelope.lateral_reach` / `_degree2_packing`), sized by a
+  directional lateral reach — the same linear-growth fix for the other structural cause of blow-up.
+  A `_MAX_REACH` guard still bails (fast, before any coordinate is written) on anything genuinely
+  isotropic (e.g. a giant 3+-way junction with two large children).
+- **Provable area-minimization pass** (`area_min.py`). On top of the sound layout, each eligible
+  branch is rotated about its own attachment pivot. Because the sibling-disjoint disk is centered
+  *at* that pivot, a rotation is an isometry that fixes the disk, so every sibling/cousin disjointness
+  relation is preserved automatically — no re-verification needed. The one primitive the disk
+  argument doesn't cover (the branch's own incoming/departing backbone capsules) is checked
+  explicitly (`_boundary_capsules_clear`), and every accepted move is monotone (kept only if it
+  strictly shrinks bbox area and stays clean; reverted otherwise). It delivers real 22–35% area cuts
+  on most worst-set structures. A per-loop *radius* re-pack is deliberately not built here — it would
+  feed anisotropic half-widths into `pack_loop_angles`, which bounds only perpendicular extent, so it
+  would not be certificate-clean; radius tightening stays checker-gated in `compaction.py`. An
+  earlier **exterior 2-D fold DOF** (wrapping the exterior line into rows) was tried, verified sound,
+  and **removed** — it was rejected by the safety check on every real and every synthetically
+  favorable structure (a confirmed no-op).
+
+Every produced layout is re-verified against the frozen checker before return; a dirty result raises
+`EngineError` rather than being returned silently. The engine lays out **436/450 hard structures
+clean-by-construction (0 silent overlaps), including the deep-rRNA tail** production leaves to
+fallback. It is ~21× less compact than the production primary (so it stays a fallback, not a primary)
+but ~1600× *more* compact than the circle it replaces, and conventional in style. On the 450 hard set
+the pipeline now resolves as **86% production-primary (compact) + 11% constructive-fallback (clean,
+conventional-style) + 2% circle**, 0 silent overlaps.
+
+## Pseudoknot layout (`rna_draw/layout/pseudoknot/`)
+
+The third pipeline tier, reached only for input that is not pseudoknot-free (`[]{}<>`). It never
+re-places a nucleotide: every base is placed exactly once by a conventional nested layout, and a
+crossing pair is drawn as an *additional* connector between two already-placed nucleotides.
+
+1. **Parse** the multi-bracket string into stems (`parsing.py`).
+2. **Extract a max-nested subset** via Maximum-Weight Independent Set on the stem-crossing conflict
+   graph (`extraction.py`) — exact branch-and-bound over only the crossing-involved stems (corpus
+   median 3, max 7), with a greedy fallback above `EXACT_COVER_LIMIT`. The retained subset is the
+   nested tree; the removed stems are the crossings. A round-trip guard asserts the reconstructed
+   subset really is pseudoknot-free before handoff.
+3. **Lay out the nested subset** with the ordinary checker-gated `layout_guaranteed` pipeline
+   (`engine.py` → `_layout_nested`).
+4. **Draw each crossing pair** (`placement.py`), escalating per stem, checker-gated the whole way:
+   a straight **in-plane connector** (PK-B) added to the pair map and re-validated by the *unmodified*
+   `check_overlaps`; else a non-overlapping **routed polyline** (PK-A, `routing.py`/`floor.py`,
+   validated by `validate.py`); else left **unplaced**. A final mutual-validation backstop
+   (`_clean_routed_lines`) drops any routed line that isn't clean against everything else. The
+   frozen checker validates crossing pairs unchanged — never a silent or drawn overlap.
+
+## The never-silent-overlap contract and the frozen checker
+
+The load-bearing guarantee: **every returned layout is either checker-clean or explicitly
+`flagged`** — the pipeline never hands back a silent overlap. The arbiter is a single, **frozen,
+engine-agnostic overlap checker** shared by every engine, every post-pass move, and every crossing
+connector:
+
+- `rna_draw/overlap.py` builds the primitives a renderer actually draws (nucleotide **disks**,
+  backbone **capsules**, base-pair **capsules**), excludes the pairs *supposed* to touch (backbone
+  neighbors, base-pair partners, a disk at its own capsule's endpoint), and reports every remaining
+  overlap. Overlap is judged purely by geometry — no index-distance exclusion.
+- `rna_draw/geometry.py` holds the exact primitive-vs-primitive predicates (disk/disk, disk/capsule,
+  capsule/capsule).
+- `rna_draw/spatial_hash.py` makes the all-pairs sweep near-linear on long chains (proven
+  byte-identical to brute force).
+
+Each tier is gated by this same checker at its own render radius (`_largest_clean_node_r`, so gate
+radius == render radius). The constructive engine additionally verifies its by-construction output;
+its area-min and compaction moves are each checker-verified before being kept (monotone revert). The
+pseudoknot tier validates every connector against it. The checker is treated as immutable — engines
+and post-passes call its read-only building blocks, never alter its semantics.
 
 ## Every attempt
 
@@ -82,6 +169,9 @@ problem but first a *clearance-model mismatch*, then a *small-loop-crowding* pro
 | 10 | Spatial-hash O(L²) → O(L) for long chords | Fallback renders took minutes | Checker ~14× faster on the fallback circle; output byte-identical (proven vs brute force) | shipped |
 | 11 | **Constructive engine** (bounding-disk envelope tree) | Lay out overlap-free *by construction*, not by repair | 96.9% clean-by-construction incl. the deep tail, 0 silent overlaps; but ~21× less compact than the primary | **win** |
 | 12 | Wire constructive as the middle fallback tier | Give the deep tail a clean conventional layout instead of a circle | Pipeline now 86% primary + 11% constructive-fallback + 2% circle; ~1600× more compact than the circle it replaces | shipped |
+| 13 | Standalone vendored build (drop `libRNA.a`) | The layout core needs only two library symbols | Links standalone via a ~120-LOC `vrna_compat.c` shim; no ViennaRNA runtime dep; `naview` removed | shipped |
+| 14 | **Pseudoknot tier** (max-nested + on-top crossings) | Draw `[]{}<>` conventionally instead of a bare circle | Conventional nested layout + correct bonds where drawable, 0 overlaps; crossing depiction capped ~38% post-hoc (co-design needed) | shipped |
+| 15 | **Area-min rotation pass** (disk-preserving) | Shrink constructive sprawl with a provably-clean lever | Real 22–35% area cuts on most worst-set structures, 0 dirty/0 regressions; exterior fold DOF tried + removed (no-op) | shipped |
 
 ## Clean-rate progression (450 hard structures)
 
@@ -107,13 +197,37 @@ Stock puzzler                 30.4%  (137/450)   2943 overlaps
 - **Empty-loop inputs** (14 structures): contain a degenerate `()` loop that hangs RNApuzzler
   unconditionally; guarded and now routed to the constructive engine (which handles them) or the
   circle. Fix for a compact result is to handle the zero-length loop in the vendored resolver.
+- **Pseudoknot crossing depiction is capped.** The "lay out the nested subset, add crossings on top"
+  approach has a hard post-hoc ceiling: only ~38% of crossing bonds are placeable after the fact.
+  The rest are *buried* — the packed nested layout leaves disks near-tangent around a deeply-embedded
+  crossing endpoint, so there is no positive-width gap to route a line out (confirmed by exhaustive
+  best-first search on real structures) and no adjacency for an in-plane connector. Raising this needs
+  **co-design** (reserving space / placing crossing endpoints accessibly *during* the nested layout),
+  a significant engine change with uncertain payoff. What ships is honest: a conventional nested
+  layout with correct bonds wherever drawable and 0 overlaps ever — a large improvement over the old
+  bare circle, but crossing quality is capped, not solved.
+- **Constructive-engine sprawl.** Structures that fall to the constructive tier can still render as
+  sprawly strips — content in tight clusters far apart — even after the area-min rotation pass cuts
+  ~23%. The root cause is the *conservative isotropic* disk radii the by-construction proof relies on;
+  a tighter sound packing is future research. Compactness is a secondary goal — the primary contract
+  is never a silent overlap.
 
 ## Infrastructure
 
-- In-process pybind11 binding to an **editable vendored copy** of RNApuzzler
-  (`src/vienna_layout/`), so the algorithm can be modified in-tree.
-- Independent, frozen overlap checker (`rna_draw/overlap.py`) is the arbiter for every engine and
-  every post-pass move.
+- **Standalone in-process build.** An in-process pybind11 binding to an **editable vendored copy** of
+  RNApuzzler/RNAturtle (`src/vienna_layout/`), so the layout core can be modified in-tree. As of this
+  branch the vendored core (`RNApuzzler.c` + `RNAturtle.c`) compiles and links **standalone** — with
+  `libRNA.a` **unlinked** and **no ViennaRNA runtime dependency** (only ViennaRNA *headers* are
+  needed at compile time). The two translation units reference exactly two ViennaRNA library symbols,
+  `vrna_alloc` and `vrna_ptable` (+ `vrna_ptable_from_string`), supplied by a ~120-LOC compat shim
+  `src/vienna_layout/vendor/vrna_compat.c` (faithful copies of the upstream 2.7.0 sources, plus a
+  `vrna_log` stub for the OOM/malformed-input paths). A `ctest` smoke test proves the core links and
+  runs with `libRNA.a` unlinked. `naview` was **removed** — it lived only in `libRNA.a`'s
+  non-reentrant `naview.o` and never rescued a puzzler-dirty structure (see `CMakeLists.txt` and
+  `src/vienna_layout/vendor/README.md`).
+- Independent, **frozen** overlap checker (`rna_draw/overlap.py` + `geometry.py` + `spatial_hash.py`)
+  is the arbiter for every engine and every post-pass move (see the never-silent-overlap section).
 - A frozen benchmark gate (`benchmarks/hard_gate.py`) with a hard per-structure kill, so a slow or
   hanging structure is a bounded error, not a stall.
-- ~990 tests, ~96% coverage; ruff + mypy clean. Full-suite runs use pytest-xdist (`-n auto`).
+- ~1100 tests (many parametrized), ~96% coverage; ruff + mypy clean. Full-suite runs use pytest-xdist
+  (`-n auto`).
