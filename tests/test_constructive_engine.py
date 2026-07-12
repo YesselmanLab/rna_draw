@@ -19,7 +19,8 @@ from conftest import random_structure
 
 from rna_draw.layout.base import EngineError
 from rna_draw.layout.constructive import envelope
-from rna_draw.layout.constructive.engine import _MAX_NUCLEOTIDES, ConstructiveEngine
+from rna_draw.layout.constructive.engine import _MAX_NUCLEOTIDES, _MAX_REACH, ConstructiveEngine
+from rna_draw.layout.constructive.geometry_helpers import pack_two_seam_angles
 from rna_draw.layout.structure_tree import build_structure_tree, collapse_stem
 from rna_draw.overlap import OverlapParams, check_overlaps
 from rna_draw.render_rna import get_pairmap_from_secstruct
@@ -185,6 +186,31 @@ def make_degree2_chain(levels: int, side_loop: int = 3, main_loop: int = 3) -> s
     for _ in range(levels):
         side = "(" + "." * side_loop + ")"
         inner = "(" + side + inner + ")"
+    return inner
+
+
+def make_degree2_chain_with_large_base(
+    big_side_bp: int, small_levels: int, main_loop: int = 3
+) -> str:
+    """A `small_levels + 1`-level degree-2 chain whose INNERMOST level's
+    side branch is a long plain stem instead of a tiny hairpin.
+
+    Args:
+        big_side_bp: Base-pair depth of the innermost level's plain-stem
+            side branch (its side branch is `2 * big_side_bp + 3` nt).
+        small_levels: Number of additional (small-side-hairpin) degree-2
+            levels stacked OUTSIDE the big-base level.
+        main_loop: Unpaired nucleotide count in the terminal hairpin loop.
+
+    Returns:
+        A dot-bracket structure with `small_levels + 1` total degree-2
+        levels.
+    """
+    big_side = "(" * big_side_bp + "." * 3 + ")" * big_side_bp
+    small_side = "(" + "." * 3 + ")"
+    inner = "(" + big_side + "(" + "." * main_loop + ")" + ")"
+    for _ in range(small_levels):
+        inner = "(" + small_side + inner + ")"
     return inner
 
 
@@ -472,3 +498,117 @@ class TestNeverSilentOverlap:
         report = check_overlaps(x, y, pair_map, PARAMS_OVERLAP)
         assert report.passed, f"left {report.num_overlaps} overlaps: {report.witnesses}"
         assert elapsed < 1.0, f"took {elapsed:.3f}s -- should be near-instant now"
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_short_unpinned_chain_on_large_base_trips_max_reach(self) -> None:
+        """A degree-2 chain of length 5 -- BELOW `envelope.
+        _DEGREE2_CHAIN_LENGTH_FLOOR = 6`, so `_degree2_packing` never even
+        attempts pinning; every level stays on the plain full-circle packer
+        -- whose innermost side branch is a long (~1400nt) plain stem
+        compounds the isotropic ~3x-per-level envelope growth on top of
+        that large base, tripping `_MAX_REACH`. Documents the intentional
+        floor-of-6 gap: a length-5 chain on a large base is REJECTED (a
+        clean `EngineError`), never silently laid out dirty.
+        """
+        secstruct = make_degree2_chain_with_large_base(1400, small_levels=4)
+        assert len(secstruct) < _MAX_NUCLEOTIDES
+        try:
+            x, y = ConstructiveEngine().layout(secstruct)
+        except EngineError:
+            return
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, PARAMS_OVERLAP).passed
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_pinned_chain_reach_crosses_max_reach_near_200_levels(self) -> None:
+        """Pins the PINNED chain's quadratic reach growth (see
+        `TestDegree2ChainStraightPlacement.
+        test_branch_reach_grows_boundedly_not_exponentially`) against
+        `_MAX_REACH`'s approximate crossing point: 200 levels (~1400nt,
+        well past `_DEGREE2_CHAIN_LENGTH_FLOOR`, so every level IS pinned)
+        sits comfortably under the cap, while 220 levels sits over it. A
+        regression that made pinned reach grow faster (e.g. losing the pin
+        and reverting to isotropic per-level compounding) would move this
+        crossing to a much SHORTER chain -- caught here without needing to
+        brute-force a huge structure.
+        """
+        from rna_draw.parameters import DrawParameters
+
+        params = DrawParameters()
+        below_secstruct = make_degree2_chain(200)
+        above_secstruct = make_degree2_chain(220)
+        below_tree = build_structure_tree(get_pairmap_from_secstruct(below_secstruct))
+        above_tree = build_structure_tree(get_pairmap_from_secstruct(above_secstruct))
+        below_reach = envelope.branch_reach(
+            below_tree,
+            below_tree.exterior.children[0].closing_pair,
+            params,
+            envelope.ReachCache(),
+        )
+        above_reach = envelope.branch_reach(
+            above_tree,
+            above_tree.exterior.children[0].closing_pair,
+            params,
+            envelope.ReachCache(),
+        )
+        assert below_reach < _MAX_REACH, f"200-level reach {below_reach:.3g} unexpectedly over cap"
+        assert above_reach > _MAX_REACH, f"220-level reach {above_reach:.3g} unexpectedly under cap"
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_pinned_chain_near_ceiling_never_returns_silent_overlap(self) -> None:
+        """At the reach-cap boundary itself (see the previous test), the
+        engine must do exactly one of two things -- construct a
+        checker-clean layout, or raise a clean `EngineError` -- never
+        anything else (a raw crash, a hang, or a silently dirty layout).
+        """
+        for levels in (200, 220):
+            secstruct = make_degree2_chain(levels)
+            try:
+                x, y = ConstructiveEngine().layout(secstruct)
+            except EngineError:
+                continue
+            pair_map = get_pairmap_from_secstruct(secstruct)
+            assert check_overlaps(x, y, pair_map, PARAMS_OVERLAP).passed
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_two_seam_packer_no_fit_raises_runtime_error(self) -> None:
+        """`pack_two_seam_angles`' own give-up path (mirrors
+        `pack_loop_angles`'s, see its docstring) still raises a bare
+        `RuntimeError` when called directly -- this is the geometry-layer
+        contract the engine boundary (next test) must convert, not the
+        thing being changed here.
+        """
+        with pytest.raises(RuntimeError, match="no fitting radius found"):
+            pack_two_seam_angles(
+                before_half_widths=[1e9],
+                after_half_widths=[1e9],
+                dom_half_width=1e9,
+                reserved_half_width=1.0,
+                radius_floor=1.0,
+                radius_step=1.0,
+                max_steps=3,
+            )
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_two_seam_packer_give_up_converts_to_engine_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`pack_two_seam_angles`'s no-fit `RuntimeError` is UNREACHABLE from
+        a real structure within `_MAX_NUCLEOTIDES` today (confirmed), so
+        this forces it via a monkeypatch on the call site `envelope.
+        _two_seam_packing` actually uses, on a chain long enough
+        (`>= _DEGREE2_CHAIN_LENGTH_FLOOR`) to invoke the two-seam packer at
+        all -- asserting the engine's boundary (`engine._build_verified`)
+        converts it to a clean `EngineError`, never letting the bare
+        `RuntimeError` escape (the never-silent-crash contract, same
+        handling as a pathological `RecursionError`).
+        """
+
+        def _give_up(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("forced no-fit for test")
+
+        monkeypatch.setattr(envelope, "pack_two_seam_angles", _give_up)
+        secstruct = make_degree2_chain(10)
+
+        with pytest.raises(EngineError, match="angular packer gave up"):
+            ConstructiveEngine().layout(secstruct)

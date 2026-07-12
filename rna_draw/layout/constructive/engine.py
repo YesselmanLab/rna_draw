@@ -27,7 +27,8 @@ is never handed back silently, it raises `EngineError` instead (see
 `ConstructiveEngine.layout`). `EngineError` is also the ONLY exception this
 module raises for a give-up path (never a bare `RuntimeError`), including
 converting a pathologically deep structure's `RecursionError` (see
-`_ensure_recursion_headroom`).
+`_ensure_recursion_headroom`) and a `geometry_helpers` angular packer's
+(should-be-unreachable) no-fit `RuntimeError` (see `_build_verified`).
 """
 
 from __future__ import annotations
@@ -243,7 +244,9 @@ def _build_verified(
         The first attempt's `(x, y)` that comes back checker-clean.
 
     Raises:
-        EngineError: If a `RecursionError` fires, or every attempt in
+        EngineError: If a `RecursionError` or `RuntimeError` (an angular
+            packer's give-up path, see `geometry_helpers.pack_loop_angles`/
+            `pack_two_seam_angles`) fires, or every attempt in
             `_MARGIN_SCALES` is dirty (never returned silently).
     """
     last_overlaps = 0
@@ -262,6 +265,16 @@ def _build_verified(
             raise EngineError(
                 f"ConstructiveEngine hit Python's recursion limit on {secstruct!r} "
                 "-- refusing to crash; route to a fallback engine instead"
+            ) from exc
+        except RuntimeError as exc:
+            # `geometry_helpers.pack_loop_angles`/`pack_two_seam_angles` raise
+            # a bare `RuntimeError` on their (should-be-unreachable) no-fit
+            # give-up path; converted here so the never-silent contract
+            # ("give-up paths raise EngineError, never a bare RuntimeError")
+            # holds even if a future `_MAX_NUCLEOTIDES` raise ever exposes it.
+            raise EngineError(
+                f"ConstructiveEngine's angular packer gave up on {secstruct!r} "
+                f"({exc}) -- refusing to crash; route to a fallback engine instead"
             ) from exc
         report = check_overlaps(state.x, state.y, pair_map, OverlapParams())
         if report.passed:
