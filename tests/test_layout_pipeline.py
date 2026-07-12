@@ -280,9 +280,18 @@ class TestConstructiveRescuesAProductionDirtyStructure:
 
 
 class TestPseudoknotAndEmpty:
-    def test_pseudoknot_is_flagged(self) -> None:
+    def test_pseudoknot_routes_to_pseudoknot_tier(self) -> None:
+        # M3: pseudoknots no longer fall straight to the bare circle
+        # fallback with every pair deleted -- `layout_guaranteed` routes
+        # them through `pseudoknot.layout_pseudoknot` first (see
+        # `pipeline._try_pseudoknot`). This tiny H-type pseudoknot's single
+        # crossing pair is short enough to land as a clean in-plane PK-B
+        # connector, so the honest result is fully unflagged here --
+        # tests/test_pseudoknot_engine.py covers the flagged (PK-A/
+        # unplaced) paths in depth.
         result = layout_guaranteed("([)]")
-        assert result.flagged is True
+        assert result.engine_name == "pseudoknot"
+        assert result.flagged or result.report.passed  # never a silent overlap
 
     def test_empty_structure(self) -> None:
         result = layout_guaranteed("")

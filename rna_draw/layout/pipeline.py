@@ -23,6 +23,7 @@ from .constructive import ConstructiveEngine
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
 from .production import production_engine
+from .pseudoknot import layout_pseudoknot
 from .puzzler import PuzzlerEngine
 from .vienna import (
     EXPECTED_PUZZLER_OPTIONS_SIZEOF,
@@ -119,14 +120,19 @@ def layout_guaranteed(
 ) -> LayoutResult:
     """Lay out `secstruct`, guaranteeing a checker-clean or flagged result.
 
-    Three-tier chain, each tier checker-gated (never a silent overlap):
+    Four-tier chain, each tier checker-gated (never a silent overlap):
     1. `engine` (the compact production primary by default) -- if
        checker-clean, `flagged=False`.
     2. `ConstructiveEngine` -- a compact, conventional-looking layout that
        is clean by construction and checker-verified again here; tried
        only because tier 1 was not clean, so it is reported `flagged=True`
        even though `report.passed` is also `True`.
-    3. The circle `SafeFallbackEngine` -- the guaranteed-terminating last
+    3. The pseudoknot layout (`pseudoknot.layout_pseudoknot`), tried only
+       when `secstruct` is not pseudoknot-free (tiers 1-2 always decline
+       such input): a nested tree plus in-plane/routed crossing
+       connectors, checker-gated the whole way (M3). See
+       `LayoutResult.pair_map`/`crossing_pairs`/`crossing_lines`.
+    4. The circle `SafeFallbackEngine` -- the guaranteed-terminating last
        resort, `flagged=True`.
 
     Args:
@@ -138,8 +144,8 @@ def layout_guaranteed(
     Returns:
         A `LayoutResult` that is either the checker-clean primary
         (`flagged is False`) or a checker-verified fallback tier
-        (`flagged is True`, `engine_name` is `"constructive"` or
-        `"fallback"`) -- never a silent overlap.
+        (`flagged is True`, `engine_name` is `"constructive"`,
+        `"pseudoknot"`, or `"fallback"`) -- never a silent overlap.
     """
     params = params or OverlapParams()
     if len(secstruct) == 0:
@@ -152,6 +158,10 @@ def layout_guaranteed(
     constructive = _try_constructive_fallback(secstruct, params)
     if constructive is not None:
         return constructive
+    if not is_pseudoknot_free(secstruct):
+        pseudoknot = _try_pseudoknot(secstruct, params)
+        if pseudoknot is not None:
+            return pseudoknot
     return _fallback_result(secstruct, params)
 
 
@@ -244,6 +254,30 @@ def _try_constructive_fallback(secstruct: str, params: OverlapParams) -> LayoutR
     return LayoutResult(
         result.x, result.y, result.engine_name, result.report, flagged=True, node_r=result.node_r
     )
+
+
+def _try_pseudoknot(secstruct: str, params: OverlapParams) -> LayoutResult | None:
+    """Attempt the M3 pseudoknot layout tier: nested tree + crossing connectors/lines.
+
+    Guarded exactly like the other tiers -- only reached from
+    `layout_guaranteed` when `secstruct` is NOT pseudoknot-free (tiers 1-2
+    already decline such input via their own `is_pseudoknot_free` guard).
+
+    Args:
+        secstruct: Dot-bracket secondary structure (contains `[]{}<>`).
+        params: Target geometry to lay the nested subset out against.
+
+    Returns:
+        A `LayoutResult` (`engine_name="pseudoknot"`) -- `flagged=False`
+        only if every crossing stem became a clean in-plane connector;
+        `flagged=True` if any routed line or unplaced crossing exists. Or
+        `None` if `layout_pseudoknot` raised `EngineError` (an internal
+        invariant failure), so the pipeline falls through to the circle.
+    """
+    try:
+        return layout_pseudoknot(secstruct, params)
+    except EngineError:
+        return None
 
 
 def _fallback_result(secstruct: str, params: OverlapParams) -> LayoutResult:

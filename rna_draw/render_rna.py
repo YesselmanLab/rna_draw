@@ -338,7 +338,7 @@ class RNARenderer:
                             (to_xy[0], to_xy[1]),
                             coordsA="data",
                             linewidth=15,
-                            edgecolor="#969696",
+                            edgecolor=pair.get("color", "#969696"),
                         )
                         self.ax.add_patch(rec)
 
@@ -386,6 +386,34 @@ class RNARenderer:
                             ha="center",
                             va="center",
                         )
+
+    def draw_routed_lines(self, lines, offset_x, offset_y, color, linewidth=15):
+        """Stroke each PK-A `RoutedLine` polyline (`rna_draw.layout.pseudoknot`).
+
+        Reuses the same `ConnectionPatch` path `draw()` uses for a
+        straight pair, one segment per consecutive pair of `line.points`,
+        so a bowed/ring-routed crossing connector renders with the same
+        stroke style as an ordinary base pair, just in `color` and
+        possibly multi-segment.
+
+        Args:
+            lines: `RoutedLine`s to draw (points already in the same
+                pre-offset coordinate space as `self.xarray_`/`yarray_`).
+            offset_x: Same x offset `draw()`'s pairs/disks use.
+            offset_y: Same y offset `draw()`'s pairs/disks use.
+            color: Matplotlib edgecolor for every segment.
+            linewidth: Stroke width; matches `draw()`'s pair connectors.
+        """
+        for line in lines:
+            for (x0, y0), (x1, y1) in zip(line.points, line.points[1:]):
+                patch = ConnectionPatch(
+                    (offset_x + x0, offset_y + y0),
+                    (offset_x + x1, offset_y + y1),
+                    coordsA="data",
+                    linewidth=linewidth,
+                    edgecolor=color,
+                )
+                self.ax.add_patch(patch)
 
     def get_coords(self, xarray, yarray, PRIMARY_SPACE, PAIR_SPACE):
         if self.root_ != None:

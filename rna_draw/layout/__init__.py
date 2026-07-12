@@ -20,17 +20,19 @@ Public API:
 
 from __future__ import annotations
 
-from .base import EngineError, EngineUnavailableError, LayoutEngine, LayoutResult
+from .base import EngineError, EngineUnavailableError, LayoutEngine, LayoutResult, RoutedLine
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
 from .pipeline import default_engine, layout_guaranteed, resolve_engine
 from .production import production_engine
+from .pseudoknot import layout_pseudoknot
 from .puzzler import PuzzlerEngine
 from .vienna import ViennaPuzzlerEngine, ViennaTurtleEngine
 
 __all__ = [
     "LayoutEngine",
     "LayoutResult",
+    "RoutedLine",
     "EngineError",
     "EngineUnavailableError",
     "LegacyEngine",
@@ -39,6 +41,7 @@ __all__ = [
     "ViennaPuzzlerEngine",
     "ViennaTurtleEngine",
     "production_engine",
+    "layout_pseudoknot",
     "layout_guaranteed",
     "default_engine",
     "resolve_engine",

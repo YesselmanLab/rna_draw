@@ -11,7 +11,7 @@ signature, so swapping backends never touches callers (`rna_draw/draw.py`,
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from rna_draw.overlap import OverlapKind, OverlapParams, OverlapReport
@@ -55,6 +55,28 @@ class LayoutEngine(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class RoutedLine:
+    """A non-overlapping routed connector between two crossing-paired nts (PK-A).
+
+    Produced only by the pseudoknot layout path (`rna_draw.layout.
+    pseudoknot`) when a crossing pair cannot be drawn as a clean, straight
+    in-plane connector (PK-B); the renderer strokes `points` as a polyline
+    instead of a single straight pair capsule.
+
+    Args:
+        i: 5' nucleotide index this line connects.
+        j: 3' nucleotide index this line connects.
+        points: Sampled polyline vertices in layout units, in order;
+            `points[0]` sits at nucleotide `i`'s position and `points[-1]`
+            at nucleotide `j`'s.
+    """
+
+    i: int
+    j: int
+    points: list[tuple[float, float]]
+
+
 @dataclass
 class LayoutResult:
     """The outcome of `rna_draw.layout.pipeline.layout_guaranteed`.
@@ -68,17 +90,33 @@ class LayoutResult:
         x: Nucleotide x-coordinates.
         y: Nucleotide y-coordinates.
         engine_name: Which engine actually produced `x`/`y` (`"legacy"`,
-            `"puzzler"`, `"production"`, `"constructive"`, `"fallback"`, or
-            `"empty"` for a zero-length structure).
-        report: The overlap report computed at `node_r`.
+            `"puzzler"`, `"production"`, `"constructive"`, `"fallback"`,
+            `"pseudoknot"`, or `"empty"` for a zero-length structure).
+        report: The overlap report computed at `node_r`. On the pseudoknot
+            path this is checked against `pair_map` (below), not the
+            ()-only view.
         flagged: True if the result is a fallback tier (the compact but
             non-primary `ConstructiveEngine`, the circle `SafeFallbackEngine`,
             or an empty/pseudoknot special case) rather than the checker-clean
-            primary engine's own layout.
+            primary engine's own layout. On the pseudoknot path, `False`
+            only if every crossing stem became a clean in-plane connector.
         node_r: The disk radius the report was computed at -- the renderer
             MUST draw disks at this same radius (gate radius == render
             radius), so a clean report can never describe a differently
             rendered layout.
+        pair_map: The FULL drawn base-pair map (nested + any PK-B crossing
+            connectors), or `None` on every non-pseudoknot tier (draw.py
+            then uses the ordinary `()`-only
+            `render_rna.get_pairmap_from_secstruct` view). This can differ
+            from the `()`-only view even on the pseudoknot path -- the
+            max-nested extraction may retain some `[]{}<>` pairs and drop
+            some `()` pairs -- so a renderer MUST prefer this field
+            whenever it is not `None`.
+        crossing_pairs: The subset of `pair_map` that are PK-B in-plane
+            crossing connectors (drawn in a distinct color); empty on
+            every non-pseudoknot tier.
+        crossing_lines: PK-A routed polylines the renderer must additionally
+            stroke; empty on every non-pseudoknot tier.
     """
 
     x: list[float]
@@ -87,6 +125,9 @@ class LayoutResult:
     report: OverlapReport
     flagged: bool
     node_r: float
+    pair_map: list[int] | None = None
+    crossing_pairs: list[tuple[int, int]] = field(default_factory=list)
+    crossing_lines: list[RoutedLine] = field(default_factory=list)
 
 
 class EngineError(Exception):
@@ -141,6 +182,36 @@ def has_empty_loop(secstruct: str) -> bool:
     return "()" in secstruct
 
 
+def params_at_node_r(params: OverlapParams, node_r: float) -> OverlapParams:
+    """Rescale `OverlapParams` to a different `node_r`, preserving ratios.
+
+    Factored out of `iter_adaptive_params` so other callers can gate at an
+    EXACT radius chosen elsewhere -- e.g. the pseudoknot layout path
+    (`rna_draw.layout.pseudoknot`) must check its crossing connectors at
+    the SAME radius the nested layout already resolved (and the renderer
+    will draw at), not a fresh default `OverlapParams()`.
+
+    Args:
+        params: Reference geometry; its half-width-to-`node_r` ratios are
+            preserved.
+        node_r: The target disk radius.
+
+    Returns:
+        `OverlapParams` at `node_r`, with `backbone_half_width` and
+        `pair_half_width` scaled to match `params`'s own ratios, and
+        `params.tol` carried through unchanged.
+    """
+    target = params.node_r
+    bb_ratio = params.backbone_half_width / target if target else 0.75
+    pr_ratio = params.pair_half_width / target if target else 0.75
+    return OverlapParams(
+        node_r=node_r,
+        backbone_half_width=bb_ratio * node_r,
+        pair_half_width=pr_ratio * node_r,
+        tol=params.tol,
+    )
+
+
 def iter_adaptive_params(params: OverlapParams) -> Iterator[OverlapParams]:
     """Yield `OverlapParams` at a descending node-radius ladder.
 
@@ -164,17 +235,9 @@ def iter_adaptive_params(params: OverlapParams) -> Iterator[OverlapParams]:
     """
     target = params.node_r
     floor = target * MIN_NODE_R_FRACTION
-    bb_ratio = params.backbone_half_width / target if target else 0.75
-    pr_ratio = params.pair_half_width / target if target else 0.75
-
     radius = target
     while radius >= floor - 1e-9:
-        yield OverlapParams(
-            node_r=radius,
-            backbone_half_width=bb_ratio * radius,
-            pair_half_width=pr_ratio * radius,
-            tol=params.tol,
-        )
+        yield params_at_node_r(params, radius)
         radius -= NODE_R_STEP
 
 
@@ -194,6 +257,7 @@ def empty_report() -> OverlapReport:
 __all__ = [
     "LayoutEngine",
     "LayoutResult",
+    "RoutedLine",
     "EngineError",
     "EngineUnavailableError",
     "MIN_NODE_R_FRACTION",
@@ -202,4 +266,5 @@ __all__ = [
     "has_empty_loop",
     "empty_report",
     "iter_adaptive_params",
+    "params_at_node_r",
 ]
