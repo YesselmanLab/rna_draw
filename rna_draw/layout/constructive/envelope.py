@@ -36,6 +36,8 @@ not just adjacent ones, at least as far apart as their combined extents).
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from rna_draw.layout.structure_tree import Branch, Loop, StructureTree, collapse_stem
@@ -791,6 +793,65 @@ def _loop_slots(
     return slots
 
 
+def branch_disk(
+    closing_pair: tuple[int, int], x: Sequence[float], y: Sequence[float], cache: ReachCache
+) -> tuple[tuple[float, float], float]:
+    """The disjointness certificate's own disk for one already-placed branch.
+
+    Every sibling-subtree disjointness relation `pack_loop_angles`/
+    `pack_line_positions` proves (see the module docstring) is a statement
+    about exactly this disk: centered at the branch's own attachment point
+    (`closing_pair[0]`'s placed coordinate), radius `branch_reach`. A rigid
+    rotation or reflection about that same center leaves this disk
+    UNCHANGED, which is the soundness argument the area-minimization pass
+    (`area_min.py`) relies on for its per-branch orientation DOF.
+
+    Args:
+        closing_pair: The branch's outermost pair.
+        x: Placed nucleotide x-coordinates.
+        y: Placed nucleotide y-coordinates.
+        cache: A `ReachCache` whose `branch_reach` already covers
+            `closing_pair` (populated by the build that placed `x`/`y`).
+
+    Returns:
+        `(center, radius)`.
+
+    Raises:
+        KeyError: If `closing_pair`'s reach was never computed.
+    """
+    i = closing_pair[0]
+    return (x[i], y[i]), cache.branch_reach[closing_pair]
+
+
+def disks_disjoint(disks: Sequence[tuple[tuple[float, float], float]], tol: float = 1e-6) -> bool:
+    """Whether every pair of `(center, radius)` disks is pairwise disjoint.
+
+    A read-only geometric certificate check (center distance `>=` radius
+    sum) -- the exact relation the sound build's own packers already prove
+    for sibling subtrees; used here to VERIFY that relation still holds on
+    real coordinates, never to (re)compute it. Two ADJACENT slots on a
+    packed loop touch EXACTLY at their shared boundary (`pack_loop_angles`'
+    own chord proof, the module docstring's "boundary case"), so `tol`
+    absorbs floating-point noise at that exact boundary the same way the
+    frozen checker's own `OverlapParams.tol` does -- never enough to hide a
+    genuine overlap.
+
+    Args:
+        disks: Each `(center, radius)` to test pairwise.
+        tol: Tolerance subtracted from the required clearance before
+            flagging an overlap (matches `OverlapParams.tol`'s default).
+
+    Returns:
+        True iff no two disks overlap beyond `tol`.
+    """
+    for idx, (center_a, radius_a) in enumerate(disks):
+        for center_b, radius_b in disks[idx + 1 :]:
+            dist = math.hypot(center_a[0] - center_b[0], center_a[1] - center_b[1])
+            if dist < radius_a + radius_b - tol:
+                return False
+    return True
+
+
 __all__ = [
     "RHO_MARGIN",
     "ReachCache",
@@ -800,4 +861,6 @@ __all__ = [
     "lateral_reach",
     "bulge_split",
     "loop_packing",
+    "branch_disk",
+    "disks_disjoint",
 ]

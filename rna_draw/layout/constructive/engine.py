@@ -49,7 +49,7 @@ from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
 
-from . import compaction, envelope
+from . import area_min, compaction, envelope
 from .geometry_helpers import (
     EXTERIOR_AXIS,
     Point,
@@ -290,39 +290,184 @@ def _build_verified(
 def _compact_or_keep(
     tree: StructureTree, pair_map: list[int], state: _LayoutState
 ) -> tuple[list[float], list[float]]:
-    """Try the M3 checker-gated compaction pass; keep it only if still clean.
+    """Run M3 compaction + the area-min rotation/fold pass, monotone
+    end-to-end: never returns a layout bigger than plain compaction alone.
 
     `state.x`/`state.y` are already checker-clean (the "sound" layout).
-    `compaction.compact_layout` only ever applies a move it has itself
-    locally verified against the frozen checker, so this whole-structure
-    re-check is belt-and-suspenders, not the primary safety mechanism --
-    but it is what makes the never-silent-overlap contract airtight even if
-    a local check's scope assumption ever turns out to be wrong.
+    Each of `area_min.rotate_branches`, `compaction.compact_layout`, and
+    `area_min.fold_exterior` only ever applies a move it has itself
+    verified (via a targeted certificate or a local check) against the
+    frozen checker, so the `check_overlaps` re-checks each stage runs
+    through (`_keep_if_clean`) are belt-and-suspenders, not the primary
+    safety mechanism -- but they make the never-silent-overlap contract
+    airtight even if a local check's or a certificate's own scope
+    assumption ever turns out to be wrong.
+
+    `rotate_branches` is greedy against the SOUND bbox, which is not always
+    what best serves `compact_layout`'s own (different) tangential-width
+    objective downstream -- measured on a real hard-set structure, a
+    rotation that shrank the sound bbox left compaction with a WORSE
+    tangential shape to work from, growing the final area. So both the
+    rotate-first and skip-rotation pipelines are built and the smaller
+    final result is kept (`_smaller_bbox`) -- the only way to guarantee
+    this pass never regresses a structure's rendered area, not just each
+    stage's own local input.
 
     Args:
         tree: The structure tree the sound layout was built from.
         pair_map: Entry `i` holds the partner index of nucleotide `i`, or
             `-1` if unpaired.
         state: The just-verified sound `_LayoutState` (its `cache` holds
-            the sound `loop_packing` the compaction pass compares against).
+            the sound `loop_packing`/`degree2_pinned` every stage compares
+            against or gates on).
 
     Returns:
-        The compacted `(x, y)` if it stays checker-clean, else the
-        pre-compaction sound `(x, y)`.
+        The smallest-bbox `(x, y)` that stayed checker-clean, falling back
+        as far as the sound `(x, y)`.
+    """
+    params = OverlapParams()
+    rotated_result = _rotate_compact_fold(tree, pair_map, state, params)
+    plain_result = _compact_then_fold(tree, pair_map, state, params, state.x, state.y)
+    return _smaller_bbox(rotated_result, plain_result, state.params.PRIMARY_SPACE)
+
+
+def _rotate_compact_fold(
+    tree: StructureTree, pair_map: list[int], state: _LayoutState, params: OverlapParams
+) -> tuple[list[float], list[float]]:
+    """`rotate_branches` on the sound layout, then `_compact_then_fold`.
+
+    Args:
+        tree: The structure tree the sound layout was built from.
+        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
+            `-1` if unpaired.
+        state: The just-verified sound `_LayoutState`.
+        params: Checker geometry.
+
+    Returns:
+        A checker-clean `(x, y)`, monotone against the sound layout.
+    """
+    rotated_x, rotated_y = area_min.rotate_branches(
+        tree, state.x, state.y, pair_map, state.params, params, state.cache, state.margin_scale
+    )
+    base_x, base_y = _keep_if_clean(rotated_x, rotated_y, pair_map, params, state.x, state.y)
+    return _compact_then_fold(tree, pair_map, state, params, base_x, base_y)
+
+
+def _compact_then_fold(
+    tree: StructureTree,
+    pair_map: list[int],
+    state: _LayoutState,
+    params: OverlapParams,
+    base_x: list[float],
+    base_y: list[float],
+) -> tuple[list[float], list[float]]:
+    """`compaction.compact_layout` then `area_min.fold_exterior` on `(base_x, base_y)`.
+
+    Stage order is load-bearing: `fold_exterior` re-derives its own
+    arrangement from each member's CURRENT footprint (sound at any pipeline
+    position), and is most effective AFTER compaction has already
+    tightened every subtree -- only then does the exterior's own open line
+    dominate a big structure's remaining sprawl (see `area_min.py`'s
+    module docstring).
+
+    Args:
+        tree: The structure tree the sound layout was built from.
+        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
+            `-1` if unpaired.
+        state: The just-verified sound `_LayoutState`.
+        params: Checker geometry.
+        base_x: Checker-clean x-coordinates to compact from.
+        base_y: Checker-clean y-coordinates to compact from.
+
+    Returns:
+        A checker-clean `(x, y)`, monotone against `(base_x, base_y)`.
     """
     compact_x, compact_y = compaction.compact_layout(
-        tree,
-        state.x,
-        state.y,
-        pair_map,
-        state.params,
-        OverlapParams(),
-        state.cache,
-        state.margin_scale,
+        tree, base_x, base_y, pair_map, state.params, params, state.cache, state.margin_scale
     )
-    if check_overlaps(compact_x, compact_y, pair_map, OverlapParams()).passed:
-        return compact_x, compact_y
-    return state.x, state.y
+    base_x, base_y = _keep_if_clean(compact_x, compact_y, pair_map, params, base_x, base_y)
+
+    folded_x, folded_y = area_min.fold_exterior(
+        tree, base_x, base_y, pair_map, state.params, params, state.margin_scale
+    )
+    return _keep_if_clean(folded_x, folded_y, pair_map, params, base_x, base_y)
+
+
+def _smaller_bbox(
+    a: tuple[list[float], list[float]], b: tuple[list[float], list[float]], primary_space: float
+) -> tuple[list[float], list[float]]:
+    """Whichever of two checker-clean candidate layouts renders smaller.
+
+    Compares bbox area AFTER the same rescale-to-`primary_space` step the
+    caller (`_rescale_or_keep_clean`) applies to whichever candidate wins --
+    two pipelines can have very different median backbone steps (e.g. a
+    folded exterior packs many short within-row steps against a few long
+    row-transition ones), so their RAW bbox areas do not rank the same way
+    their final, rendered areas do; comparing raw area risked picking the
+    candidate that looks smaller now but rescales larger (measured: a real
+    fuzz seed regressed 2x-5x under a raw-area comparison). Returns the
+    winning candidate's own (still unscaled) coordinates -- the caller
+    rescales it exactly once, at the existing call site.
+
+    Args:
+        a: First candidate `(x, y)`.
+        b: Second candidate `(x, y)`.
+        primary_space: Target median backbone step (see `rescale_coords`).
+
+    Returns:
+        `a` if its rescaled bbox area is `<= b`'s, else `b`.
+    """
+    area_a = _rescaled_bbox_area(a, primary_space)
+    area_b = _rescaled_bbox_area(b, primary_space)
+    return a if area_a <= area_b else b
+
+
+def _rescaled_bbox_area(candidate: tuple[list[float], list[float]], primary_space: float) -> float:
+    """A candidate's bbox area after rescaling to `primary_space`, if possible.
+
+    Args:
+        candidate: `(x, y)` to measure.
+        primary_space: Target median backbone step.
+
+    Returns:
+        The rescaled bbox area, or the RAW bbox area if rescaling is not
+        computable (e.g. a degenerate zero median step) -- a reasonable
+        fallback since `_rescale_or_keep_clean` itself falls back to the
+        raw coordinates in that same case.
+    """
+    x, y = candidate
+    try:
+        rx, ry = rescale_coords(x, y, primary_space)
+    except ValueError:
+        rx, ry = x, y
+    return (max(rx) - min(rx)) * (max(ry) - min(ry))
+
+
+def _keep_if_clean(
+    candidate_x: list[float],
+    candidate_y: list[float],
+    pair_map: list[int],
+    params: OverlapParams,
+    fallback_x: list[float],
+    fallback_y: list[float],
+) -> tuple[list[float], list[float]]:
+    """A candidate layout if checker-clean, else the pre-stage fallback.
+
+    Args:
+        candidate_x: A pipeline stage's proposed x-coordinates.
+        candidate_y: A pipeline stage's proposed y-coordinates.
+        pair_map: Entry `i` holds the partner index of nucleotide `i`, or
+            `-1` if unpaired.
+        params: Checker geometry.
+        fallback_x: The previous (already-verified-clean) stage's x-coordinates.
+        fallback_y: The previous (already-verified-clean) stage's y-coordinates.
+
+    Returns:
+        `(candidate_x, candidate_y)` if clean, else `(fallback_x, fallback_y)`.
+    """
+    if check_overlaps(candidate_x, candidate_y, pair_map, params).passed:
+        return candidate_x, candidate_y
+    return fallback_x, fallback_y
 
 
 def _ensure_recursion_headroom(n: int) -> None:
