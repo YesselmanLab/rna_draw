@@ -169,7 +169,10 @@ class TestCompactionIsMonotone:
         tree = build_structure_tree(pair_map)
         cache = envelope.ReachCache()
         state = _LayoutState(
-            tree=tree, x=[0.0] * len(secstruct), y=[0.0] * len(secstruct), params=PARAMS,
+            tree=tree,
+            x=[0.0] * len(secstruct),
+            y=[0.0] * len(secstruct),
+            params=PARAMS,
             cache=cache,
         )
         _place_exterior(state)
@@ -188,7 +191,10 @@ class TestCompactionIsMonotone:
         tree = build_structure_tree(pair_map)
         cache = envelope.ReachCache()
         state = _LayoutState(
-            tree=tree, x=[0.0] * len(secstruct), y=[0.0] * len(secstruct), params=PARAMS,
+            tree=tree,
+            x=[0.0] * len(secstruct),
+            y=[0.0] * len(secstruct),
+            params=PARAMS,
             cache=cache,
         )
         try:

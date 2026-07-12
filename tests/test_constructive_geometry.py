@@ -8,6 +8,7 @@ BY CONSTRUCTION on 50 synthetic structures.
 from __future__ import annotations
 
 import math
+import random
 import statistics
 
 import pytest
@@ -15,8 +16,10 @@ import pytest
 from rna_draw.layout.base import EngineError
 from rna_draw.layout.constructive import ConstructiveEngine
 from rna_draw.layout.constructive.geometry_helpers import (
+    _two_seam_fits,
     pack_bulge_linear,
     pack_loop_angles,
+    pack_two_seam_angles,
     place_bulge_geometry,
     place_stem,
 )
@@ -141,6 +144,86 @@ class TestPackLoopAngles:
     def test_rejects_nonpositive_radius_step(self) -> None:
         with pytest.raises(ValueError):
             pack_loop_angles([10.0], 5.0, radius_floor=1.0, radius_step=0.0)
+
+
+def _chord(angle_a: float, angle_b: float, radius: float) -> float:
+    """Straight-line distance between two points at `radius`, `angle` apart."""
+    gap = abs(angle_a - angle_b)
+    gap = min(gap, 2.0 * math.pi - gap)
+    return 2.0 * radius * math.sin(gap / 2.0)
+
+
+class TestPackTwoSeamAngles:
+    """`pack_two_seam_angles`: the degree-2 collinear-continuation packer
+    (`envelope._degree2_packing`) -- pins the dominant child `dom` at
+    exactly `pi`, everything else split into two `<= pi` seam-to-seam arcs.
+    """
+
+    def test_dom_lands_at_exactly_pi(self) -> None:
+        packing = pack_two_seam_angles(
+            before_half_widths=[10.0, 12.0],
+            after_half_widths=[8.0],
+            dom_half_width=500.0,
+            reserved_half_width=20.0,
+            radius_floor=1.0,
+            radius_step=1.0,
+        )
+        dom_angle = packing.angles[2]  # 2 before + dom + 1 after
+        assert math.isclose(dom_angle, math.pi, abs_tol=1e-9)
+
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [([], []), ([10.0], []), ([], [10.0]), ([10.0, 12.0], [8.0, 9.0, 7.0])],
+    )
+    def test_angles_strictly_increasing_and_in_range(
+        self, before: list[float], after: list[float]
+    ) -> None:
+        packing = pack_two_seam_angles(before, after, 50.0, 15.0, radius_floor=1.0, radius_step=1.0)
+        assert packing.angles == sorted(packing.angles)
+        assert all(0.0 < a < 2.0 * math.pi for a in packing.angles)
+
+    def test_radius_is_smallest_fitting_grid_point(self) -> None:
+        before, after, dom_hw, reserved = [10.0, 11.0], [9.0], 40.0, 12.0
+        radius_floor, radius_step = 1.0, 0.5
+        packing = pack_two_seam_angles(before, after, dom_hw, reserved, radius_floor, radius_step)
+
+        n_steps = round((packing.radius - radius_floor) / radius_step)
+        assert math.isclose(packing.radius, radius_floor + n_steps * radius_step, abs_tol=1e-9)
+        if n_steps > 0:
+            smaller_radius = radius_floor + (n_steps - 1) * radius_step
+            assert not _two_seam_fits(before, after, dom_hw, reserved, smaller_radius)
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_chord_invariant_holds_for_all_pairs_including_seams(self, seed: int) -> None:
+        """`chord(i, k) >= half_width_i + half_width_k` for EVERY pair of
+        slots -- adjacent or not, on the same arc or straddling `dom`'s own
+        seam, and including the two seams (`dom`, `reserved`) themselves --
+        the disjointness invariant `pack_two_seam_angles`'s own docstring
+        claims (mirroring `pack_loop_angles`'s proof, see the module
+        docstring).
+        """
+        rng = random.Random(seed)
+        before = [rng.uniform(5.0, 60.0) for _ in range(rng.randint(0, 4))]
+        after = [rng.uniform(5.0, 60.0) for _ in range(rng.randint(0, 4))]
+        dom_hw = rng.uniform(5.0, 2000.0)
+        reserved = rng.uniform(5.0, 60.0)
+        radius_floor = max([reserved, 10.0, dom_hw, *before, *after]) + 1.0
+
+        packing = pack_two_seam_angles(before, after, dom_hw, reserved, radius_floor, 1.0)
+        half_widths = [*before, dom_hw, *after, reserved]
+        angles = [*packing.angles, 0.0]  # reserved sits at angle 0
+
+        for i in range(len(angles)):
+            for k in range(i + 1, len(angles)):
+                chord = _chord(angles[i], angles[k], packing.radius)
+                assert chord >= half_widths[i] + half_widths[k] - 1e-6, (
+                    f"seed {seed}: chord {chord} < required "
+                    f"{half_widths[i] + half_widths[k]} for slots {i}, {k}"
+                )
+
+    def test_rejects_nonpositive_radius_step(self) -> None:
+        with pytest.raises(ValueError):
+            pack_two_seam_angles([10.0], [], 20.0, 5.0, radius_floor=1.0, radius_step=0.0)
 
 
 class TestPackBulgeLinear:

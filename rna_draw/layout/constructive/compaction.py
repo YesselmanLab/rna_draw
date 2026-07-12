@@ -232,17 +232,37 @@ def _compact_exterior(state: _CompactionState, cache: envelope.ReachCache) -> No
 
 
 def _compact_branch(state: _CompactionState, cache: envelope.ReachCache, branch: Branch) -> None:
-    """Compact a branch's children first (bottom-up), then its own loop."""
+    """Compact a branch's children first (bottom-up), then its own loop.
+
+    A degree-2 loop (`len(children) == 2`) that `envelope.loop_packing`
+    actually PINNED (`cache.degree2_pinned`, see `envelope._degree2_packing`
+    -- its dominant child placed as a collinear straight continuation) is
+    deliberately NOT re-packed by `_compact_multiloop` here:
+    `_compact_multiloop`'s tighter re-pack always uses the ordinary
+    full-circle packer, and re-running it would silently discard the
+    collinear layout for a (usually marginal) tangential-tightening gain.
+    A degree-2 loop that was NOT pinned (the common case -- most degree-2
+    loops are short, ordinary multiloops in disguise; see
+    `envelope._DEGREE2_CHAIN_LENGTH_FLOOR`) is just a full-circle packing
+    like any other multiloop, and gets the SAME compaction treatment one
+    would have gotten before this fix -- skipping it unconditionally would
+    regress every one of those (measured: a real hard-set structure's
+    rendered bounding box grew ~60x when this was skipped unconditionally).
+    This is safe either way (`_compact_multiloop` is gated by comparing
+    against the sound radius, and `_compact_or_keep` re-verifies the whole
+    structure).
+    """
     if _deadline_hit(state):
         return
     _, loop = collapse_stem(state.tree, branch.closing_pair)
-    if len(loop.children) >= 2:
-        for child in loop.children:
-            _compact_branch(state, cache, child)
-        if not _deadline_hit(state):
-            _compact_multiloop(state, cache, loop)
-    elif len(loop.children) == 1:
-        _compact_branch(state, cache, loop.children[0])
+    for child in loop.children:
+        _compact_branch(state, cache, child)
+    if _deadline_hit(state):
+        return
+    nch = len(loop.children)
+    pinned = loop.closing_pair is not None and cache.degree2_pinned.get(loop.closing_pair, False)
+    if nch >= 3 or (nch == 2 and not pinned):
+        _compact_multiloop(state, cache, loop)
 
 
 def _axis_dir_from_rung(tip_a: Point, tip_b: Point, pair_space: float) -> Point:

@@ -327,6 +327,220 @@ def pack_loop_angles(
     )
 
 
+def _seam_arc_required_angle(
+    side_half_widths: list[float], dom_half_width: float, reserved_half_width: float, radius: float
+) -> float:
+    """Angular span one seam-to-seam arc needs (reserved's edge to dom's).
+
+    Half the reserved sector's own width, plus every interior slot on this
+    side's full width in structure order, plus half the dominant child
+    `dom`'s width -- the same additive budget `_total_required_angle` sums
+    for a full circle (`pack_loop_angles`), but scoped to just one HALF: the
+    span from the reserved sector's center (angle `0`) to the dominant
+    child's own seat, pinned diametrically opposite it at angle `pi` (see
+    `pack_two_seam_angles`).
+
+    Args:
+        side_half_widths: This arc's own interior slots' chord-clearance
+            half-widths, in structure order.
+        dom_half_width: The dominant child's (anisotropic) half-width.
+        reserved_half_width: The reserved sector's chord-clearance half-width.
+        radius: Candidate loop-circle radius.
+
+    Returns:
+        The arc's total required angular span at `radius`.
+    """
+    total = _angular_half_width(reserved_half_width, radius)
+    total += _angular_half_width(dom_half_width, radius)
+    for half_width in side_half_widths:
+        total += 2.0 * _angular_half_width(half_width, radius)
+    return total
+
+
+def _two_seam_fits(
+    before_half_widths: list[float],
+    after_half_widths: list[float],
+    dom_half_width: float,
+    reserved_half_width: float,
+    radius: float,
+) -> bool:
+    """Whether BOTH seam-to-seam arcs fit within `pi` at `radius`.
+
+    Pinning the dominant child exactly opposite the reserved seam splits
+    the circle into two INDEPENDENT half-circle budgets instead of one
+    shared `2 * pi` budget -- see `pack_two_seam_angles`'s docstring for why
+    that (rather than a looser combined `<= 2 * pi` check) is what its
+    disjointness argument needs.
+
+    Args:
+        before_half_widths: Interior slots before the dominant child, in
+            structure order.
+        after_half_widths: Interior slots after the dominant child, in
+            structure order.
+        dom_half_width: The dominant child's half-width.
+        reserved_half_width: The reserved sector's chord-clearance half-width.
+        radius: Candidate loop-circle radius.
+
+    Returns:
+        Whether both arcs' required angle is `<= pi` at `radius`.
+    """
+    arc_a = _seam_arc_required_angle(
+        before_half_widths, dom_half_width, reserved_half_width, radius
+    )
+    arc_b = _seam_arc_required_angle(after_half_widths, dom_half_width, reserved_half_width, radius)
+    return arc_a <= math.pi and arc_b <= math.pi
+
+
+def _seam_arc_angles(
+    side_half_widths: list[float], start_angle: float, end_angle: float, radius: float
+) -> list[float]:
+    """Slot center angles within one seam-to-seam arc, slack split evenly.
+
+    Same slack-splitting idiom as `_angles_at` (see its docstring), just
+    scoped between two fixed endpoints (`start_angle`, `end_angle`) instead
+    of wrapping the reserved sector's edge all the way around `2 * pi`.
+
+    Args:
+        side_half_widths: This arc's own interior slots' half-widths, in
+            structure order.
+        start_angle: The arc's starting edge (the reserved sector's or the
+            dominant child's own half-angle edge).
+        end_angle: The arc's ending edge.
+        radius: A radius for which this arc's required angle is `<= end_angle
+            - start_angle`.
+
+    Returns:
+        One center angle per slot, strictly increasing, within `(start_angle,
+        end_angle)`.
+    """
+    half_angles = [_angular_half_width(hw, radius) for hw in side_half_widths]
+    slack = (end_angle - start_angle) - sum(2.0 * ha for ha in half_angles)
+    cursor = start_angle + slack / 2.0
+    angles = []
+    for half_angle in half_angles:
+        cursor += half_angle
+        angles.append(cursor)
+        cursor += half_angle
+    return angles
+
+
+def _two_seam_angles(
+    before_half_widths: list[float],
+    after_half_widths: list[float],
+    dom_half_width: float,
+    reserved_half_width: float,
+    radius: float,
+) -> list[float]:
+    """Every slot's center angle at a `radius` already known to fit.
+
+    Args:
+        before_half_widths: Interior slots before the dominant child.
+        after_half_widths: Interior slots after the dominant child.
+        dom_half_width: The dominant child's half-width.
+        reserved_half_width: The reserved sector's chord-clearance half-width.
+        radius: A fitting radius (`_two_seam_fits` is true at it).
+
+    Returns:
+        One angle per `before_half_widths` entry (increasing, ending before
+        `pi`), then exactly `pi` (the dominant child), then one angle per
+        `after_half_widths` entry (increasing, from just past `pi`) -- the
+        same order as `before_half_widths ++ [dom] ++ after_half_widths`.
+    """
+    reserved_half_angle = _angular_half_width(reserved_half_width, radius)
+    dom_half_angle = _angular_half_width(dom_half_width, radius)
+    before_angles = _seam_arc_angles(
+        before_half_widths, reserved_half_angle, math.pi - dom_half_angle, radius
+    )
+    after_angles = _seam_arc_angles(
+        after_half_widths, math.pi + dom_half_angle, 2.0 * math.pi - reserved_half_angle, radius
+    )
+    return [*before_angles, math.pi, *after_angles]
+
+
+def pack_two_seam_angles(
+    before_half_widths: list[float],
+    after_half_widths: list[float],
+    dom_half_width: float,
+    reserved_half_width: float,
+    radius_floor: float,
+    radius_step: float,
+    max_steps: int = 100_000,
+) -> LoopPacking:
+    """Circular packing with one slot pinned collinear, opposite the seam.
+
+    Like `pack_loop_angles`, but reserves the DOMINANT child `dom`'s own
+    seat at EXACTLY angle `pi` -- diametrically opposite the reserved
+    sector at angle `0` -- instead of letting it fall wherever the fixed
+    structure order places it. `dom_half_width` is then free to be
+    `envelope.lateral_reach(dom)`, an ANISOTROPIC bound (dom's subtree
+    stays within `dom_half_width` of the RADIAL ray through its own anchor,
+    but can extend arbitrarily far ALONG that ray), instead of `dom`'s
+    isotropic `branch_reach` disk -- what makes a long chain of degree-2
+    loops (`envelope._degree2_packing`) grow LINEARLY instead of ~3x per
+    level (see that function's docstring).
+
+    SOUNDNESS: pinning `dom` at `pi` splits the fitting condition into two
+    INDEPENDENT half-circle arcs (`_two_seam_fits`) instead of one shared
+    `2 * pi` budget. Within EITHER arc, every pair of slots (adjacent or
+    not, including a slot and the reserved/dom seam bounding that arc) is
+    exactly `pack_loop_angles`'s own chord argument, scoped to a `<= pi`
+    sub-budget instead of `<= 2 * pi` -- a strictly EASIER case, so that
+    proof (see the module docstring) applies unchanged. The only NEW case
+    is a "before"-side slot versus an "after"-side slot: they are never
+    each other's angular neighbor (`dom`'s own seat, symmetric about `pi`,
+    always separates them going either way around the circle), so the only
+    question is whether either one's disk can graze `dom`'s own CORRIDOR --
+    every child on a circular loop is placed with `axis_dir` = the radial
+    direction from the loop's center through its own anchor (see
+    `engine._place_circular_loop_members`), so `dom`'s subtree radiates
+    OUTWARD along the ray through `pi`, staying within `dom_half_width` of
+    it. That neighbor is already `dom`'s own adjacent slot (covered by the
+    chord argument AT the circle, radius `r`); moving further OUTWARD along
+    `dom`'s own ray only increases separation from a sibling disk that sits
+    off that ray, so the corridor never re-approaches a disk it started
+    clear of.
+
+    Args:
+        before_half_widths: Chord-clearance half-widths of the interior
+            slots BEFORE `dom` in structure order (a member that is
+            `dom.start` is excluded; use `envelope.lateral_reach(dom)` via
+            `dom_half_width` instead).
+        after_half_widths: Half-widths of the interior slots AFTER `dom`.
+        dom_half_width: The dominant child's own (anisotropic) half-width.
+        reserved_half_width: Chord-clearance half-width of the sector
+            reserved for the loop's own closing-pair stem.
+        radius_floor: Smallest radius the grid search tries.
+        radius_step: Grid step size; must be `> 0`.
+        max_steps: Safety cap on grid steps (see `pack_loop_angles`).
+
+    Returns:
+        `LoopPacking(radius, angles)`, `angles` in
+        `before_half_widths ++ [dom] ++ after_half_widths` order -- the
+        same order as `loop.members[1:-1]` with `dom`'s own slot at its
+        rightful index, so the existing placement code
+        (`engine._place_circular_loop_members`) consumes it unchanged.
+
+    Raises:
+        ValueError: If `radius_step <= 0`.
+        RuntimeError: If no radius within `max_steps` grid points fits.
+    """
+    if radius_step <= 0.0:
+        raise ValueError(f"pack_two_seam_angles requires radius_step > 0, got {radius_step}")
+    for step in range(max_steps):
+        radius = radius_floor + step * radius_step
+        if _two_seam_fits(
+            before_half_widths, after_half_widths, dom_half_width, reserved_half_width, radius
+        ):
+            angles = _two_seam_angles(
+                before_half_widths, after_half_widths, dom_half_width, reserved_half_width, radius
+            )
+            return LoopPacking(radius, angles)
+    raise RuntimeError(
+        f"pack_two_seam_angles: no fitting radius found within {max_steps} steps from "
+        f"{radius_floor} (step {radius_step})"
+    )
+
+
 def loop_member_point(center: Point, zero_dir: Point, radius: float, angle: float) -> Point:
     """A point on a loop's circle at `angle` counterclockwise from `zero_dir`.
 
@@ -498,6 +712,7 @@ __all__ = [
     "stem_base_for_attachment",
     "place_stem",
     "pack_loop_angles",
+    "pack_two_seam_angles",
     "pack_bulge_linear",
     "place_bulge_geometry",
     "pack_line_positions",

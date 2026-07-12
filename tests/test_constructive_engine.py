@@ -165,6 +165,135 @@ class TestBulgeChainStraightPlacement:
         assert check_overlaps(x, y, pair_map, PARAMS_OVERLAP).passed
 
 
+def make_degree2_chain(levels: int, side_loop: int = 3, main_loop: int = 3) -> str:
+    """A chain of `levels` nested degree-2 multiloops (one small side
+    hairpin + one continuing branch each), ending in a `main_loop`-nt
+    terminal hairpin -- the pattern `envelope._degree2_packing`'s collinear
+    straight-continuation targets: common in real rRNA, and what used to
+    compound `envelope.branch_reach` ~3x PER NESTING LEVEL before this fix
+    (see `engine.py`'s `_MAX_REACH` docstring).
+
+    Args:
+        levels: Number of nested degree-2 loops in the chain.
+        side_loop: Unpaired nucleotide count in each level's side hairpin.
+        main_loop: Unpaired nucleotide count in the terminal hairpin loop.
+
+    Returns:
+        A dot-bracket structure.
+    """
+    inner = "(" + "." * main_loop + ")"
+    for _ in range(levels):
+        side = "(" + "." * side_loop + ")"
+        inner = "(" + side + inner + ")"
+    return inner
+
+
+class TestDegree2ChainStraightPlacement:
+    """The degree-2-chain envelope-compounding fix
+    (`envelope.lateral_reach`/`_degree2_packing`): once a run of nested
+    degree-2 multiloops is long enough to matter
+    (`envelope._DEGREE2_CHAIN_LENGTH_FLOOR`), the dominant child at every
+    level is pinned as a collinear straight continuation, sized by its
+    tighter, directional `lateral_reach` instead of its isotropic
+    `branch_reach` -- collapsing the circular envelope's `~3x`-per-level
+    compounding.
+    """
+
+    @pytest.mark.timeout(TIMEOUT)
+    @pytest.mark.parametrize("levels", [1, 3, 6, 10, 20, 30])
+    def test_degree2_chain_is_clean(self, levels: int) -> None:
+        _assert_clean(make_degree2_chain(levels))
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_lateral_reach_grows_linearly_not_exponentially(self) -> None:
+        """`envelope.lateral_reach` (NOT `branch_reach` -- see
+        `test_branch_reach_grows_boundedly_not_exponentially` below for why
+        that one is a different story) on a degree-2 chain of length `2N`
+        must stay within a small constant factor of length `N`'s reach:
+        `lateral_reach`'s own recursion (`radius + branch_reach(side) +
+        margin`, `envelope._degree2_lateral_reach`) adds a roughly CONSTANT
+        increment per level once every level is pinned, so doubling the
+        chain length should only roughly double it, not compound
+        exponentially.
+        """
+        from rna_draw.parameters import DrawParameters
+
+        params = DrawParameters()
+        short_secstruct = make_degree2_chain(20)
+        long_secstruct = make_degree2_chain(40)
+
+        short_tree = build_structure_tree(get_pairmap_from_secstruct(short_secstruct))
+        long_tree = build_structure_tree(get_pairmap_from_secstruct(long_secstruct))
+        short_branch = short_tree.exterior.children[0]
+        long_branch = long_tree.exterior.children[0]
+
+        short_reach = envelope.lateral_reach(
+            short_tree, short_branch.closing_pair, params, envelope.ReachCache()
+        )
+        long_reach = envelope.lateral_reach(
+            long_tree, long_branch.closing_pair, params, envelope.ReachCache()
+        )
+        assert long_reach / short_reach < 3.0, (
+            f"lateral_reach ratio {long_reach / short_reach:.2f} for doubled chain "
+            "length -- suggests exponential compounding is back"
+        )
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_branch_reach_grows_boundedly_not_exponentially(self) -> None:
+        """`envelope.branch_reach` itself stays POLYNOMIAL (empirically
+        quadratic), not exponential, down a degree-2 chain -- a dramatic
+        improvement over the pre-fix `~3^N`, though not as tight as
+        `lateral_reach`'s own linear growth (above). This is a genuine,
+        understood limit of the fix, not a bug: `_two_seam_packing`'s own
+        radius floor must include `dom`'s `lateral_reach` (needed for the
+        packer's chord-based disjointness argument to stay sound -- see
+        that function's docstring), so each level's own packing radius
+        tracks the (linearly growing) `lateral_reach` below it; `branch_
+        reach`'s `2 * radius + child_reach` formula (`_loop_branch_reach`,
+        deliberately UNCHANGED) then accumulates that linearly-growing
+        radius once per level, giving `O(N^2)` overall -- still comfortably
+        bounded (see `test_deep_chain_stays_far_under_the_reach_cap`), just
+        not asymptotically linear.
+        """
+        from rna_draw.parameters import DrawParameters
+
+        params = DrawParameters()
+        short_secstruct = make_degree2_chain(20)
+        long_secstruct = make_degree2_chain(40)
+
+        short_tree = build_structure_tree(get_pairmap_from_secstruct(short_secstruct))
+        long_tree = build_structure_tree(get_pairmap_from_secstruct(long_secstruct))
+        short_branch = short_tree.exterior.children[0]
+        long_branch = long_tree.exterior.children[0]
+
+        short_reach = envelope.branch_reach(
+            short_tree, short_branch.closing_pair, params, envelope.ReachCache()
+        )
+        long_reach = envelope.branch_reach(
+            long_tree, long_branch.closing_pair, params, envelope.ReachCache()
+        )
+        assert long_reach / short_reach < 6.0, (
+            f"branch_reach ratio {long_reach / short_reach:.2f} for doubled chain "
+            "length -- suggests exponential (not polynomial) compounding is back"
+        )
+
+    @pytest.mark.timeout(TIMEOUT)
+    def test_deep_chain_stays_far_under_the_reach_cap(self) -> None:
+        """A 60-level degree-2 chain (well past `_DEGREE2_CHAIN_LENGTH_
+        FLOOR`, and deeper than any real hard-set structure measured for
+        this fix) must still land far under `_MAX_REACH`, and its rendered
+        bounding box must stay of a similarly bounded (not astronomical)
+        size -- the pre-fix `~3^60` would be meaningless, unrepresentable
+        magnitude; the post-fix quadratic growth keeps it small.
+        """
+        secstruct = make_degree2_chain(60)
+        x, y = ConstructiveEngine().layout(secstruct)
+        pair_map = get_pairmap_from_secstruct(secstruct)
+        assert check_overlaps(x, y, pair_map, PARAMS_OVERLAP).passed
+        width, height = max(x) - min(x), max(y) - min(y)
+        assert width < 1e6 and height < 1e6, f"bbox {width} x {height} -- unexpectedly large"
+
+
 class TestTwoLevelNesting:
     """2b: a multiloop whose child is itself a multiloop of hairpins."""
 

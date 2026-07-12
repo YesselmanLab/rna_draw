@@ -74,10 +74,11 @@ from .geometry_helpers import (
 # `benchmarks/hard_set.json` 1200-4000nt bucket (100 structures, guard
 # bypassed for the measurement) -- 89/100 checker-clean by construction, the
 # other 11 a fast (<0.01s) `_MAX_REACH` bail on a DIFFERENT, still-circular
-# cause (long chains of degree-2 multiloops -- out of this fix's scope, see
-# `_MAX_REACH`'s docstring), 0 timeouts, 0 dirty, worst-case wall clock 7.3s
-# (well under the benchmark harness's 30s per-structure kill). No structure
-# past 4000nt has been measured -- do not raise further without new evidence.
+# cause (long chains of degree-2 multiloops) -- FIXED by
+# `envelope.lateral_reach`/`_degree2_packing` (see `_MAX_REACH`'s docstring),
+# 0 timeouts, 0 dirty, worst-case wall clock 7.3s (well under the benchmark
+# harness's 30s per-structure kill). No structure past 4000nt has been
+# measured -- do not raise further without new evidence.
 _MAX_NUCLEOTIDES = 4000
 
 # `_place_branch`/`_place_loop_members` recurse one Python stack frame per
@@ -102,17 +103,20 @@ _RECURSION_HEADROOM = 1000
 # 37.7% -> 99.1% (347/350), the 3 residual failures NOT bulge chains (see
 # below).
 #
-# This guard still exists because a DIFFERENT, still-circular cause
-# remains IN SCOPE for the circular envelope (deliberately unchanged --
-# see `_loop_branch_reach`'s docstring): a long CHAIN of small (often
-# degree-2) MULTIloops -- e.g. one big continuing branch plus a tiny
-# hairpin side branch, repeated many nesting levels deep in real rRNA --
-# still compounds `2 * packing.radius` per level the same way a bulge
-# chain used to. Diagnosed directly on 3 real hard-set structures that
-# still trip this guard (~750-810nt, reach ~9e6-1.5e7): each has 30+ nested
-# degree-2 multiloop levels. Fixing THAT is out of this fix's scope (the
-# task keeps circular packing for genuine multiloops); it would need its
-# own straight/tighter treatment for degree-2 loops specifically.
+# The 3 residual <=1200nt failures (and 11 more in the 1200-4000nt bucket)
+# were a DIFFERENT, still-circular cause: a long CHAIN of degree-2
+# multiloops -- one big "continuing" branch plus one small side branch
+# (e.g. a tiny hairpin), repeated many nesting levels deep in real rRNA --
+# compounding `2 * packing.radius` per level the same way a bulge chain
+# used to. FIXED by `envelope.lateral_reach`/`_degree2_packing`: a
+# degree-2 loop's DOMINANT child is now (when it pays off; see
+# `_degree2_packing`'s docstring) pinned as a collinear straight
+# continuation too, sized by its directional `lateral_reach` instead of
+# its isotropic `branch_reach`, so a degree-2 CHAIN's reach also grows
+# LINEARLY. This guard remains as the never-silent backstop for anything
+# still pathological (e.g. a giant 3+-way junction with two or more large
+# children -- genuinely isotropic, out of scope for a straight-
+# continuation fix) -- never removed, only its trigger rate driven down.
 #
 # THRESHOLD, calibrated against `benchmarks/hard_set.json` (bypassing this
 # guard and timing construction+check directly): time scales with
@@ -401,9 +405,9 @@ def _check_reach_bounded(extents: list[float]) -> None:
     if worst > _MAX_REACH:
         raise EngineError(
             f"ConstructiveEngine envelope reach {worst:.3g} exceeds the "
-            f"{_MAX_REACH:.3g} sanity cap (likely a long chain of single-child "
-            "bulge/interior loops compounding the envelope bound -- see "
-            "_MAX_REACH's docstring); route to a fallback engine instead"
+            f"{_MAX_REACH:.3g} sanity cap (likely a giant isotropic (3+-way) "
+            "junction compounding the envelope bound -- see _MAX_REACH's "
+            "docstring); route to a fallback engine instead"
         )
 
 
