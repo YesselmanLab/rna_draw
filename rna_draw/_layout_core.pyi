@@ -37,3 +37,30 @@ def plot_coords_puzzler_batch(
     clearance: float = 1.0,
     num_threads: int = 0,
 ) -> list[tuple[list[float], list[float], bool]]: ...
+def check_overlaps_count(
+    x: list[float],
+    y: list[float],
+    pair_map: list[int],
+    node_r: float = 10.0,
+    backbone_half_width: float = 7.5,
+    pair_half_width: float = 7.5,
+    tol: float = 1e-6,
+) -> int: ...
+def check_overlaps_report(
+    x: list[float],
+    y: list[float],
+    pair_map: list[int],
+    node_r: float = 10.0,
+    backbone_half_width: float = 7.5,
+    pair_half_width: float = 7.5,
+    tol: float = 1e-6,
+) -> list[tuple[str, str, int, str, int, float, float]]: ...
+def check_overlaps_batch(
+    xs: list[list[float]],
+    ys: list[list[float]],
+    pair_maps: list[list[int]],
+    node_rs: list[float],
+    half_width_factor: float = 0.75,
+    tol: float = 1e-6,
+    num_threads: int = 0,
+) -> list[int]: ...

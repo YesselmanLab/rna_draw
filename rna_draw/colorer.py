@@ -2,9 +2,15 @@ import matplotlib.colors
 import matplotlib.cm
 
 import numpy as np
-import seaborn as sns
 
 from rna_draw.parameters import RenderType
+
+# xkcd color-name -> hex, sourced from matplotlib (identical to seaborn's
+# xkcd_rgb: all 949 names, byte-identical hex values). Importing seaborn just
+# for this dict dragged in scipy/pandas/IPython and cost ~1.3s of startup time;
+# matplotlib is already a dependency, so we derive the same mapping from it and
+# strip the "xkcd:" key prefix that matplotlib adds.
+XKCD_RGB = {name.split(":", 1)[1]: hex_ for name, hex_ in matplotlib.colors.XKCD_COLORS.items()}
 
 COLORS = {
     "r": [255 / 255, 102 / 255, 102 / 255],
@@ -30,7 +36,6 @@ class Colorer(object):
     def get_rgb_colors(
         self, seq, ss, color_str=None, data=None, render_type=None, default_color=None
     ):
-
         if default_color is None:
             default_color = COLORS["e"]
 
@@ -119,9 +124,7 @@ class Colorer(object):
 
             for i in range(min_num - 1, max_num):
                 if set_colors[i]:
-                    raise ValueError(
-                        "position {} has two colors assigned to it".format(i)
-                    )
+                    raise ValueError("position {} has two colors assigned to it".format(i))
                 rgb_colors[i] = rgb_color
                 set_colors[i] = 1
 
@@ -175,7 +178,7 @@ def parse_color_code(color_code):
     if len(color_code) == 1:
         return COLORS[color_code]
 
-    elif color_code in sns.xkcd_rgb:
+    elif color_code in XKCD_RGB:
         return xkcd_color_name_to_rgb(color_code)
 
     else:
@@ -192,5 +195,5 @@ def color_by_data(data):
 
 
 def xkcd_color_name_to_rgb(name):
-    raw_rgb = matplotlib.colors.hex2color(sns.xkcd_rgb[name])
+    raw_rgb = matplotlib.colors.hex2color(XKCD_RGB[name])
     return raw_rgb

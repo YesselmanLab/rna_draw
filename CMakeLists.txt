@@ -195,6 +195,10 @@ set(RNA_LAYOUT_CORE_SOURCES
   src/layout_core/puzzler.cpp
   src/layout_core/debug_dump.cpp
   src/layout_core/batch.cpp
+  src/layout_core/overlap_geometry.cpp
+  src/layout_core/spatial_hash.cpp
+  src/layout_core/overlap_check.cpp
+  src/layout_core/overlap_batch.cpp
 )
 
 add_library(rna_layout_core STATIC ${RNA_LAYOUT_CORE_SOURCES})
@@ -220,7 +224,8 @@ foreach(rna_layout_test_name geometry_test config_test turtle_test tree_test
                              bounding_boxes_test config_tree_test bounding_wedge_test
                              intersections_test intersect_tree_test puzzler_test
                              deltas_test resolve_siblings_test resolve_ancestors_test
-                             optimize_test broad_phase_test)
+                             optimize_test broad_phase_test overlap_geometry_test
+                             spatial_hash_test overlap_check_test overlap_batch_test)
   add_executable(${rna_layout_test_name} src/layout_core/tests/${rna_layout_test_name}.cpp)
   target_link_libraries(${rna_layout_test_name} PRIVATE rna_layout_core)
   target_compile_options(${rna_layout_test_name} PRIVATE ${RNA_DRAW_FP_FLAGS})

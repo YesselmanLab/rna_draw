@@ -12,7 +12,7 @@ class DataUnittest(unittest.TestCase):
 
         with self.subTest("load data from file"):
             path = settings.Paths.UNITTEST_PATH + "/"
-            d = data.Data(data_file=path+"resources/test_data_file.dat")
+            d = data.Data(data_file=path + "resources/test_data_file.dat")
             self.assertTrue(d.vals == vals)
 
     def test_min_max(self):

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Joe Yesselman", email = "jyesselm@unl.edu" }]
 classifiers = ["Programming Language :: Python :: 3"]
-dependencies = ["matplotlib", "seaborn"]
+dependencies = ["matplotlib", "seaborn", "anywidget"]
 
 [project.optional-dependencies]
 # pytest-timeout: M5.1's `tests/test_vienna_binding.py` caps individual
@@ -21,6 +21,7 @@ dev = ["pytest", "pytest-cov", "pytest-timeout", "pytest-xdist", "ruff", "mypy"]
 
 [project.scripts]
 rna_draw = "rna_draw.draw:main"
+rna-draw-gui = "rna_draw.gui.desktop.app:main"
 
 # M5.1: switched from setuptools to scikit-build-core + CMake so the growing
 # C++ core (this milestone's ViennaRNA bindings, later M6/M7) has a proper

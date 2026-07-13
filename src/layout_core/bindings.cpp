@@ -37,6 +37,8 @@
 #include "rna_layout/config_tree.hpp"
 #include "rna_layout/debug_dump.hpp"
 #include "rna_layout/intersect_tree.hpp"
+#include "rna_layout/overlap_batch.hpp"
+#include "rna_layout/overlap_check.hpp"
 #include "rna_layout/pair_table.hpp"
 #include "rna_layout/puzzler.hpp"
 #include "rna_layout/resolve.hpp"
@@ -353,6 +355,72 @@ py::list dump_change_trace_binding(const std::string& structure, double paired, 
   return result;
 }
 
+/// `(kind_a_str, idx_a, kind_b_str, idx_b)` witness-identity tuple element,
+/// used by `check_overlaps_report_binding`'s return shape.
+using WitnessTuple = std::tuple<std::string, std::string, int, std::string, int, double, double>;
+
+/// Fast-path overlap-count entry point for the C++ overlap-checker twin
+/// (`.claude/plans/current-plan-checker.md`): builds an `OverlapParams`
+/// from the flat scalar arguments and returns only the total witness
+/// count -- the differential harness's `cpp_count` (`tests/
+/// test_overlap_native_parity.py`). Mirrors `rna_draw.overlap.
+/// check_overlaps(...).num_overlaps`; raises `ValueError` (via pybind11's
+/// `std::invalid_argument` translation) on malformed input, matching
+/// `_validate_inputs`'s contract (PLAN-CRITIC R2).
+int check_overlaps_count_binding(const std::vector<double>& x, const std::vector<double>& y,
+                                 const std::vector<int>& pair_map, double node_r,
+                                 double backbone_half_width, double pair_half_width, double tol) {
+  const rna_layout::overlap::OverlapParams params{node_r, backbone_half_width, pair_half_width,
+                                                  tol};
+  return rna_layout::overlap::check_overlaps(x, y, pair_map, params).num_overlaps();
+}
+
+/// Full witness-report entry point: every field the differential harness
+/// needs to build its witness-key set and compare separation/depth within
+/// `WITNESS_TOL` (`tests/test_overlap_native_parity.py`). Returns one
+/// `(kind, kind_a, idx_a, kind_b, idx_b, separation, overlap_depth)` tuple
+/// per witness, all string fields matching `rna_draw.overlap`'s own
+/// `OverlapKind.value`/`PrimitiveId.kind` strings exactly (`kind_str`,
+/// `overlap_check.hpp`).
+std::vector<WitnessTuple> check_overlaps_report_binding(const std::vector<double>& x,
+                                                        const std::vector<double>& y,
+                                                        const std::vector<int>& pair_map,
+                                                        double node_r, double backbone_half_width,
+                                                        double pair_half_width, double tol) {
+  const rna_layout::overlap::OverlapParams params{node_r, backbone_half_width, pair_half_width,
+                                                  tol};
+  const rna_layout::overlap::OverlapResult result =
+      rna_layout::overlap::check_overlaps(x, y, pair_map, params);
+
+  std::vector<WitnessTuple> out;
+  out.reserve(result.witnesses.size());
+  for (const rna_layout::overlap::Witness& witness : result.witnesses) {
+    out.emplace_back(rna_layout::overlap::kind_str(witness.kind),
+                     rna_layout::overlap::kind_str(witness.id_a.kind), witness.id_a.index,
+                     rna_layout::overlap::kind_str(witness.id_b.kind), witness.id_b.index,
+                     witness.separation, witness.overlap_depth);
+  }
+  return out;
+}
+
+/// Parallel batch counterpart, GIL released around the parallel region
+/// (mirrors `plot_coords_puzzler_batch`'s pattern): checks every structure
+/// in @p xs/@p ys/@p pair_maps for overlaps, one thread pool fanned out
+/// over the whole batch -- the throughput lever `benchmarks/
+/// qc_throughput.py` measures against a plain Python loop over
+/// `rna_draw.overlap.check_overlaps`. `half_width_factor=0.75` reproduces
+/// `pipeline_qc.py`'s `0.75 * node_r` convention.
+std::vector<int> check_overlaps_batch_binding(const std::vector<std::vector<double>>& xs,
+                                              const std::vector<std::vector<double>>& ys,
+                                              const std::vector<std::vector<int>>& pair_maps,
+                                              const std::vector<double>& node_rs,
+                                              double half_width_factor, double tol,
+                                              int num_threads) {
+  py::gil_scoped_release release_gil;
+  return rna_layout::overlap::check_overlaps_batch(xs, ys, pair_maps, node_rs, half_width_factor,
+                                                   tol, num_threads);
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_layout_core, m) {
@@ -443,4 +511,32 @@ PYBIND11_MODULE(_layout_core, m) {
         "parallel region. Returns one (x, y, ok) tuple per input structure, "
         "same order; ok=False marks a per-element failure (e.g. a malformed "
         "structure) without aborting the rest of the batch.");
+
+  m.def("check_overlaps_count", &check_overlaps_count_binding, py::arg("x"), py::arg("y"),
+        py::arg("pair_map"), py::arg("node_r") = 10.0, py::arg("backbone_half_width") = 7.5,
+        py::arg("pair_half_width") = 7.5, py::arg("tol") = 1e-6,
+        "C++ overlap-checker twin (fast path): total overlap-witness count "
+        "for one layout, mirroring rna_draw.overlap.check_overlaps(...)."
+        "num_overlaps exactly (verified by tests/test_overlap_native_parity.py). "
+        "Raises ValueError on malformed input (mismatched/empty lengths, "
+        "asymmetric pair_map), matching _validate_inputs's contract.");
+
+  m.def("check_overlaps_report", &check_overlaps_report_binding, py::arg("x"), py::arg("y"),
+        py::arg("pair_map"), py::arg("node_r") = 10.0, py::arg("backbone_half_width") = 7.5,
+        py::arg("pair_half_width") = 7.5, py::arg("tol") = 1e-6,
+        "C++ overlap-checker twin: full witness report for one layout as "
+        "list[tuple[kind, kind_a, idx_a, kind_b, idx_b, separation, "
+        "overlap_depth]] -- the differential-parity harness's witness-key "
+        "and coordinate comparison input (tests/test_overlap_native_parity.py). "
+        "Same raise contract as check_overlaps_count.");
+
+  m.def("check_overlaps_batch", &check_overlaps_batch_binding, py::arg("xs"), py::arg("ys"),
+        py::arg("pair_maps"), py::arg("node_rs"), py::arg("half_width_factor") = 0.75,
+        py::arg("tol") = 1e-6, py::arg("num_threads") = 0,
+        "Parallel batch overlap-witness counts (the QC-throughput lever, "
+        "benchmarks/qc_throughput.py): one count per structure, "
+        "half_width_factor * node_rs[i] reproducing pipeline_qc.py's "
+        "0.75 * node_r convention, fanned out over a std::thread pool with "
+        "the GIL released. A malformed structure yields -1 for that "
+        "element only, never raises out of the batch.");
 }

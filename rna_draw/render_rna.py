@@ -412,6 +412,10 @@ class RNARenderer:
                     coordsA="data",
                     linewidth=linewidth,
                     edgecolor=color,
+                    # Draw crossing connectors BEHIND the nucleotide disks
+                    # (default patch zorder is 1) so the red PK routing does
+                    # not cover the spheres it passes over.
+                    zorder=0,
                 )
                 self.ax.add_patch(patch)
 
