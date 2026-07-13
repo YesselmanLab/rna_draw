@@ -1,73 +1,84 @@
-"""Phase 3 PK-A candidate-route geometry: the first three tiers of
-`placement._route_pair`'s quality ladder (see that module) for routing a
-non-overlapping line from nucleotide `i` to `j` when a straight in-plane
-connector (PK-B) is rejected. Tier 3, the GUARANTEED FLOOR, lives in
-`.floor` (used here too, by tier 2's exits).
+"""Phase 3 PK-A candidate-route geometry: `placement._route_pair`'s quality
+ladder (see that module) for routing a non-overlapping, ORTHOGONAL-ONLY
+line from nucleotide `i` to `j` when a straight in-plane connector (PK-B)
+is rejected.
 
-Tier 0 (`find_direct_route`): the bare `[p_i, p_j]` chord. The nicest
-possible route -- most pairs' direct chord is already checker-clean.
+STYLE (locked, user-directed): every crossing-bond segment is STRAIGHT and
+AXIS-ALIGNED (horizontal or vertical) -- never a diagonal, never a curve.
+The standard depiction here is a 3-segment ORTHOGONAL "STAPLE": from `i`
+go straight OUT (perpendicular to the structure, along one axis), straight
+ACROSS (the other axis) to `j`'s own out-leg, then straight back IN to
+`j` -- a bracket/staple bridging the two nucleotides, e.g.:
 
-Tier 1 (`find_midpoint_bow_route`): a single-apex "elbow" out from the
-`(i, j)` chord's own midpoint, escalating BOW MAGNITUDE (relative to the
-layout's own extent) and DIRECTION -- cheap and usually sufficient for
-short/local crossings (the common case; corpus crossing stems are short,
-see the plan's Corpus facts). Kept at v1's own full magnitude range (see
-`_BOW_FACTORS`); the floor tier is purely ADDITIVE coverage on top.
+    i x---+           +---x j
+          |           |
+          +-----------+
 
-Tier 2 (`find_ring_route`): route each endpoint independently out to a
-LOCAL ring (usually far smaller than the layout's own enclosing circle) --
-v1's own cheap single-leg exit first, `floor.escape_to_ring`'s two-stage
-exit as the fallback -- then around the shorter arc to the other
-endpoint's own exit point. A purely local sidestep, tried at small ring
-scales before paying for the floor's own always-safe enclosing-circle-
-scale ring.
+Tier 0 (`find_direct_route`): the bare `[p_i, p_j]` chord, but ONLY when
+it is ALREADY axis-aligned (`p_i`/`p_j` share an x or a y) -- a diagonal
+direct chord is never accepted, however clean.
+
+Tier 1 (`find_staple_route`): the 3-segment staple above, escalating OFFSET
+(how far the shared rail sits from the structure, as a fraction of the
+layout's own extent) and DIRECTION (up/down/left/right, i.e. which axis is
+the out/in leg and which side of the chord the rail sits on) -- cheap and
+sufficient for the vast majority of crossing pairs. Processing pairs
+innermost-first with a consistent direction preference (`_direction_order`,
+nearest cardinal to "away from center" tried first) naturally nests a
+multi-bp crossing stem's staples into a tidy parallel family, like nested
+brackets -- see `placement._route_stem`'s docstring.
+
+Tier 2 (`find_offset_staple_route`): a 5-segment "staggered" staple -- each
+endpoint FIRST takes a short axis-aligned local jog (perpendicular to its
+own out-leg) before heading to the shared rail. Catches an endpoint whose
+immediate neighbors block every plain (unjogged) out-leg at every offset,
+without ever leaving the axis-aligned grid.
 
 Every tier generates AND checks candidates (via `validate`), returning the
 first clean `RoutedLine` or `None`; `placement.py` only orchestrates which
-tier to try, in what order, and what to do once every tier fails.
+tier to try, in what order, and what to do once every tier fails (drop the
+pair, flagged, never a silent or drawn overlap).
 """
 
 from __future__ import annotations
 
-from math import atan2, cos, hypot, pi, sin
+from math import hypot
 
-from rna_draw.geometry import Capsule, PrimitiveId
+from rna_draw.geometry import Capsule
 from rna_draw.layout.base import RoutedLine
 from rna_draw.overlap import OverlapParams, Primitive
 
-from .validate import capsule_is_clean, polyline_capsules, polyline_is_clean
+from .validate import polyline_capsules, polyline_is_clean
 
 Point = tuple[float, float]
+Direction = str  # one of "up", "down", "left", "right"
 
-# Tier 1 (midpoint bow): magnitude ladder as fractions/multiples of the
-# layout's own bounding-box diagonal, and how many bearings to fan out
-# around the away-from-center one at each magnitude. MEASURED: trimming
-# the largest factor (12.8) regressed real corpus structures whose only
-# clean route was specifically that magnitude -- the floor tier does not
-# yet reliably replace every such case (see `.floor`'s module docstring
-# and this milestone's STOP-criterion note), so this ladder is kept at
-# v1's own full range; tiers 0 (direct) and 3/4 (ring/floor) are the new,
-# purely ADDITIVE coverage layered on top.
-_BOW_FACTORS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8)
-_BOW_DIRECTION_COUNT = 16
+# Tier 1/2 offset ladder: how far the shared rail sits from the chord's own
+# span, as a fraction of the layout's bounding-box diagonal (`extent`).
+# Mirrors the pre-existing bow-magnitude ladder's range (0.05..12.8):
+# small steps cover the common short/local crossing cheaply, the large
+# steps are a near-guaranteed escape for a pair embedded deep inside a big
+# structure. MEASURED: a much denser ladder (15 steps up to 20.0) was
+# tried and made no difference on the real corpus -- the bottleneck for
+# the residual unplaced pairs is having only 4 candidate directions
+# (axis-aligned, vs. the old continuous bearing fan), not ladder
+# resolution, so the simpler 9-step ladder is kept.
+_OFFSET_FACTORS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8)
 
-# Tier 2 (ring route): local single-leg-exit bearing resolution (v1's own
-# exit search, kept as the cheap first try -- see `_single_leg_exit`), and
-# radius escalation multipliers on the layout's own enclosing-circle
-# radius (see `enclosing_circle`). Below 1.0 the ring is smaller than the
-# true enclosing circle -- not provably clear by construction, but still
-# checked, and often succeeds as a purely local sidestep far short of a
-# full trip out to the guaranteed-safe floor.
-_EXIT_ANGLE_STEPS = 24
-_RING_SCALES: tuple[float, ...] = (0.03, 0.06, 0.1, 0.2, 0.35, 0.55, 1.0, 1.3, 1.7, 2.2, 3.0, 4.0)
-_ARC_STEP = pi / 9  # 20 degrees
+# Tier 2 local-jog ladder (`find_offset_staple_route`): short, in units of
+# `extent`, tried both signs (`_JOG_SIGNS`) independently per endpoint.
+_JOG_FACTORS: tuple[float, ...] = (0.05, 0.15)
+_JOG_SIGNS: tuple[float, ...] = (1.0, -1.0)
+
+_DIRECTIONS: tuple[Direction, ...] = ("up", "down", "left", "right")
 _OUTER_MARGIN_FACTOR = 1.5
+_AXIS_ALIGN_TOL = 1e-6
 
 
 def enclosing_circle(x: list[float], y: list[float], params: OverlapParams) -> tuple[Point, float]:
     """A circle, centered on the layout's bbox center, that encloses every
-    primitive the layout can draw -- points outside it are provably clear
-    of every disk/backbone/pair capsule.
+    primitive the layout can draw -- used only for `center` (the staple
+    ladder's shared reference point for direction preference).
     """
     center = ((max(x) + min(x)) / 2, (max(y) + min(y)) / 2)
     half_diag = hypot(max(x) - center[0], max(y) - center[1])
@@ -87,16 +98,17 @@ def find_direct_route(
     committed_lines: list[Capsule],
     pair_map: list[int],
 ) -> RoutedLine | None:
-    """Tier 0 (best case): the single straight `i -> j` segment, unmodified.
-
-    The nicest possible route -- tried first so most pairs (whose direct
-    chord happens to already be checker-clean) never pay for a bow or a
-    ring detour at all.
+    """Tier 0 (best case): the single straight `i -> j` segment -- ONLY if
+    it is already axis-aligned (`p_i`/`p_j` share an x or a y). A diagonal
+    direct chord is never accepted, however checker-clean, per the
+    no-diagonals style contract.
     """
+    if abs(p_i[0] - p_j[0]) > _AXIS_ALIGN_TOL and abs(p_i[1] - p_j[1]) > _AXIS_ALIGN_TOL:
+        return None
     return _accept_if_clean(i, j, [p_i, p_j], params, base_primitives, committed_lines, pair_map)
 
 
-def find_midpoint_bow_route(
+def find_staple_route(
     i: int,
     j: int,
     p_i: Point,
@@ -108,21 +120,16 @@ def find_midpoint_bow_route(
     committed_lines: list[Capsule],
     pair_map: list[int],
 ) -> RoutedLine | None:
-    """Tier 1: search (magnitude, bearing) for a clean single-apex elbow.
+    """Tier 1: the 3-segment orthogonal staple, escalating (direction, offset).
 
-    Magnitude alone cannot guarantee clearing: a fixed-direction elbow's
-    approach at each endpoint stays the same bearing as the apex recedes,
-    so a single "always bow away from center" direction can keep clipping
-    a neighbor sitting close to `i` or `j` no matter how large the bow
-    gets -- hence the bearing fan-out at every magnitude.
+    Directions are tried in `_direction_order`'s consistent preference
+    (nearest cardinal to "away from center" first) so sibling pairs of the
+    same crossing stem tend to pick the SAME direction, nesting into a
+    nested-bracket family instead of scattering.
     """
-    base_angle = _away_angle(center, p_i, p_j)
-    bearings = _fan_out(base_angle, _BOW_DIRECTION_COUNT)
-    for factor in _BOW_FACTORS:
-        magnitude = factor * extent
-        for bearing in bearings:
-            direction = (cos(bearing), sin(bearing))
-            points = _elbow_points(p_i, p_j, direction, magnitude)
+    for direction in _direction_order(center, p_i, p_j):
+        for factor in _OFFSET_FACTORS:
+            points = _staple_points(p_i, p_j, direction, factor * extent)
             line = _accept_if_clean(
                 i, j, points, params, base_primitives, committed_lines, pair_map
             )
@@ -131,74 +138,98 @@ def find_midpoint_bow_route(
     return None
 
 
-def find_ring_route(
+def find_offset_staple_route(
     i: int,
     j: int,
     p_i: Point,
     p_j: Point,
     center: Point,
-    base_radius: float,
+    extent: float,
     params: OverlapParams,
     base_primitives: list[Primitive],
     committed_lines: list[Capsule],
     pair_map: list[int],
 ) -> RoutedLine | None:
-    """Tier 2: route `i -> ring -> j` at an escalating LOCAL ring radius.
-
-    Each radius independently exits `i` and `j`: `_single_leg_exit` (v1's
-    own cheap single-straight-leg search) is tried FIRST so tier 2 never
-    regresses below v1's own reach; `floor.escape_to_ring` (a short local
-    escape, then a straight leg to the ring -- decoupling local clearance
-    from the ring's own size) is the fallback, catching endpoints the
-    single leg cannot clear. Either way the WHOLE assembled path --
-    including the arc -- is verified against both `base_primitives` and
-    `committed_lines`.
-
+    """Tier 2: a 5-segment staggered staple -- each endpoint independently
+    jogs sideways (perpendicular to its own out-leg) before heading to the
+    shared rail, catching an endpoint whose plain out-leg (tier 1) is
+    blocked by an immediate neighbor at every offset.
     """
-    for scale in _RING_SCALES:
-        radius = base_radius * scale
-        exit_i = _endpoint_exit(
-            i, p_i, center, radius, params, base_primitives, committed_lines, pair_map
-        )
-        exit_j = _endpoint_exit(
-            j, p_j, center, radius, params, base_primitives, committed_lines, pair_map
-        )
-        if exit_i is None or exit_j is None:
-            continue
-        points = _assemble_two_stage_route(center, radius, exit_i, exit_j)
-        line = _accept_if_clean(i, j, points, params, base_primitives, committed_lines, pair_map)
-        if line is not None:
-            return line
+    jogs = [sign * factor * extent for factor in _JOG_FACTORS for sign in _JOG_SIGNS]
+    for direction in _direction_order(center, p_i, p_j):
+        for factor in _OFFSET_FACTORS:
+            offset = factor * extent
+            for jog_i in jogs:
+                for jog_j in jogs:
+                    points = _offset_staple_points(p_i, p_j, direction, offset, jog_i, jog_j)
+                    line = _accept_if_clean(
+                        i, j, points, params, base_primitives, committed_lines, pair_map
+                    )
+                    if line is not None:
+                        return line
     return None
 
 
-def _endpoint_exit(
-    real_index: int,
-    point: Point,
-    center: Point,
-    radius: float,
-    params: OverlapParams,
-    base_primitives: list[Primitive],
-    committed_lines: list[Capsule],
-    pair_map: list[int],
-) -> list[Point] | None:
-    """`_single_leg_exit` (cheap, v1-equivalent), else `floor.escape_to_ring`.
+def _direction_order(center: Point, p_i: Point, p_j: Point) -> list[Direction]:
+    """Cardinal directions, nearest to "away from `center`" first.
 
-    Local import of `.floor` breaks the routing<->floor module cycle
-    (`floor` also needs `routing`'s own bearing/ring helpers); same
-    pattern as `engine._layout_nested`'s local import.
+    Tried in this consistent order for every pair, so sibling pairs of the
+    same crossing stem tend to converge on the SAME direction (nesting
+    into a parallel bracket family) rather than picking directions
+    independently at random.
     """
-    exit_path = _single_leg_exit(
-        real_index, point, center, radius, params, base_primitives, pair_map
-    )
-    if exit_path is not None:
-        return exit_path
+    mid = ((p_i[0] + p_j[0]) / 2, (p_i[1] + p_j[1]) / 2)
+    dx, dy = mid[0] - center[0], mid[1] - center[1]
+    primary = _nearest_cardinal(dx, dy)
+    return [primary] + [d for d in _DIRECTIONS if d != primary]
 
-    from . import floor
 
-    return floor.escape_to_ring(
-        real_index, point, center, radius, params, base_primitives, committed_lines, pair_map
-    )
+def _nearest_cardinal(dx: float, dy: float) -> Direction:
+    """The cardinal direction nearest to the `(dx, dy)` bearing."""
+    if dx == 0.0 and dy == 0.0:
+        return "up"
+    if abs(dx) >= abs(dy):
+        return "right" if dx >= 0 else "left"
+    return "up" if dy >= 0 else "down"
+
+
+def _staple_points(p_i: Point, p_j: Point, direction: Direction, offset: float) -> list[Point]:
+    """The 4 vertices (3 segments) of an orthogonal staple `p_i -> p_j`.
+
+    `direction` picks BOTH which axis the out/in legs travel along and
+    which side of the chord the shared rail sits on (see the module
+    docstring's ASCII diagram): "up"/"down" -> vertical out/in legs, a
+    horizontal rail; "left"/"right" -> horizontal out/in legs, a vertical
+    rail.
+    """
+    if direction in ("up", "down"):
+        rail = _rail(p_i[1], p_j[1], direction == "up", offset)
+        return [p_i, (p_i[0], rail), (p_j[0], rail), p_j]
+    rail = _rail(p_i[0], p_j[0], direction == "right", offset)
+    return [p_i, (rail, p_i[1]), (rail, p_j[1]), p_j]
+
+
+def _offset_staple_points(
+    p_i: Point, p_j: Point, direction: Direction, offset: float, jog_i: float, jog_j: float
+) -> list[Point]:
+    """The 6 vertices (5 segments) of a staggered staple: each endpoint
+    jogs sideways by `jog_i`/`jog_j` (perpendicular to its own out-leg)
+    before joining the shared rail -- see `find_offset_staple_route`.
+    """
+    if direction in ("up", "down"):
+        rail = _rail(p_i[1], p_j[1], direction == "up", offset)
+        start_i, start_j = (p_i[0] + jog_i, p_i[1]), (p_j[0] + jog_j, p_j[1])
+        return [p_i, start_i, (start_i[0], rail), (start_j[0], rail), start_j, p_j]
+    rail = _rail(p_i[0], p_j[0], direction == "right", offset)
+    start_i, start_j = (p_i[0], p_i[1] + jog_i), (p_j[0], p_j[1] + jog_j)
+    return [p_i, start_i, (rail, start_i[1]), (rail, start_j[1]), start_j, p_j]
+
+
+def _rail(coord_i: float, coord_j: float, positive_side: bool, offset: float) -> float:
+    """The shared rail coordinate `offset` past the far side of `(coord_i, coord_j)`."""
+    if positive_side:
+        return max(coord_i, coord_j) + offset
+    return min(coord_i, coord_j) - offset
 
 
 def _accept_if_clean(
@@ -217,138 +248,9 @@ def _accept_if_clean(
     return None
 
 
-def _away_angle(center: Point, p_i: Point, p_j: Point) -> float:
-    """Bearing from `center` to the `(p_i, p_j)` chord's midpoint."""
-    mid = ((p_i[0] + p_j[0]) / 2, (p_i[1] + p_j[1]) / 2)
-    return _radial_angle(center, mid)
-
-
-def _radial_angle(center: Point, point: Point) -> float:
-    """Bearing from `center` to `point`, in radians."""
-    dx, dy = point[0] - center[0], point[1] - center[1]
-    if dx == 0.0 and dy == 0.0:
-        return 0.0
-    return atan2(dy, dx)
-
-
-def _fan_out(base_angle: float, count: int) -> list[float]:
-    """`count` bearings evenly spaced around `base_angle`, tried first."""
-    step = 2 * pi / count
-    return [base_angle + k * step for k in range(count)]
-
-
-def _elbow_points(p_i: Point, p_j: Point, direction: Point, magnitude: float) -> list[Point]:
-    """A 3-point outward "elbow" from `p_i` to `p_j` via one apex.
-
-    A straight-out, straight-back elbow (rather than a sampled curve)
-    deliberately avoids a smooth curve's failure mode here: a Bezier
-    parametrized uniformly in `t` slows to a near-stop at its midpoint as
-    the control point recedes, clustering samples together there and
-    producing spurious CAPSULE self-overlap between non-adjacent segments
-    of the very same (non-self-intersecting) curve. Two straight segments
-    sharing one apex point have no such interior curvature to misjudge.
-    """
-    mid = ((p_i[0] + p_j[0]) / 2, (p_i[1] + p_j[1]) / 2)
-    apex = (mid[0] + direction[0] * magnitude, mid[1] + direction[1] * magnitude)
-    return [p_i, apex, p_j]
-
-
-def _ring_point(center: Point, radius: float, angle: float) -> Point:
-    """A point on the ring of `radius` around `center` at `angle`."""
-    return (center[0] + radius * cos(angle), center[1] + radius * sin(angle))
-
-
-def _exit_angle_candidates(base_angle: float) -> list[float]:
-    """Bearings to try for a local exit, starting at `base_angle` (the
-    shortest, purely radial exit) and fanning out to cover the full circle.
-    """
-    step = 2 * pi / _EXIT_ANGLE_STEPS
-    angles = [base_angle]
-    for k in range(1, _EXIT_ANGLE_STEPS // 2 + 1):
-        angles.append(base_angle + k * step)
-        angles.append(base_angle - k * step)
-    return angles
-
-
-def _single_leg_exit(
-    real_index: int,
-    point: Point,
-    center: Point,
-    radius: float,
-    params: OverlapParams,
-    base_primitives: list[Primitive],
-    pair_map: list[int],
-) -> list[Point] | None:
-    """v1's own exit search: the first clean SINGLE straight leg out to the ring.
-
-    Checked over its FULL length, so it can never clear a deeply embedded
-    endpoint (see `.floor`'s module docstring) -- but for the common
-    non-embedded case it is the cheapest exit, so `find_ring_route` tries
-    this first and only falls back to `floor.escape_to_ring` when it fails.
-    """
-    for angle in _exit_angle_candidates(_radial_angle(center, point)):
-        exit_point = _ring_point(center, radius, angle)
-        leg = _leg_capsule(point, exit_point, real_index, params.pair_half_width)
-        if capsule_is_clean(leg, base_primitives, pair_map, params.tol):
-            return [point, exit_point]
-    return None
-
-
-def _leg_capsule(point: Point, exit_point: Point, real_index: int, half_width: float) -> Capsule:
-    """A capsule for one local exit leg, tagged so its real end is excluded.
-
-    `ends={real_index}` makes `is_excluded` treat the leg's own starting
-    nucleotide's disk as an intentional touch (the leg literally starts at
-    that disk's center); the ring-side end has no real nucleotide, so it
-    carries no id -- nothing else in the layout can coincidentally share
-    an id with it.
-    """
-    return Capsule(
-        pid=PrimitiveId("pkleg", real_index),
-        x0=point[0],
-        y0=point[1],
-        x1=exit_point[0],
-        y1=exit_point[1],
-        half_width=half_width,
-        ends=frozenset({real_index}),
-    )
-
-
-def _assemble_two_stage_route(
-    center: Point, radius: float, exit_i: list[Point], exit_j: list[Point]
-) -> list[Point]:
-    """Join two endpoints' own two-stage exit paths via the shorter ring arc.
-
-    `exit_i`/`exit_j` are `[point, ..., ring_point]` waypoint lists (from
-    `floor.escape_to_ring`/`floor.creep_out`); both end exactly on the
-    `radius` ring, so the arc between their two ring points is well-formed
-    regardless of how many interior waypoints either exit path has.
-    """
-    angle_i = _radial_angle(center, exit_i[-1])
-    angle_j = _radial_angle(center, exit_j[-1])
-    arc = _arc_waypoints(center, radius, angle_i, angle_j)
-    return [*exit_i, *arc, *reversed(exit_j)]
-
-
-def _arc_waypoints(center: Point, radius: float, angle_a: float, angle_b: float) -> list[Point]:
-    """Ring points strictly between `angle_a` and `angle_b`, shorter way round.
-
-    A tiny epsilon keeps the LAST generated waypoint strictly short of
-    `angle_b` even when `delta` is an exact multiple of `_ARC_STEP` (e.g.
-    antipodal `i`/`j` exit angles) -- without it, that edge case emits a
-    waypoint numerically equal to `exit_j`, producing a zero-length
-    segment that spuriously self-conflicts (`polyline_is_clean`'s sibling
-    check on two capsules meeting at the same point without a shared id).
-    """
-    delta = (angle_b - angle_a + pi) % (2 * pi) - pi
-    step = _ARC_STEP if delta >= 0 else -_ARC_STEP
-    n_steps = int((abs(delta) - 1e-9) // _ARC_STEP)
-    return [_ring_point(center, radius, angle_a + step * k) for k in range(1, n_steps + 1)]
-
-
 __all__ = [
     "enclosing_circle",
     "find_direct_route",
-    "find_midpoint_bow_route",
-    "find_ring_route",
+    "find_staple_route",
+    "find_offset_staple_route",
 ]

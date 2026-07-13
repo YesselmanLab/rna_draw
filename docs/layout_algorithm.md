@@ -128,12 +128,15 @@ crossing pair is drawn as an *additional* connector between two already-placed n
    subset really is pseudoknot-free before handoff.
 3. **Lay out the nested subset** with the ordinary checker-gated `layout_guaranteed` pipeline
    (`engine.py` → `_layout_nested`).
-4. **Draw each crossing pair** (`placement.py`), escalating per stem, checker-gated the whole way:
-   a straight **in-plane connector** (PK-B) added to the pair map and re-validated by the *unmodified*
-   `check_overlaps`; else a non-overlapping **routed polyline** (PK-A, `routing.py`/`floor.py`,
-   validated by `validate.py`); else left **unplaced**. A final mutual-validation backstop
-   (`_clean_routed_lines`) drops any routed line that isn't clean against everything else. The
-   frozen checker validates crossing pairs unchanged — never a silent or drawn overlap.
+4. **Draw each crossing base pair** (`placement.py`), one at a time (innermost pair of a crossing
+   stem first, narrowest crossing stem first), escalating per pair, checker-gated the whole way:
+   a straight **in-plane connector** (PK-B) added to the pair map and re-validated by the
+   *unmodified* `check_overlaps`; else a non-overlapping, **axis-aligned orthogonal "staple"**
+   polyline (PK-A, `routing.py` — a 3- or 5-segment bracket that goes straight out, across, and back
+   in, never a diagonal, validated by `validate.py`); else left **unplaced**. A final
+   mutual-validation backstop (`_clean_routed_lines`) drops any routed line that isn't clean against
+   everything else. The frozen checker validates crossing pairs unchanged — never a silent or drawn
+   overlap.
 
 ## The never-silent-overlap contract and the frozen checker
 

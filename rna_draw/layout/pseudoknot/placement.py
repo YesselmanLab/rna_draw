@@ -1,14 +1,15 @@
 """Phase 3: place crossing stems as in-plane PK-B connectors or PK-A routed
-lines, escalating per crossing stem, checker-gated the whole way.
+ORTHOGONAL STAPLES, escalating per crossing stem, checker-gated the whole
+way.
 
 KEY GEOMETRIC DECISION (locked, see the plan): crossing nucleotides are
 NEVER re-placed -- they already sit where the nested layout (Phase 2) put
 them. A crossing stem is purely an ADDITIONAL connector between two
 already-placed nucleotides: PK-B (`_try_in_plane`) adds it to `pair_map`
 and re-checks the frozen `check_overlaps` unchanged; PK-A (`_route_stem`)
-routes a non-overlapping polyline per pair instead, via `_route_pair`'s
-FIRST-CLEAN-WINS quality ladder (`routing`'s direct/bow/ring tiers, then
-`floor`'s GUARANTEED FLOOR), validated by `validate.polyline_is_clean`
+routes a non-overlapping, AXIS-ALIGNED (no diagonals) polyline per pair
+instead, via `_route_pair`'s FIRST-CLEAN-WINS quality ladder (`routing`'s
+direct/staple/offset-staple tiers), validated by `validate.polyline_is_clean`
 against the frozen geometry predicates.
 """
 
@@ -20,7 +21,7 @@ from rna_draw.geometry import Capsule, PrimitiveId
 from rna_draw.layout.base import RoutedLine
 from rna_draw.overlap import OverlapParams, Primitive, build_primitives, check_overlaps
 
-from . import floor, routing
+from . import routing
 from .parsing import Stem
 from .validate import capsule_is_clean, polyline_capsules
 
@@ -44,14 +45,13 @@ class PlacementResult:
         pk_b_pairs: Flattened pairs from every crossing stem placed as a
             clean in-plane connector.
         pk_a_lines: One `RoutedLine` per pair from every crossing stem
-            that escalated to a routed line.
+            that escalated to a routed orthogonal staple.
         unplaced: Crossing stems for which at least one pair's PK-A search
-            never cleared (every ladder tier exhausted, INCLUDING the
-            GUARANTEED FLOOR's `creep_out` fallback; recorded honestly if
-            it ever happens -- never a silent overlap. `creep_out` is a
-            near-guarantee, not a closed proof for finite-width legs, so a
-            pathological packing can in principle still leave a pair
-            unplaced; the nested layout stays clean either way).
+            never cleared (every staple ladder tier exhausted; recorded
+            honestly if it ever happens -- never a silent overlap. The
+            offset ladder's largest rung is a near-guarantee, not a closed
+            proof, so a pathological packing can in principle still leave
+            a pair unplaced; the nested layout stays clean either way).
     """
 
     pk_b_pairs: list[tuple[int, int]] = field(default_factory=list)
@@ -72,18 +72,9 @@ class _PlacementState:
         committed_lines: Every already-accepted PK-A line's own capsules,
             checked against so later lines never cross earlier ones.
         center: The layout's own bounding-box center (`routing`'s shared
-            reference point for both tiers).
-        extent: The layout's own bounding-box diagonal (tier 1's bow-
-            magnitude unit).
-        base_radius: The layout's enclosing-circle radius (tier 2's ring
-            unit); see `routing.enclosing_circle`.
-        floor_ring_radius: The NEXT floor line's own concentric ring
-            radius (tier 4, `floor.find_floor_route`). Starts at
-            `base_radius` and is bumped past every floor line actually
-            used (`_bump_floor_radius`) so every floor line gets a
-            strictly larger, disjoint ring -- see the plan's
-            "concentric-ring ordering" (arcs at different radii can never
-            overlap, regardless of endpoint positions).
+            reference point for the staple ladder's direction preference).
+        extent: The layout's own bounding-box diagonal (the staple
+            offset/jog ladder's magnitude unit).
         result: The `PlacementResult` being built.
     """
 
@@ -94,8 +85,6 @@ class _PlacementState:
     committed_lines: list[Capsule] = field(default_factory=list)
     center: Point = (0.0, 0.0)
     extent: float = 1.0
-    base_radius: float = 1.0
-    floor_ring_radius: float = 1.0
     result: PlacementResult = field(default_factory=PlacementResult)
 
 
@@ -119,7 +108,7 @@ def place_crossings(
     Returns:
         The accumulated `PlacementResult`.
     """
-    center, base_radius = routing.enclosing_circle(x, y, params)
+    center, _base_radius = routing.enclosing_circle(x, y, params)
     state = _PlacementState(
         x=x,
         y=y,
@@ -127,10 +116,13 @@ def place_crossings(
         pair_map=list(base_pair_map),
         center=center,
         extent=max(_extent(x, y), params.node_r),
-        base_radius=base_radius,
-        floor_ring_radius=base_radius,
     )
-    for stem in crossing_stems:
+    # Narrowest (smallest `j - i`) stem first -- the same nested-family
+    # rationale as `_route_stem`'s own innermost-pair-first ordering, but
+    # across DIFFERENT crossing stems: a wide stem placed first can grab a
+    # large detour that walls off a narrower stem's much smaller, easier
+    # route entirely.
+    for stem in sorted(crossing_stems, key=lambda s: s.j - s.i):
         _place_one_stem(state, stem)
     return state.result
 
@@ -197,10 +189,23 @@ def _augment(pair_map: list[int], pairs: list[tuple[int, int]]) -> list[int]:
 
 
 def _route_stem(state: _PlacementState, stem: Stem) -> None:
-    """Route every pair of a PK-B-rejected crossing stem as its own PK-A line."""
+    """Route every pair of a PK-B-rejected crossing stem as its own PK-A staple.
+
+    Routed INNERMOST rung first (`reversed(stem.pairs())`; `Stem.pairs()`
+    itself is outermost-first, see its own docstring): the innermost pair
+    has the shortest span and clears with the smallest staple, committing
+    a small, tightly-hugging capsule near the direct chord. Each
+    successively OUTER pair then only has to staple AROUND its already-
+    committed inner siblings, producing a tidy nested bracket family
+    instead of the outermost (widest, hardest) pair going first and
+    grabbing a huge, early, wide detour that can wall off the rest of the
+    stem's pairs entirely (MEASURED regression fixed by this ordering:
+    outermost-first left 61.8% of real-corpus crossing pairs silently
+    unplaced; see `benchmarks/pseudoknot_gate.py`).
+    """
     base_primitives = build_primitives(state.x, state.y, state.pair_map, state.params)
     any_unplaced = False
-    for i, j in stem.pairs():
+    for i, j in reversed(stem.pairs()):
         line = _route_pair(state, i, j, base_primitives)
         if line is None:
             any_unplaced = True
@@ -217,12 +222,10 @@ def _route_stem(state: _PlacementState, stem: Stem) -> None:
 def _route_pair(
     state: _PlacementState, i: int, j: int, base_primitives: list[Primitive]
 ) -> RoutedLine | None:
-    """Quality ladder, FIRST-CLEAN-WINS: direct, small bow, local ring, floor.
+    """Quality ladder, FIRST-CLEAN-WINS: axis-aligned direct, staple, offset staple.
 
-    Tiers 0-2 (`routing`) are short/clean and cheap; only a pair no tier
-    through 2 can clear pays for tier 3, the GUARANTEED FLOOR
-    (`floor.find_floor_route`), which also grows `state.floor_ring_radius`
-    past its own line so the NEXT floor line gets a disjoint ring.
+    Every tier is strictly axis-aligned (no diagonals); see `routing`'s
+    module docstring for the 3 tiers' shapes.
     """
     p_i, p_j = (state.x[i], state.y[i]), (state.x[j], state.y[j])
     line = routing.find_direct_route(
@@ -230,7 +233,7 @@ def _route_pair(
     )
     if line is not None:
         return line
-    line = routing.find_midpoint_bow_route(
+    line = routing.find_staple_route(
         i,
         j,
         p_i,
@@ -244,59 +247,18 @@ def _route_pair(
     )
     if line is not None:
         return line
-    line = routing.find_ring_route(
+    return routing.find_offset_staple_route(
         i,
         j,
         p_i,
         p_j,
         state.center,
-        state.base_radius,
+        state.extent,
         state.params,
         base_primitives,
         state.committed_lines,
         state.pair_map,
     )
-    if line is not None:
-        return line
-    return _route_floor(state, i, j, p_i, p_j, base_primitives)
-
-
-def _route_floor(
-    state: _PlacementState,
-    i: int,
-    j: int,
-    p_i: Point,
-    p_j: Point,
-    base_primitives: list[Primitive],
-) -> RoutedLine | None:
-    """Tier 3: the GUARANTEED FLOOR, at this call's own concentric ring radius."""
-    line = floor.find_floor_route(
-        i,
-        j,
-        p_i,
-        p_j,
-        state.center,
-        state.floor_ring_radius,
-        state.params,
-        base_primitives,
-        state.committed_lines,
-        state.pair_map,
-    )
-    if line is not None:
-        state.floor_ring_radius = _bump_floor_radius(state.floor_ring_radius, state.params)
-    return line
-
-
-def _bump_floor_radius(radius: float, params: OverlapParams) -> float:
-    """Grow the floor ring radius past the next line's own capsule width.
-
-    Bumped by MORE than `2 * pair_half_width` (the sum of two floor
-    lines' own capsule half-widths, plus one extra half-width of slack
-    and `tol`): two arcs at strictly nested radii separated by more than
-    the sum of their half-widths can never overlap, regardless of where
-    either line's endpoints sit -- the concentric-ring guarantee.
-    """
-    return radius + 3.0 * params.pair_half_width + params.tol
 
 
 __all__ = ["PlacementResult", "place_crossings", "MAX_PK_B_LENGTH"]

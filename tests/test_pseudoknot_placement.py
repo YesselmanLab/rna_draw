@@ -1,7 +1,7 @@
 """Tests for `rna_draw.layout.pseudoknot.placement`/`validate`/`routing`:
 the PK-B/PK-A escalation, the geometry-predicate polyline validator, and
-the two routing tiers, at the unit level (independent of the full
-`layout_pseudoknot` orchestration -- see `test_pseudoknot_engine.py`).
+the axis-aligned staple routing tiers, at the unit level (independent of
+the full `layout_pseudoknot` orchestration -- see `test_pseudoknot_engine.py`).
 """
 
 from __future__ import annotations
@@ -81,19 +81,19 @@ class TestPlaceCrossingsPKA:
 
 
 class TestDensePseudoknotAllPairsPlaced:
-    """The guaranteed-floor quality ladder (direct/bow/ring/floor) placing
+    """The staple quality ladder (direct/staple/offset-staple) placing
     EVERY crossing pair of a moderately dense pseudoknot -- the plan's
     core deliverable (UNPLACED -> ~0 for the reachable common case; see
     `benchmarks/pseudoknot_gate.py` for the honest corpus-scale numbers,
     which do have a residual -- documented -- for genuinely embedded
-    real-structure endpoints; see `.floor`'s STOP-criterion notes).
+    real-structure endpoints).
     """
 
     def test_zero_unplaced(self) -> None:
         # 10 co-linear nucleotides (ordinary 30-unit backbone spacing)
-        # with 4 nested-bow crossing stems, each pair's straight chord
+        # with 4 nested crossing stems, each pair's straight chord
         # blocked by the nucleotides between it -- every one must
-        # escalate to (and succeed at) a PK-A routed line.
+        # escalate to (and succeed at) a PK-A routed staple.
         n = 10
         x = [float(k) * 30 for k in range(n)]
         y = [0.0] * n
@@ -133,7 +133,7 @@ class TestDensePseudoknotAllPairsPlaced:
 
 class TestTwoCrossingLinesRouteDisjoint:
     """Two crossing pairs whose INDEPENDENTLY-computed best routes would
-    physically collide (same bow apex) must end up mutually clean once
+    physically collide (same shared rail) must end up mutually clean once
     threaded through the SAME `committed_lines` -- the second escalates to
     a genuinely different, disjoint route rather than either colliding or
     going unplaced.
@@ -147,7 +147,7 @@ class TestTwoCrossingLinesRouteDisjoint:
     def _route(self, i: int, j: int, committed: list[Capsule]) -> RoutedLine | None:
         params = OverlapParams()
         base_primitives = build_primitives(self.X, self.Y, self.PAIR_MAP, params)
-        center, base_radius = enclosing_circle(self.X, self.Y, params)
+        center, _base_radius = enclosing_circle(self.X, self.Y, params)
         state = _PlacementState(
             x=self.X,
             y=self.Y,
@@ -156,21 +156,27 @@ class TestTwoCrossingLinesRouteDisjoint:
             committed_lines=committed,
             center=center,
             extent=max(max(self.X) - min(self.X), params.node_r),
-            base_radius=base_radius,
-            floor_ring_radius=base_radius,
         )
         return _route_pair(state, i, j, base_primitives)
 
     def test_naive_independent_routes_would_collide(self) -> None:
         # Sanity: WITHOUT committed-line knowledge, pair (1, 8)'s own best
-        # route lands on the exact same apex as pair (0, 9)'s -- proving
-        # this scenario actually exercises disjoint-routing, not a vacuous
-        # pass.
+        # staple lands on the exact same shared rail (y) as pair (0, 9)'s
+        # (both co-linear chords share a midpoint x, so both independently
+        # pick the same cardinal direction and offset), and pair (1, 8)'s
+        # rail x-span sits entirely WITHIN pair (0, 9)'s -- their "across"
+        # segments would overlap outright -- proving this scenario
+        # actually exercises disjoint-routing, not a vacuous pass.
         line_a = self._route(0, 9, [])
         line_b_naive = self._route(1, 8, [])
         assert line_a is not None
         assert line_b_naive is not None
-        assert line_a.points[1] == line_b_naive.points[1]
+        rail_a_y = line_a.points[1][1]
+        rail_b_y = line_b_naive.points[1][1]
+        assert rail_a_y == rail_b_y
+        rail_a_x = sorted(p[0] for p in line_a.points[1:3])
+        rail_b_x = sorted(p[0] for p in line_b_naive.points[1:3])
+        assert rail_a_x[0] <= rail_b_x[0] and rail_b_x[1] <= rail_a_x[1]
 
     def test_informed_second_route_is_disjoint_and_clean(self) -> None:
         params = OverlapParams()
@@ -238,21 +244,68 @@ class TestEnclosingCircle:
         assert radius > 0.0
 
 
-class TestRingRoute:
+def _assert_axis_aligned(points: list[tuple[float, float]]) -> None:
+    """Every consecutive segment is purely horizontal or purely vertical."""
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        assert x0 == x1 or y0 == y1, f"diagonal segment {(x0, y0)} -> {(x1, y1)}"
+
+
+class TestStapleRoute:
     def test_succeeds_with_no_obstacles(self) -> None:
-        # `routing.find_ring_route` (tier 2) exercised directly: with an
-        # empty `base_primitives`/`committed_lines`, the very first ring
-        # scale must succeed immediately.
+        # `routing.find_staple_route` (tier 1) exercised directly: with
+        # empty `base_primitives`/`committed_lines`, the very first
+        # (direction, offset) candidate must succeed immediately.
         params = OverlapParams()
-        center, base_radius = enclosing_circle([0.0, 20.0], [0.0, 0.0], params)
-        line = routing.find_ring_route(
-            0, 1, (0.0, 0.0), (20.0, 0.0), center, base_radius, params, [], [], [-1, -1]
+        center, _radius = enclosing_circle([0.0, 20.0], [0.0, 0.0], params)
+        line = routing.find_staple_route(
+            0, 1, (0.0, 0.0), (20.0, 0.0), center, 20.0, params, [], [], [-1, -1]
         )
         assert line is not None
         assert line.i == 0
         assert line.j == 1
         assert line.points[0] == (0.0, 0.0)
         assert line.points[-1] == (20.0, 0.0)
+
+    def test_is_a_3_segment_orthogonal_staple(self) -> None:
+        params = OverlapParams()
+        center, _radius = enclosing_circle([0.0, 20.0], [0.0, 0.0], params)
+        line = routing.find_staple_route(
+            0, 1, (0.0, 0.0), (20.0, 0.0), center, 20.0, params, [], [], [-1, -1]
+        )
+        assert line is not None
+        assert len(line.points) == 4
+        _assert_axis_aligned(line.points)
+
+    def test_never_produces_a_diagonal_segment(self) -> None:
+        # A pair whose chord is itself diagonal (different x AND y): the
+        # staple must still route using only horizontal/vertical segments.
+        params = OverlapParams()
+        center, _radius = enclosing_circle([0.0, 40.0], [0.0, 30.0], params)
+        line = routing.find_staple_route(
+            0, 1, (0.0, 0.0), (40.0, 30.0), center, 50.0, params, [], [], [-1, -1]
+        )
+        assert line is not None
+        _assert_axis_aligned(line.points)
+
+
+class TestOffsetStapleRoute:
+    def test_succeeds_with_no_obstacles(self) -> None:
+        params = OverlapParams()
+        center, _radius = enclosing_circle([0.0, 20.0], [0.0, 0.0], params)
+        line = routing.find_offset_staple_route(
+            0, 1, (0.0, 0.0), (20.0, 0.0), center, 20.0, params, [], [], [-1, -1]
+        )
+        assert line is not None
+        _assert_axis_aligned(line.points)
+
+    def test_never_produces_a_diagonal_segment(self) -> None:
+        params = OverlapParams()
+        center, _radius = enclosing_circle([0.0, 40.0], [0.0, 30.0], params)
+        line = routing.find_offset_staple_route(
+            0, 1, (0.0, 0.0), (40.0, 30.0), center, 50.0, params, [], [], [-1, -1]
+        )
+        assert line is not None
+        _assert_axis_aligned(line.points)
 
 
 class TestPolylineValidate:
