@@ -222,16 +222,21 @@ def test_select_mode_residue_click_changes_selection_behavior(win):
     win._view._select_at(5)
     assert win._model.sel_kind == "residue"
     assert win._model.sel_indices == [5]
-    # a residue selection carries no rotate handle
-    assert win._view._handle is None
+    # a residue selection is not rotatable: no pivot stored
+    assert win._view._pivot is None
 
 
-def test_select_mode_helix_gets_handle(win):
+def test_select_mode_helix_stores_pivot(win):
     win._select_act.trigger()
     win._gran_combo.setCurrentText("Helix")
     win._view._select_at(8)
     assert win._model.sel_kind == "helix"
-    assert win._view._handle is not None
+    # selecting a helix stores its junction pivot for drag-to-rotate,
+    # and adds NO handle/ring/knob overlay to the scene.
+    assert win._view._pivot is not None
+    from rna_draw.gui.desktop import scene_view as _sv
+
+    assert not hasattr(_sv, "RotateHandle")
 
 
 # -- (e) PNG renders (visual proof) -----------------------------------------

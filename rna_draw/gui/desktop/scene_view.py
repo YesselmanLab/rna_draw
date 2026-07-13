@@ -5,11 +5,13 @@ backbone `QGraphicsPathItem`, pair `QGraphicsLineItem`s and routed PK-A
 polylines from the model's portable scene dict. Engine space is y-up, so
 scene coordinates are ``(x, -y)``; the view owns that flip.
 
-Interaction (the discoverable joint edit):
+Interaction (Rotate mode = direct-manipulation):
     * left-click a nucleotide -> `EditorModel.select` -> the helix slice
-      highlights teal and a VISIBLE `RotateHandle` appears at the junction;
-    * drag that handle -> live `EditorModel.rotate_selection`, re-checked
+      highlights teal (the only affordance -- no handle/ring/knob);
+    * then DRAG that highlighted helix (grab any of its nucleotides) -> live
+      `EditorModel.rotate_selection` about the junction pivot, re-checked
       in-process every move (overlaps tint red);
+    * a click with no drag = just a selection (no rotation, no undo entry);
     * left-click empty space -> deselect;
     * wheel -> zoom; middle/right drag -> pan.
 """
@@ -22,7 +24,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from rna_draw.gui.model import EditorModel
 
-from .handles import RotateHandle
 from .options_panel import EditorOptions
 from .theme import SELECT_TEAL as SELECT_TEAL_HEX
 from .theme import canvas_colors
@@ -439,7 +440,7 @@ class RnaScene(QtWidgets.QGraphicsScene):
 
 
 class RnaGraphicsView(QtWidgets.QGraphicsView):
-    """Interactive view: click-to-select, drag-the-handle-to-rotate.
+    """Interactive view: click-to-select, then drag-the-helix-to-rotate.
 
     Signals:
         selectionChanged: emits ``(start, end)`` tuple or ``None``.
@@ -454,8 +455,10 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         super().__init__(self._scene, parent)
         self._model: EditorModel | None = None
         self._options = EditorOptions()
-        self._handle: RotateHandle | None = None
-        self._pivot: tuple[float, float] | None = None  # engine-space selection pivot
+        # Engine-space pivot of the current helix selection. Used purely for the
+        # drag-to-rotate angle math (there is no on-canvas handle); None when no
+        # rotatable helix is selected.
+        self._pivot: tuple[float, float] | None = None
         self._rotating = False
         self._last_angle = 0.0
         # Undo coalescing: a whole rotate/residue drag must record exactly ONE
@@ -516,7 +519,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
     def set_model(self, model: EditorModel) -> None:
         """Attach a model and render its initial scene."""
         self._model = model
-        self._clear_handle()
+        self._clear_pivot()
         self._apply_background(model.scene().get("style", {}))
         self._rebuild()
         self.fit()
@@ -580,17 +583,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
     def _rebuild(self) -> None:
         if self._model is None:
             return
-        selection = self._model.selection
-        # `scene.build()` calls `clear()`, which DELETES the handle's C++
-        # object. Capture its display angle, drop the stale wrapper, rebuild,
-        # then recreate a fresh handle at the (fixed) junction pivot. Re-adding
-        # the deleted wrapper would raise "Internal C++ object already deleted"
-        # on the very first drag move (mouseMoveEvent -> _rebuild).
-        angle = self._handle.display_angle() if self._handle is not None else None
-        self._handle = None
-        self._scene.build(self._model.scene(), selection, self._show_overlaps())
-        if selection is not None and self._pivot is not None:
-            self._show_handle(selection[0], selection[1], self._pivot, angle)
+        self._scene.build(self._model.scene(), self._model.selection, self._show_overlaps())
 
     def fit(self) -> None:
         """Fit the whole structure in the viewport."""
@@ -599,68 +592,49 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             return
         self.fitInView(rect.adjusted(-20, -20, 20, 20), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
 
-    # -- selection / handle -------------------------------------------------
+    # -- selection ----------------------------------------------------------
 
-    def _clear_handle(self) -> None:
-        if self._handle is not None:
-            if self._handle.scene() is not None:
-                self._scene.removeItem(self._handle)
-            self._handle = None
+    def _clear_pivot(self) -> None:
+        """Forget the current selection's rotation pivot (no rotatable helix)."""
         self._pivot = None
-
-    def _show_handle(
-        self, start: int, end: int, pivot: tuple[float, float], angle: float | None = None
-    ) -> None:
-        """Place the visible rotate handle at the selection's junction pivot."""
-        self._clear_handle()
-        self._pivot = pivot  # engine space; fixed while rotating about the junction
-        cx, cy = pivot[0], -pivot[1]  # engine -> scene
-        positions = self._scene.nt_positions()
-        reach = 0.0
-        for i in range(start, end + 1):
-            if i < len(positions):
-                reach = max(reach, math.hypot(positions[i].x() - cx, positions[i].y() - cy))
-        radius = max(reach + 1.5 * self._scene.node_r(), 3.0 * self._scene.node_r())
-        self._handle = RotateHandle(cx, cy, radius, knob_r=max(7.0, self._scene.node_r() * 0.9))
-        if angle is not None:
-            self._handle.set_display_angle(angle)
-        self._scene.addItem(self._handle)
 
     def _select_at(self, idx: int) -> None:
         """Resolve a click at ``idx`` per the active mode + granularity.
 
-        Move mode always selects a helix (rotate handle appears). Select mode
-        selects at the current granularity: a helix gets the rotate handle, a
-        residue becomes free-form draggable, a motif is highlight-only.
+        Move (rotate) mode always selects a helix and stores its junction pivot
+        for a subsequent drag-to-rotate (the teal highlight is the only
+        affordance). Select mode selects at the current granularity: a helix
+        stores its pivot, a residue becomes free-form draggable, a motif is
+        highlight-only.
         """
         self._drag_residue = None
         if self._model is None:
             return
         if self._options.mode != "select":
-            # Move mode: classic helix select + rotate handle.
+            # Rotate mode: helix select; store the pivot for drag-to-rotate.
             resolved = self._model.select(idx)
             if resolved is None:
-                self._clear_handle()
+                self._clear_pivot()
                 self._rebuild()
                 self.selectionChanged.emit(None)
             else:
                 start, end, pivot = resolved
+                self._pivot = pivot
                 self._rebuild()
-                self._show_handle(start, end, pivot)
                 self.selectionChanged.emit((start, end))
             return
         # Select mode: granular selection.
         sel = self._model.select_at(idx, self._options.granularity)
         if sel is None:
-            self._clear_handle()
+            self._clear_pivot()
             self._rebuild()
             self.selectionChanged.emit(None)
             return
         if sel.kind == "helix":
+            self._pivot = sel.pivot
             self._rebuild()
-            self._show_handle(sel.start, sel.end, sel.pivot)
         else:
-            self._clear_handle()
+            self._clear_pivot()
             if sel.kind == "residue" and sel.indices:
                 self._drag_residue = sel.indices[0]
                 self._residue_pushed = False
@@ -689,7 +663,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         )
         rect_item.setPen(pen)
         rect_item.setBrush(QtGui.QBrush(fill))
-        rect_item.setZValue(900)  # above nts, below the rotate handle (1000)
+        rect_item.setZValue(900)  # above the nts / letters
         self._scene.addItem(rect_item)
         self._sel_rect = rect_item
 
@@ -729,7 +703,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         hit = {i for i, p in enumerate(positions) if scene_rect.contains(p)}
         if additive:
             hit |= set(self._model.sel_indices)
-        self._clear_handle()
+        self._clear_pivot()
         self._drag_residue = None
         self._model.select_indices(hit)
         self._rebuild()
@@ -747,24 +721,26 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             return
         if button == QtCore.Qt.MouseButton.LeftButton and self._model is not None:
             spos = self.mapToScene(event.position().toPoint())
-            # 1) grab the handle knob?
-            if self._handle is not None:
-                knob = self._handle.knob_scene_pos()
-                grab = self._handle.knob_radius() * 1.8
-                if math.hypot(spos.x() - knob.x(), spos.y() - knob.y()) <= grab:
+            # 1) click a nucleotide?
+            idx = self._nearest_nt(spos)
+            if idx is not None:
+                self._select_at(idx)
+                # Rotate mode: grabbing any nt of a helix both selects it AND
+                # arms a direct drag-to-rotate about its junction pivot -- the
+                # grab point is just the starting angle reference. An unpaired
+                # nt resolves to no helix (pivot None), so it only selects.
+                if (
+                    self._options.mode != "select"
+                    and self._model.selection is not None
+                    and self._pivot is not None
+                ):
                     self._rotating = True
                     self._rotate_pushed = False
                     self._last_angle = self._angle_from_pivot(spos)
                     self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
-                    event.accept()
-                    return
-            # 2) click a nucleotide?
-            idx = self._nearest_nt(spos)
-            if idx is not None:
-                self._select_at(idx)
                 event.accept()
                 return
-            # 3) empty space: Select mode -> start a box/marquee; else deselect
+            # 2) empty space: Select mode -> start a box/marquee; else deselect
             if self._options.mode == "select":
                 additive = bool(
                     event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
@@ -773,7 +749,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
                 event.accept()
                 return
             self._model.deselect()
-            self._clear_handle()
+            self._clear_pivot()
             self._drag_residue = None
             self._rebuild()
             self.selectionChanged.emit(None)
@@ -812,7 +788,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             self.overlapChanged.emit(result.flagged, len(result.overlaps))
             event.accept()
             return
-        if self._rotating and self._model is not None and self._handle is not None:
+        if self._rotating and self._model is not None and self._pivot is not None:
             spos = self.mapToScene(event.position().toPoint())
             # Coalesce the whole rotate drag into ONE undo entry: push the
             # pre-rotate pose on the first mutating move only.
@@ -821,12 +797,11 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
                 self._rotate_pushed = True
             cur = self._angle_from_pivot(spos)
             # scene y is flipped vs engine y, so an engine-CCW rotation is a
-            # scene-CW one: negate the scene-space delta to keep the visual
-            # drag direction matching the helix's motion.
+            # scene-CW one: negate the scene-space delta to keep the helix
+            # following the cursor.
             delta_scene = cur - self._last_angle
             self._last_angle = cur
             result = self._model.rotate_selection(-delta_scene)
-            self._handle.set_display_angle(cur)
             self._rebuild()
             self.overlapChanged.emit(result.flagged, len(result.overlaps))
             event.accept()
@@ -868,8 +843,9 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
     # -- helpers ------------------------------------------------------------
 
     def _angle_from_pivot(self, spos: QtCore.QPointF) -> float:
-        center = self._handle.center()
-        return math.atan2(spos.y() - center.y(), spos.x() - center.x())
+        """Scene-space angle of ``spos`` about the selection pivot (engine->scene)."""
+        cx, cy = self._pivot[0], -self._pivot[1]  # engine y-up -> scene y-down
+        return math.atan2(spos.y() - cy, spos.x() - cx)
 
     def _nearest_nt(self, spos: QtCore.QPointF) -> int | None:
         positions = self._scene.nt_positions()

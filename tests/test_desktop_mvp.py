@@ -120,8 +120,10 @@ def test_qt_window_constructs_headless():
     view = window.centralWidget()
     scene = view.scene()
     assert len(scene.items()) > 0
-    # selecting a helix through the view attaches a rotate handle
+    # selecting a helix through the view stores its junction pivot (no handle)
     view.set_model(window._model)
+    view._select_at(8)
+    assert view._pivot is not None
     resolved = window._model.select(8)
     assert resolved is not None
     window.close()

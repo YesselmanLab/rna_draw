@@ -26,7 +26,7 @@ from .scene_view import RnaGraphicsView
 from .style_panel import ColorButton, StylePanel
 from .theme import qss_for
 
-HINT = "Click a helix, then drag its orange handle to rotate it about its junction."
+HINT = "Click a helix to select it, then drag it to rotate about its junction."
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -192,7 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._move_act = QtGui.QAction("Rotate", self)
         self._move_act.setCheckable(True)
         self._move_act.setChecked(True)
-        self._move_act.setToolTip("Rotate: click a helix, drag its handle to rotate it about its junction")
+        self._move_act.setToolTip("Rotate: click a helix to select it, then drag it to rotate about its junction")
         self._move_act.triggered.connect(lambda: self._set_mode("move"))
 
         self._select_act = QtGui.QAction("Select", self)

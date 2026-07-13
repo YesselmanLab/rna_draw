@@ -32,10 +32,10 @@ class EditorOptions:
         snap_back_on_overlap: Reserved -- revert a move that overlaps.
             Default OFF (placeholder; not yet wired into the move logic).
         mode: Interaction mode governing how clicks/drags are read.
-            ``"move"`` (default) = arrange: click selects a helix, its rotate
-            handle appears, drag rotates. ``"select"`` = inspect: click
-            selects at ``granularity``; a residue can be dragged; no rotate
-            handle unless a helix is selected. (``"edit"`` reserved.)
+            ``"move"`` (default) = arrange: click selects a helix (highlighted
+            teal), then dragging it rotates it about its junction. ``"select"``
+            = inspect: click selects at ``granularity``; a residue can be
+            dragged. (``"edit"`` reserved.)
         granularity: What a click selects in ``"select"`` mode:
             ``"residue"`` | ``"helix"`` (default) | ``"motif"``. Ignored in
             ``"move"`` mode (which always selects a helix).
