@@ -20,6 +20,7 @@ from rna_draw.gui.model import DEMO_SEQ, DEMO_SS, EditorModel
 from rna_draw.io_formats import OPEN_FILTER, parse_structure_file
 
 from .collapsible import CollapsibleSection
+from .floating_selection import FloatingSelectionPanel
 from .options_panel import OptionsPanel
 from .scene_view import RnaGraphicsView
 from .style_panel import ColorButton, StylePanel
@@ -71,6 +72,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_left_panel()
         self._build_mode_toolbar()
         self._build_statusbar()
+        self._build_floating_panel()
 
         # hand the view its initial behavior options (highlighting OFF by default)
         self._view.set_options(self._options_panel.options())
@@ -408,23 +410,45 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._sel_readout.setText("No selection")
 
-    def _on_color_selection(self) -> None:
-        """Apply a per-nt color override to the current selection (visual)."""
+    def _apply_selection_color(self, hex_color: str) -> None:
+        """Recolor the selection (push_undo + model + restyle). Undoable, visual.
+
+        Shared by the left "Selection styling" section and the floating popover
+        so both routes are identical and coalesce to one undo entry per action.
+        """
         if self._model is None:
             return
         self._model.push_undo()
-        self._model.apply_color_to_selection(self._sel_color_btn.color())
+        self._model.apply_color_to_selection(hex_color)
         self._view.restyle()
         self._sync_edit_actions()
 
-    def _on_highlight_selection(self) -> None:
-        """Add a persistent highlight halo over the current selection (visual)."""
+    def _apply_selection_highlight(self, hex_color: str) -> None:
+        """Add a highlight halo over the selection (push_undo + model + restyle)."""
         if self._model is None:
             return
         self._model.push_undo()
-        self._model.highlight_selection(self._sel_highlight_btn.color())
+        self._model.highlight_selection(hex_color)
         self._view.restyle()
         self._sync_edit_actions()
+
+    def _clear_selection_styling(self) -> None:
+        """Clear the selection's color override + highlight halos (one undo)."""
+        if self._model is None:
+            return
+        self._model.push_undo()
+        self._model.clear_color_on_selection()
+        self._model.clear_highlights()
+        self._view.restyle()
+        self._sync_edit_actions()
+
+    def _on_color_selection(self) -> None:
+        """Apply a per-nt color override to the current selection (visual)."""
+        self._apply_selection_color(self._sel_color_btn.color())
+
+    def _on_highlight_selection(self) -> None:
+        """Add a persistent highlight halo over the current selection (visual)."""
+        self._apply_selection_highlight(self._sel_highlight_btn.color())
 
     def _on_clear_color(self) -> None:
         """Drop color overrides on the current selection (revert to scheme)."""
@@ -492,6 +516,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if app is not None:
             app.setStyleSheet(qss_for(name))
         self._view.set_theme(name)
+        # Restyle the floating popover so it matches the active theme.
+        if hasattr(self, "_floating"):
+            self._floating.apply_theme(name)
         # Keep the toggle in sync without re-triggering `_toggle_theme`.
         if hasattr(self, "_theme_act"):
             self._theme_act.blockSignals(True)
@@ -528,6 +555,47 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.addWidget(self._engine_label)
         sb.addWidget(self._overlap_label)
         sb.addPermanentWidget(self._hint_label)
+
+    def _build_floating_panel(self) -> None:
+        """A contextual popover floating over the canvas next to a selection.
+
+        Lives as a child of the view's viewport so it hovers over the drawing.
+        Its actions reuse the SAME model calls + undo the left "Selection
+        styling" section uses, so the two entry points stay consistent. Shown /
+        positioned / hidden from `_update_floating_panel` on selection change,
+        and repositioned on pan/zoom (scrollbar moves).
+        """
+        self._floating = FloatingSelectionPanel(self._view.viewport())
+        self._floating.apply_theme(self._theme_name)
+        self._floating.colorRequested.connect(self._apply_selection_color)
+        self._floating.highlightRequested.connect(self._apply_selection_highlight)
+        self._floating.clearRequested.connect(self._clear_selection_styling)
+        self._floating.closed.connect(self._floating.hide)
+        # Reposition (only while visible) as the canvas pans/zooms.
+        self._view.horizontalScrollBar().valueChanged.connect(self._reposition_floating)
+        self._view.verticalScrollBar().valueChanged.connect(self._reposition_floating)
+
+    def _update_floating_panel(self) -> None:
+        """Show + position the popover near a live selection, or hide it."""
+        if not hasattr(self, "_floating"):
+            return
+        if self._model is not None and self._model.sel_indices:
+            self._floating.set_selection(self._model.sel_kind, self._model.sel_indices)
+            rect = self._view.selection_view_rect()
+            if rect is not None:
+                self._floating.place_near(rect, self._view.viewport().rect())
+            self._floating.show()
+            self._floating.raise_()
+        else:
+            self._floating.hide()
+
+    def _reposition_floating(self) -> None:
+        """Re-anchor the popover to the current selection's viewport bbox."""
+        if not hasattr(self, "_floating") or not self._floating.isVisible():
+            return
+        rect = self._view.selection_view_rect()
+        if rect is not None:
+            self._floating.place_near(rect, self._view.viewport().rect())
 
     # -- actions ------------------------------------------------------------
 
@@ -774,6 +842,7 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._syncing = False
         self._update_selection_styling()
+        self._update_floating_panel()
         self._engine_label.setText(
             f"{len(model.scene()['nucleotides'])} nt  |  engine: {model.engine_name}"
         )
@@ -790,6 +859,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_selection(self, selection) -> None:
         self._update_selection_styling()
+        self._update_floating_panel()
         if selection is None:
             self._overlap_label.setText("No helix selected")
         else:

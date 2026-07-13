@@ -674,5 +674,31 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         if self._model is not None:
             self.overlapChanged.emit(self._model.flagged, len(self._model.scene()["overlaps"]))
 
+    def selection_view_rect(self) -> QtCore.QRect | None:
+        """Bounding rect of the current selection's disks in VIEWPORT pixels.
+
+        Unions the cached scene-space centers of every selected nucleotide
+        (padded by the disk radius), maps that scene rectangle into the
+        viewport's pixel coordinates, and returns it -- the anchor a floating
+        panel positions against. Returns ``None`` when nothing is selected or
+        no positions are cached yet.
+        """
+        if self._model is None:
+            return None
+        indices = self._model.sel_indices
+        if not indices:
+            return None
+        positions = self._scene.nt_positions()
+        pts = [positions[i] for i in indices if 0 <= i < len(positions)]
+        if not pts:
+            return None
+        r = self._scene.node_r()
+        xs = [p.x() for p in pts]
+        ys = [p.y() for p in pts]
+        scene_rect = QtCore.QRectF(
+            min(xs) - r, min(ys) - r, (max(xs) - min(xs)) + 2 * r, (max(ys) - min(ys)) + 2 * r
+        )
+        return self.mapFromScene(scene_rect).boundingRect()
+
 
 __all__ = ["RnaGraphicsView", "RnaScene"]
