@@ -29,6 +29,35 @@ from .theme import qss_for
 HINT = "Click a helix to select it, then drag it to rotate about its junction."
 
 
+class _LayoutWorker(QtCore.QObject):
+    """Runs `EditorModel.from_ss` off the UI thread (pure, touches no Qt).
+
+    Lives on a `QThread`; its `run` slot builds the model and emits either
+    `finished` (the model) or `failed` (an error string) back to the main
+    thread. `from_ss` is a pure layout computation -- it constructs no Qt
+    objects -- so it is safe to run on a worker thread; only the main-thread
+    slot (`MainWindow._on_layout_done`) touches the view/model wiring.
+    """
+
+    finished = QtCore.Signal(object)
+    failed = QtCore.Signal(str)
+
+    def __init__(self, ss: str, seq: str | None) -> None:
+        super().__init__()
+        self._ss = ss
+        self._seq = seq
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        """Lay out the structure and emit the model (or the error)."""
+        try:
+            model = EditorModel.from_ss(self._ss, seq=self._seq)
+        except Exception as exc:  # keep the app alive on a bad structure
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(model)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """The desktop RNA editor's main window."""
 
@@ -43,6 +72,17 @@ class MainWindow(QtWidgets.QMainWindow):
             seq = DEMO_SEQ
 
         self._model: EditorModel | None = None
+        # Background-layout state: a threaded `load_ss` keeps the window
+        # responsive while `from_ss` runs. `_loading` gates Draw/Open re-entry;
+        # `_closing` makes the finished-slot a no-op if the window is torn down
+        # mid-load; the thread/worker refs keep them alive until they finish.
+        self._loading = False
+        self._closing = False
+        self._layout_thread: QtCore.QThread | None = None
+        self._layout_worker: _LayoutWorker | None = None
+        # Widgets/actions disabled while a background layout is in flight.
+        self._open_actions: list[QtGui.QAction] = []
+        self._draw_btn: QtWidgets.QPushButton | None = None
         # Residue-numbering state, re-applied to every freshly laid-out model.
         self._show_numbers = True
         self._number_interval = 10
@@ -95,6 +135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         open_act.triggered.connect(self._open_file)
         bar.addAction(open_act)
+        self._open_actions.append(open_act)
 
         save_act = QtGui.QAction("Save", self)
         save_act.setToolTip("Save the current drawing as a .rnadoc.json document")
@@ -130,6 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         open_act.setShortcut(QtGui.QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._open_file)
         menu.addAction(open_act)
+        self._open_actions.append(open_act)
 
         menu.addSeparator()
 
@@ -292,8 +334,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         draw_btn = QtWidgets.QPushButton("Draw")
         draw_btn.setToolTip("Lay out and draw the structure with its sequence letters")
-        draw_btn.clicked.connect(self._draw_from_edit)
+        # The button lays out on a background thread so a large structure never
+        # freezes the window; the returnPressed path stays synchronous (quick
+        # edits + headless tests).
+        draw_btn.clicked.connect(lambda: self._draw_from_edit(threaded=True))
         form.addRow("", draw_btn)
+        self._draw_btn = draw_btn
 
         section.set_content_layout(form)
         self._panel.add_section_top(section)
@@ -599,13 +645,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # -- actions ------------------------------------------------------------
 
-    def load_ss(self, ss: str, seq: str | None = None) -> None:
-        """Lay out `ss` and render it, or show the error in the status bar."""
+    def load_ss(self, ss: str, seq: str | None = None, threaded: bool = False) -> None:
+        """Lay out `ss` and render it, or show the error in the status bar.
+
+        Args:
+            ss: Dot-bracket structure to lay out.
+            seq: Optional sequence for per-nt labels.
+            threaded: When True, run `EditorModel.from_ss` on a background
+                `QThread` so a large structure never freezes the window; the
+                model is adopted on the main thread when the worker finishes.
+                When False (the default -- construction, the returnPressed
+                quick path, and headless tests), lay out synchronously.
+        """
+        if threaded:
+            self._load_ss_threaded(ss, seq)
+            return
         try:
             model = EditorModel.from_ss(ss, seq=seq)
         except Exception as exc:  # keep the app alive on a bad structure
             self._overlap_label.setText(f"Could not lay out structure: {exc}")
             return
+        self._apply_model(model, ss, seq)
+
+    def _apply_model(self, model: EditorModel, ss: str, seq: str | None) -> None:
+        """Adopt a freshly laid-out model into the view (main thread only)."""
         # carry the current panel styling + numbering onto the fresh model
         model.set_style(self._panel.preset())
         model.set_numbering(self._show_numbers, self._number_interval)
@@ -616,13 +679,86 @@ class MainWindow(QtWidgets.QMainWindow):
         self._engine_label.setText(f"{len(ss)} nt  |  engine: {model.engine_name}")
         self._on_overlap(model.flagged, len(model.scene()["overlaps"]))
 
-    def _draw_from_edit(self) -> None:
-        """Apply BOTH the Structure and Sequence fields via a fresh layout."""
+    def _load_ss_threaded(self, ss: str, seq: str | None) -> None:
+        """Lay `ss` out on a background thread, keeping the window responsive."""
+        if self._loading:
+            # A load is already in flight; ignore the re-entry rather than
+            # racing two layouts onto the view.
+            return
+        self._loading = True
+        self._set_loading_ui(True, len(ss))
+        thread = QtCore.QThread(self)
+        worker = _LayoutWorker(ss, seq)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(lambda m: self._on_layout_done(m, ss, seq))
+        worker.failed.connect(self._on_layout_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        # Drop our refs BEFORE the deleteLater frees the C++ objects, so a
+        # later `closeEvent` never touches a dangling QThread wrapper.
+        thread.finished.connect(self._on_layout_thread_finished)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # Keep strong refs so neither is GC'd before the thread finishes.
+        self._layout_thread = thread
+        self._layout_worker = worker
+        thread.start()
+
+    def _on_layout_thread_finished(self) -> None:
+        """Release the finished thread/worker refs (they self-delete next)."""
+        self._layout_thread = None
+        self._layout_worker = None
+
+    def _set_loading_ui(self, loading: bool, n: int = 0) -> None:
+        """Toggle the busy cursor, status hint, and Draw/Open re-entry lock."""
+        if loading:
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+            self._overlap_label.setText(f"Laying out {n} nt…")
+        else:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        for act in self._open_actions:
+            act.setEnabled(not loading)
+        if self._draw_btn is not None:
+            self._draw_btn.setEnabled(not loading)
+        self._ss_edit.setEnabled(not loading)
+        self._seq_edit.setEnabled(not loading)
+
+    def _on_layout_done(self, model: EditorModel, ss: str, seq: str | None) -> None:
+        """Main-thread slot: adopt the worker's model + re-enable input."""
+        self._loading = False
+        if self._closing:
+            return
+        self._set_loading_ui(False)
+        self._apply_model(model, ss, seq)
+
+    def _on_layout_failed(self, message: str) -> None:
+        """Main-thread slot: surface the layout error + re-enable input."""
+        self._loading = False
+        if self._closing:
+            return
+        self._set_loading_ui(False)
+        self._overlap_label.setText(f"Could not lay out structure: {message}")
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Guard against a background layout finishing after teardown."""
+        self._closing = True
+        if self._layout_thread is not None and self._layout_thread.isRunning():
+            self._layout_thread.quit()
+            self._layout_thread.wait(5000)
+        super().closeEvent(event)
+
+    def _draw_from_edit(self, threaded: bool = False) -> None:
+        """Apply BOTH the Structure and Sequence fields via a fresh layout.
+
+        The Draw button passes `threaded=True` (background layout, no freeze);
+        returnPressed and direct calls stay synchronous.
+        """
         ss = self._ss_edit.text().strip()
         if not ss:
             return
         seq = self._seq_edit.text().strip() or None
-        self.load_ss(ss, seq)
+        self.load_ss(ss, seq, threaded=threaded)
 
     def _apply_sequence(self) -> None:
         """Relabel the current drawing from the Sequence field (no re-layout, no move)."""
@@ -647,7 +783,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except (OSError, ValueError) as exc:
             self._overlap_label.setText(f"Could not read structure: {exc}")
             return
-        self.load_ss(ss, seq)
+        # Opened structures can be large; lay out off the UI thread.
+        self.load_ss(ss, seq, threaded=True)
 
     # -- documents (.rnadoc.json) -------------------------------------------
 
