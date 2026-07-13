@@ -6,23 +6,38 @@ parsing -- unlike `PuzzlerEngine` (`rna_draw/layout/puzzler.py`), which is
 KEPT UNCHANGED as the parity oracle these were verified against (see
 `tests/test_vienna_binding.py`).
 
+RETIRED FROM PRODUCTION (Milestone A step 11): the native `rna_layout`
+port (`rna_draw.layout.native`) is now the shipped production engine
+(`rna_draw.layout.production`); `_vienna_layout` is compiled only under
+the `RNA_DRAW_BUILD_ORACLE` CMake option (ON for the parity/oracle build,
+OFF for the default/shipped build -- see `CMakeLists.txt`), so it is no
+longer a runtime dependency of the default build. The
+`from rna_draw import _vienna_layout` import below is therefore GUARDED:
+importing this module always succeeds (so `rna_draw.layout`'s package
+import, which pulls this module in, never breaks in a default build),
+but constructing `ViennaPuzzlerEngine`/`ViennaTurtleEngine` raises
+`EngineUnavailableError` when the oracle extension is not built.
+
 Both `ViennaPuzzlerEngine` and `ViennaTurtleEngine` are reentrant
 (RNApuzzler/RNAturtle keep no mutable file-scope state), so they are safe
-to call concurrently. The extension no longer links `libRNA.a`: the two
-vendored layout translation units are compiled standalone against a ~120
-LOC compat shim (`src/vienna_layout/vendor/vrna_compat.c`), so rna_draw
-has no ViennaRNA runtime dependency.
+to call concurrently. The extension links no `libRNA.a`: the two vendored
+layout translation units are compiled standalone against a ~120 LOC
+compat shim (`src/vienna_layout/vendor/vrna_compat.c`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from rna_draw import _vienna_layout
 from rna_draw.overlap import rescale_coords
 from rna_draw.parameters import DrawParameters
 
 from .base import EngineError, EngineUnavailableError, is_pseudoknot_free
+
+try:
+    from rna_draw import _vienna_layout
+except ImportError:  # pragma: no cover - exercised by the default (oracle-off) build
+    _vienna_layout = None  # type: ignore[assignment]
 
 CoordFn = Callable[[str], tuple[list[float], list[float]]]
 
@@ -48,8 +63,17 @@ def _assert_vienna_abi() -> None:
     values recorded when M5.1's binding was first built.
 
     Raises:
-        EngineUnavailableError: If either value has drifted.
+        EngineUnavailableError: If `_vienna_layout` was not built (the
+            default, oracle-off build -- Milestone A step 11) or either
+            ABI value has drifted.
     """
+    if _vienna_layout is None:
+        raise EngineUnavailableError(
+            "rna_draw._vienna_layout is not built (RNA_DRAW_BUILD_ORACLE=OFF): "
+            "the vendored ViennaRNA engines are oracle/parity-only in the "
+            "default build -- use rna_draw.layout.native's NativePuzzlerEngine/"
+            "NativeTurtleEngine instead, or rebuild with -DRNA_DRAW_BUILD_ORACLE=ON"
+        )
     actual_version = _vienna_layout.abi_version()
     if actual_version != EXPECTED_VIENNA_ABI_VERSION:
         raise EngineUnavailableError(

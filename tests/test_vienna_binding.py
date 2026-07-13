@@ -20,19 +20,28 @@ import sys
 import pytest
 from conftest import random_structure
 
-import rna_draw._vienna_layout as vienna_layout
-from rna_draw.layout.base import EngineError, EngineUnavailableError
-from rna_draw.layout.pipeline import (
+# Milestone A step 11: `_vienna_layout` is oracle/parity-only, compiled
+# only with `-DRNA_DRAW_BUILD_ORACLE=ON` (the default/shipped build omits
+# it -- the native engine is production now, see CMakeLists.txt). Skip
+# this entire module, rather than failing collection, when it is not
+# built.
+vienna_layout = pytest.importorskip(
+    "rna_draw._vienna_layout",
+    reason="RNA_DRAW_BUILD_ORACLE=OFF: the vendored ViennaRNA oracle is not built",
+)
+
+from rna_draw.layout.base import EngineError, EngineUnavailableError  # noqa: E402
+from rna_draw.layout.pipeline import (  # noqa: E402
     EXPECTED_PUZZLER_OPTIONS_SIZEOF,
     EXPECTED_VIENNA_ABI_VERSION,
     layout_guaranteed,
     resolve_engine,
 )
-from rna_draw.layout.puzzler import PuzzlerEngine
-from rna_draw.layout.vienna import ViennaPuzzlerEngine, ViennaTurtleEngine
-from rna_draw.overlap import OverlapParams, check_overlaps
-from rna_draw.parameters import DrawParameters
-from rna_draw.render_rna import get_pairmap_from_secstruct
+from rna_draw.layout.puzzler import PuzzlerEngine  # noqa: E402
+from rna_draw.layout.vienna import ViennaPuzzlerEngine, ViennaTurtleEngine  # noqa: E402
+from rna_draw.overlap import OverlapParams, check_overlaps  # noqa: E402
+from rna_draw.parameters import DrawParameters  # noqa: E402
+from rna_draw.render_rna import get_pairmap_from_secstruct  # noqa: E402
 
 ATOL_COORD = 1e-4  # in-process vs subprocess call the SAME algorithm -- near-exact
 ATOL_BBOX = 1e-4

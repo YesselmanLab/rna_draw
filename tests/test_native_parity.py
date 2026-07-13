@@ -35,13 +35,26 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-import rna_draw._layout_core as native_layout
-import rna_draw._vienna_layout as vienna_layout
-from rna_draw.layout.base import has_empty_loop, is_pseudoknot_free, iter_adaptive_params
-from rna_draw.layout.production import PRODUCTION_CLEARANCE_LADDER
-from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
-from rna_draw.parameters import DrawParameters
-from rna_draw.render_rna import get_pairmap_from_secstruct
+# Milestone A step 11: `_vienna_layout` is the oracle this whole module
+# differentially tests against; it is only compiled with
+# `-DRNA_DRAW_BUILD_ORACLE=ON` (the default/shipped build omits it, since
+# the native engine is now production -- see CMakeLists.txt). Skip this
+# entire module, rather than failing collection, when it is not built.
+vienna_layout = pytest.importorskip(
+    "rna_draw._vienna_layout",
+    reason="RNA_DRAW_BUILD_ORACLE=OFF: the vendored ViennaRNA oracle is not built",
+)
+
+import rna_draw._layout_core as native_layout  # noqa: E402
+from rna_draw.layout.base import (  # noqa: E402
+    has_empty_loop,
+    is_pseudoknot_free,
+    iter_adaptive_params,
+)
+from rna_draw.layout.production import PRODUCTION_CLEARANCE_LADDER  # noqa: E402
+from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords  # noqa: E402
+from rna_draw.parameters import DrawParameters  # noqa: E402
+from rna_draw.render_rna import get_pairmap_from_secstruct  # noqa: E402
 
 TIGHT_TOL = 1e-6  # after float32-rounding native output; plan criterion 1
 RAW_DIFF_SAFETY_FACTOR = 8.0  # headroom over 1 ULP of float32 for the raw (informational) check

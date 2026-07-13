@@ -36,7 +36,7 @@ from rna_draw.spatial_hash import SpatialHash
 HARD_SET_JSON = Path(__file__).parent.parent / "benchmarks" / "hard_set.json"
 WORST_SET_JSON = Path(__file__).parent.parent / "benchmarks" / "worst_set.json"
 requires_production = pytest.mark.skipif(
-    not _production_available(), reason="rna_draw._vienna_layout not importable/ABI-matched"
+    not _production_available(), reason="rna_draw._layout_core not importable"
 )
 
 

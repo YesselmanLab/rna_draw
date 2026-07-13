@@ -10,6 +10,17 @@ This module is the SINGLE source of truth for that composition -- it used
 to live only in `benchmarks/engines.py`; that module now re-imports these
 names rather than keeping a parallel copy (see its module docstring).
 
+NATIVE PRIMARY (Milestone A step 10): `EscalatingClearanceEngine`'s inner
+puzzler call (`_layout_at_clearance`) now calls the owned native
+`rna_layout` port (`rna_draw._layout_core.plot_coords_puzzler_full`) --
+verified to reproduce the vendored `_vienna_layout.plot_coords_puzzler_opts`
+call it replaces to a max diff of 3.6e-12 across the production clearance
+ladder (`tests/test_native_parity.py`, Milestone A step 9). `_vienna_layout`
+is only compiled under the `RNA_DRAW_BUILD_ORACLE` CMake option (Milestone
+A step 11) and is used here ONLY as a fallback if `_layout_core` is somehow
+unavailable (`_native_available()`/`_vienna_available()` below) -- the
+default/shipped build needs no ViennaRNA header or runtime dependency.
+
 HANG SAFETY (read before touching `PRODUCTION_CLEARANCE_LADDER`): a
 diagnosis of the 17 timeouts a capped `(1.0, 1.25, 1.5)` ladder produced on
 the hard set found NO uninterruptible C hang at clearance <= 1.5 -- the
@@ -38,7 +49,7 @@ wall-clock-bounded by construction.
 
 from __future__ import annotations
 
-from rna_draw import _vienna_layout
+from rna_draw import _layout_core
 from rna_draw.overlap import OverlapParams, check_overlaps, rescale_coords
 from rna_draw.parameters import DrawParameters
 from rna_draw.render_rna import get_pairmap_from_secstruct
@@ -51,7 +62,42 @@ from .base import (
     iter_adaptive_params,
 )
 from .postpass import POSTPASS_PARAMS, PostPassConfig, remove_overlaps
-from .vienna import _assert_vienna_abi
+from .vienna import EXPECTED_PUZZLER_OPTIONS_SIZEOF, EXPECTED_VIENNA_ABI_VERSION
+
+try:
+    from rna_draw import _vienna_layout
+except ImportError:  # pragma: no cover - exercised by the default (oracle-off) build
+    _vienna_layout = None  # type: ignore[assignment]
+
+
+def _native_available() -> bool:
+    """Whether the native `_layout_core` puzzler call can be used.
+
+    `_layout_core` is a default build target (compiled from this
+    repository's own sources, no external ABI to drift) -- this is a
+    plain import check, kept as a function (rather than inlined) so
+    `_layout_at_clearance` reads as an explicit native-else-oracle
+    decision and tests can monkeypatch it.
+    """
+    return _layout_core is not None
+
+
+def _vienna_available() -> bool:
+    """Whether the vendored ViennaRNA oracle engine can be used as a fallback.
+
+    True only when `_vienna_layout` is built (`RNA_DRAW_BUILD_ORACLE=ON`)
+    AND its ABI matches what `rna_draw.layout.vienna` was compiled against
+    -- the same comparison `vienna._assert_vienna_abi` makes, but returning
+    a bool instead of raising, so `_layout_at_clearance`'s fallback branch
+    can silently decline (routing to `EngineError` instead) rather than
+    crashing the caller.
+    """
+    if _vienna_layout is None:
+        return False
+    return (
+        _vienna_layout.abi_version() == EXPECTED_VIENNA_ABI_VERSION
+        and _vienna_layout.sizeof_puzzler_options() == EXPECTED_PUZZLER_OPTIONS_SIZEOF
+    )
 
 # Cap on how dirty a base layout may be, *measured at POSTPASS_PARAMS's floor
 # radius* (see that constant's docstring), before the post-pass even attempts
@@ -107,7 +153,16 @@ class EscalatingClearanceEngine:
     name = "escalating_clearance"
 
     def __init__(self, levels: tuple[float, ...] = (1.0, 1.25, 1.5, 1.75, 2.0)) -> None:
-        """Store the clearance ladder and guard against ABI drift.
+        """Store the clearance ladder.
+
+        No ABI-drift guard is needed at construction (Milestone A step 10):
+        the primary puzzler call is the native `_layout_core` extension
+        (`_layout_at_clearance` below), which links no external library
+        that could ABI-drift -- unlike the vendored `_vienna_layout` this
+        replaced. `_layout_at_clearance` falls back to `_vienna_layout`
+        (oracle build only) only if `_layout_core` is unavailable, and
+        that fallback's own ABI check happens per-call
+        (`_vienna_available`), not here.
 
         Args:
             levels: Clearance values tried in order, cheapest first.
@@ -115,12 +170,7 @@ class EscalatingClearanceEngine:
                 benchmark's measured-best setting); the production engine
                 uses the hang-safe `PRODUCTION_CLEARANCE_LADDER` instead
                 (see module docstring).
-
-        Raises:
-            EngineUnavailableError: If the compiled binding has drifted
-                from the ViennaRNA ABI it was built against.
         """
-        _assert_vienna_abi()
         self._levels = levels
         self._primary = DrawParameters().PRIMARY_SPACE
 
@@ -173,12 +223,29 @@ class EscalatingClearanceEngine:
     ) -> tuple[list[float], list[float]]:
         """Call the raw puzzler binding at one clearance and rescale.
 
+        Native `_layout_core.plot_coords_puzzler_full` PRIMARY (Milestone A
+        step 10; verified to reproduce this call's vendored predecessor,
+        `_vienna_layout.plot_coords_puzzler_opts`, to a max diff of
+        3.6e-12); falls back to the vendored oracle only if `_layout_core`
+        is unavailable (`_native_available()`), and raises if neither
+        extension is built.
+
         Raises:
-            EngineError: If the raw binding raises `RuntimeError` or
-                `ValueError` (mirrors `vienna.py`'s `_ViennaEngine.layout`).
+            EngineError: If neither the native nor the vendored-oracle
+                extension is built, or the one that ran raises
+                `RuntimeError`/`ValueError` (mirrors `vienna.py`'s
+                `_ViennaEngine.layout`).
         """
         try:
-            rx, ry = _vienna_layout.plot_coords_puzzler_opts(structure, False, 0, clearance)
+            if _native_available():
+                rx, ry = _layout_core.plot_coords_puzzler_full(structure, False, 0, clearance)
+            elif _vienna_available():
+                rx, ry = _vienna_layout.plot_coords_puzzler_opts(structure, False, 0, clearance)
+            else:
+                raise EngineError(
+                    f"{self.name}: neither rna_draw._layout_core nor rna_draw._vienna_layout "
+                    "is built"
+                )
         except (RuntimeError, ValueError) as exc:
             raise EngineError(f"{self.name} failed on {structure!r}") from exc
         return rescale_coords(rx, ry, self._primary)

@@ -22,6 +22,7 @@ from .base import (
 from .constructive import ConstructiveEngine
 from .fallback import SafeFallbackEngine
 from .legacy import LegacyEngine
+from .native import NativePuzzlerEngine, NativeTurtleEngine
 from .production import production_engine
 from .pseudoknot import layout_pseudoknot
 from .puzzler import PuzzlerEngine
@@ -32,35 +33,40 @@ from .vienna import (
     ViennaTurtleEngine,
 )
 
-_VIENNA_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
+# `vienna_puzzler`/`turtle` select the vendored oracle engines (parity/debug
+# only -- `RNA_DRAW_BUILD_ORACLE` build; raise `EngineUnavailableError` at
+# construction if not built, see `vienna._assert_vienna_abi`).
+# `native_puzzler`/`native_turtle` select the owned native engines directly
+# (the same engines `production_engine()` composes internally) -- always
+# constructible in the default build.
+_ENGINE_FACTORIES: dict[str, type[LayoutEngine]] = {
     "vienna_puzzler": ViennaPuzzlerEngine,
     "turtle": ViennaTurtleEngine,
+    "native_puzzler": NativePuzzlerEngine,
+    "native_turtle": NativeTurtleEngine,
 }
 
 
 def _production_available() -> bool:
     """Whether the in-process production engine can be constructed.
 
-    Checks that `rna_draw._vienna_layout` imports and its ABI matches what
-    `rna_draw.layout.vienna` was built against -- the same comparison
-    `vienna._assert_vienna_abi` makes, but returning a bool instead of
-    raising, so `default_engine()` can silently fall through to the
-    subprocess puzzler or legacy engine on drift instead. Kept as a
-    standalone, monkeypatchable module-level function so tests can force
-    either branch of `default_engine()`'s precedence.
+    Checks that `rna_draw._layout_core` (the native `rna_layout` engine --
+    production's primary since Milestone A step 10) imports. Native links
+    no external library that could ABI-drift (unlike the vendored
+    `_vienna_layout` this replaced, which needed a version/sizeof
+    comparison against `EXPECTED_*` -- see `vienna._assert_vienna_abi`,
+    kept for the oracle-only vienna_* engines), so this is a plain import
+    check. Kept as a standalone, monkeypatchable module-level function so
+    tests can force either branch of `default_engine()`'s precedence.
 
     Returns:
-        True iff the extension imports and neither `abi_version()` nor
-        `sizeof_puzzler_options()` has drifted from `EXPECTED_*`.
+        True iff `rna_draw._layout_core` imports.
     """
     try:
-        from rna_draw import _vienna_layout
+        from rna_draw import _layout_core  # noqa: F401
     except ImportError:
         return False
-    return (
-        _vienna_layout.abi_version() == EXPECTED_VIENNA_ABI_VERSION
-        and _vienna_layout.sizeof_puzzler_options() == EXPECTED_PUZZLER_OPTIONS_SIZEOF
-    )
+    return True
 
 
 def default_engine() -> LayoutEngine:
@@ -68,10 +74,11 @@ def default_engine() -> LayoutEngine:
 
     Returns:
         `production_engine()` (in-process clearance escalation + a
-        wall-clock-bounded local overlap post-pass, see
-        `rna_draw.layout.production`) if `_production_available()`; else a
-        `PuzzlerEngine` if `RNAplot` is on `PATH`; else a `LegacyEngine`
-        (so installs without a working ViennaRNA setup keep working).
+        wall-clock-bounded local overlap post-pass over the native
+        `rna_layout` engine, see `rna_draw.layout.production`) if
+        `_production_available()`; else a `PuzzlerEngine` if `RNAplot` is
+        on `PATH`; else a `LegacyEngine` (so installs without a built
+        native extension or a working ViennaRNA setup keep working).
     """
     if _production_available():
         return production_engine()
@@ -85,7 +92,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
 
     Args:
         name: One of `"auto"`, `"legacy"`, `"puzzler"`, `"production"`,
-            `"constructive"`, `"vienna_puzzler"`, `"turtle"`.
+            `"constructive"`, `"native_puzzler"`, `"native_turtle"`,
+            `"vienna_puzzler"`, `"turtle"`.
 
     Returns:
         `None` for `"auto"` (the pipeline uses `default_engine()`), or a
@@ -94,9 +102,11 @@ def resolve_engine(name: str) -> LayoutEngine | None:
     Raises:
         ValueError: If `name` is none of the above.
         EngineUnavailableError: If `name` selects an in-process ViennaRNA
-            engine and the compiled binding has drifted from the ABI this
-            was built against (the guard runs in the engine's `__init__`,
-            see `rna_draw.layout.vienna._assert_vienna_abi`).
+            oracle engine (`"vienna_puzzler"`/`"turtle"`) and
+            `_vienna_layout` is not built (default build, Milestone A step
+            11) or its ABI has drifted from what this was built against
+            (the guard runs in the engine's `__init__`, see
+            `rna_draw.layout.vienna._assert_vienna_abi`).
     """
     if name == "auto":
         return None
@@ -108,8 +118,8 @@ def resolve_engine(name: str) -> LayoutEngine | None:
         return production_engine()
     if name == "constructive":
         return ConstructiveEngine()
-    if name in _VIENNA_ENGINE_FACTORIES:
-        return _VIENNA_ENGINE_FACTORIES[name]()
+    if name in _ENGINE_FACTORIES:
+        return _ENGINE_FACTORIES[name]()
     raise ValueError(f"unknown layout engine: {name!r}")
 
 

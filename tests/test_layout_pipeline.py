@@ -5,6 +5,7 @@ adaptive render-radius search.
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Callable
 
 import pytest
@@ -25,9 +26,19 @@ from rna_draw.layout.puzzler import PuzzlerEngine
 from rna_draw.layout.vienna import ViennaPuzzlerEngine
 from rna_draw.overlap import OverlapParams
 
-HAVE_VIENNA_EXTENSION = _production_available()
+HAVE_NATIVE_EXTENSION = _production_available()
 requires_production = pytest.mark.skipif(
-    not HAVE_VIENNA_EXTENSION, reason="rna_draw._vienna_layout not importable/ABI-matched"
+    not HAVE_NATIVE_EXTENSION, reason="rna_draw._layout_core not importable"
+)
+
+# Separate from `requires_production` (Milestone A step 10 made that native,
+# always available in the default build): a few regression tests construct
+# `ViennaPuzzlerEngine` directly to exercise the retired (Milestone A step
+# 11) vendored oracle specifically -- those need `_vienna_layout`, built
+# only under `-DRNA_DRAW_BUILD_ORACLE=ON`.
+HAVE_VIENNA_ORACLE = importlib.util.find_spec("rna_draw._vienna_layout") is not None
+requires_vienna_oracle = pytest.mark.skipif(
+    not HAVE_VIENNA_ORACLE, reason="rna_draw._vienna_layout not built (RNA_DRAW_BUILD_ORACLE=OFF)"
 )
 
 
@@ -223,7 +234,7 @@ class TestProductionCleansAStockDirtyStructure:
         "..............)))))))......))))))................)))))))...))))))))........."
     )  # bpRNA_RFAM_35409.dbn, benchmarks/worst_set.json (684nt)
 
-    @requires_production
+    @requires_vienna_oracle
     @pytest.mark.timeout(20)
     def test_stock_vienna_puzzler_cannot_go_clean(self) -> None:
         result = _try_primary(

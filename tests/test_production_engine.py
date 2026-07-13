@@ -1,9 +1,11 @@
 """Tests for `rna_draw.layout.production`: the escalation + monotone,
 time-bounded post-pass composition wired into the real render pipeline.
 
-Mirrors `tests/test_vienna_binding.py`'s convention of importing the
-compiled `rna_draw._vienna_layout` extension unconditionally at module
-level -- this module needs it to construct any engine here.
+Milestone A step 10: the primary puzzler call is now the native
+`rna_draw._layout_core` extension (a default build target, no external ABI
+to drift), not the vendored `rna_draw._vienna_layout` oracle -- so, unlike
+before, this module needs no ViennaRNA-specific availability guard to
+construct any engine here.
 """
 
 from __future__ import annotations
@@ -69,24 +71,25 @@ class TestEscalatingClearanceEngineGuards:
         # `pipeline._try_primary` catches ONLY `EngineError`; a raw
         # RuntimeError/ValueError escaping `layout()` would crash the
         # caller instead of routing to the safe fallback (Blocking Fix 2).
+        # Milestone A step 10: the primary call is native `_layout_core`.
         def _boom(*args: object, **kwargs: object) -> tuple[list[float], list[float]]:
             raise RuntimeError("simulated C-level failure")
 
-        monkeypatch.setattr(
-            production_module._vienna_layout, "plot_coords_puzzler_opts", _boom
-        )
+        monkeypatch.setattr(production_module._layout_core, "plot_coords_puzzler_full", _boom)
         with pytest.raises(EngineError):
             EscalatingClearanceEngine().layout("((((....))))")
 
-
-class TestEscalatingClearanceEngineABIGuard:
-    def test_constructor_asserts_vienna_abi(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def _drifted() -> tuple[int, int, int]:
-            return (0, 0, 0)
-
-        monkeypatch.setattr(production_module._vienna_layout, "abi_version", _drifted)
-        with pytest.raises(Exception):
-            EscalatingClearanceEngine()
+    def test_native_unavailable_and_no_oracle_becomes_engine_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Milestone A step 10/11: if neither the native engine nor the
+        # (oracle-only, usually-absent-by-default) vendored fallback is
+        # built, `_layout_at_clearance` must raise `EngineError`, never an
+        # unguarded `AttributeError`/`NameError`.
+        monkeypatch.setattr(production_module, "_layout_core", None)
+        monkeypatch.setattr(production_module, "_vienna_layout", None)
+        with pytest.raises(EngineError):
+            EscalatingClearanceEngine().layout("((((....))))")
 
 
 class TestPostPassEngine:

@@ -30,12 +30,19 @@ tail, not the common case.
 (in `rna_draw/layout/production.py`), run behind the checker-gated `layout_guaranteed` (also in
 `pipeline.py`). The production primary itself has three stages:
 
-1. **Per-structure clearance escalation.** Lay out with ViennaRNA's RNApuzzler (vendored,
-   in-process) at an increasing *intersection-clearance* factor (ladder `1.0, 1.25, 1.5×`). This
-   scales puzzler's own overlap-detection margin so it resolves the near-touches our stricter
-   checker flags — the key insight being that puzzler resolves every intersection *it* detects,
-   but its clearance model is more lenient than ours. Keep the first clean result. Capped at 1.5×
-   because the C resolver is fast there (~0.1 s) and never hangs.
+1. **Per-structure clearance escalation.** Lay out with RNApuzzler's algorithm at an increasing
+   *intersection-clearance* factor (ladder `1.0, 1.25, 1.5×`). This scales puzzler's own
+   overlap-detection margin so it resolves the near-touches our stricter checker flags — the key
+   insight being that puzzler resolves every intersection *it* detects, but its clearance model is
+   more lenient than ours. Keep the first clean result. Capped at 1.5× because the C resolver is
+   fast there (~0.1 s) and never hangs. **Milestone A (branch `cpp-layout-core`) replaced the
+   vendored ViennaRNA C with an owned modern-C++ port** (`include/rna_layout/`,
+   `src/layout_core/`, exposed as `rna_draw._layout_core`) verified to reproduce the vendored
+   engine's production output to a max diff of 3.6e-12 (`tests/test_native_parity.py`) — this is
+   now the shipped engine (`rna_draw.layout.native.NativePuzzlerEngine`); the vendored
+   `_vienna_layout` is retained only as an opt-in parity oracle
+   (`-DRNA_DRAW_BUILD_ORACLE=ON`), not part of the default/shipped build, so `rna_draw` has zero
+   ViennaRNA header or runtime dependency by default.
 
 2. **Rigid loop-inflation post-pass.** For the residual — which is small-loop crowding of unpaired
    bases, *not* branch collisions — inflate the offending loop: spread its unpaired members
@@ -172,6 +179,7 @@ problem but first a *clearance-model mismatch*, then a *small-loop-crowding* pro
 | 13 | Standalone vendored build (drop `libRNA.a`) | The layout core needs only two library symbols | Links standalone via a ~120-LOC `vrna_compat.c` shim; no ViennaRNA runtime dep; `naview` removed | shipped |
 | 14 | **Pseudoknot tier** (max-nested + on-top crossings) | Draw `[]{}<>` conventionally instead of a bare circle | Conventional nested layout + correct bonds where drawable, 0 overlaps; crossing depiction capped ~38% post-hoc (co-design needed) | shipped |
 | 15 | **Area-min rotation pass** (disk-preserving) | Shrink constructive sprawl with a provably-clean lever | Real 22–35% area cuts on most worst-set structures, 0 dirty/0 regressions; exterior fold DOF tried + removed (no-op) | shipped |
+| 16 | **Milestone A: owned native `rna_layout` C++ port** (`include/rna_layout/`, `src/layout_core/`) replaces vendored ViennaRNA C in production | Own the layout core outright, drop the last ViennaRNA runtime dependency, without regressing the never-silent-overlap contract | Module-by-module parity-gated port (turtle → tree/boxes → detection → resolver siblings/ancestors/optimize); full-config coordinate parity vs. the vendored oracle max diff **3.6e-12** (`tests/test_native_parity.py`); swapped in as production primary, vendored `_vienna_layout` retired to an opt-in `-DRNA_DRAW_BUILD_ORACLE=ON` parity build | shipped |
 
 ## Clean-rate progression (450 hard structures)
 
@@ -214,12 +222,24 @@ Stock puzzler                 30.4%  (137/450)   2943 overlaps
 
 ## Infrastructure
 
-- **Standalone in-process build.** An in-process pybind11 binding to an **editable vendored copy** of
-  RNApuzzler/RNAturtle (`src/vienna_layout/`), so the layout core can be modified in-tree. As of this
-  branch the vendored core (`RNApuzzler.c` + `RNAturtle.c`) compiles and links **standalone** — with
-  `libRNA.a` **unlinked** and **no ViennaRNA runtime dependency** (only ViennaRNA *headers* are
-  needed at compile time). The two translation units reference exactly two ViennaRNA library symbols,
-  `vrna_alloc` and `vrna_ptable` (+ `vrna_ptable_from_string`), supplied by a ~120-LOC compat shim
+- **Owned native layout core (Milestone A, branch `cpp-layout-core`).** `include/rna_layout/` +
+  `src/layout_core/` is a fresh, modern-C++17 reimplementation of RNApuzzler/RNAturtle's algorithm
+  (not a refactor of the vendored `.inc` amalgamation), exposed as `rna_draw._layout_core` via
+  pybind11 and validated module-by-module against the vendored C as a differential parity oracle
+  (`tests/test_native_parity.py`). It is now the SHIPPED production engine
+  (`rna_draw.layout.native.NativePuzzlerEngine`/`NativeTurtleEngine`, wired into
+  `rna_draw.layout.production`/`pipeline.default_engine`) and has **zero ViennaRNA header or
+  runtime dependency**. The default CMake build (`RNA_DRAW_BUILD_ORACLE=OFF`) compiles only
+  `_layout_core` (+ the frozen overlap checker); the vendored `_vienna_layout` compiles only under
+  `-DRNA_DRAW_BUILD_ORACLE=ON`, kept solely as the parity oracle for `tests/test_native_parity.py`
+  and `tests/test_vienna_binding.py` (both skip cleanly when that option is off).
+- **Standalone in-process vendored build (oracle-only).** An in-process pybind11 binding to an
+  **editable vendored copy** of RNApuzzler/RNAturtle (`src/vienna_layout/`), so the layout core
+  could be modified in-tree during the port. The vendored core (`RNApuzzler.c` + `RNAturtle.c`)
+  compiles and links **standalone** — with `libRNA.a` **unlinked** and **no ViennaRNA runtime
+  dependency** (only ViennaRNA *headers* are needed at compile time, and only for the oracle
+  build). The two translation units reference exactly two ViennaRNA library symbols, `vrna_alloc`
+  and `vrna_ptable` (+ `vrna_ptable_from_string`), supplied by a ~120-LOC compat shim
   `src/vienna_layout/vendor/vrna_compat.c` (faithful copies of the upstream 2.7.0 sources, plus a
   `vrna_log` stub for the OOM/malformed-input paths). A `ctest` smoke test proves the core links and
   runs with `libRNA.a` unlinked. `naview` was **removed** — it lived only in `libRNA.a`'s

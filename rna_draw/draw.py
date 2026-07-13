@@ -62,7 +62,11 @@ def get_parser():
     parser.add_argument(
         "-engine",
         default="auto",
-        help="layout engine: auto|legacy|puzzler|production|vienna_puzzler|turtle",
+        help=(
+            "layout engine: auto|legacy|puzzler|production|constructive|"
+            "native_puzzler|native_turtle|vienna_puzzler|turtle "
+            "(vienna_puzzler/turtle need a -DRNA_DRAW_BUILD_ORACLE=ON build)"
+        ),
         required=False,
     )
     return parser

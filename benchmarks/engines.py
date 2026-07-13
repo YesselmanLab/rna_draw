@@ -9,6 +9,18 @@ live in `rna_draw.layout.production` (the real pipeline's default engine
 composition) and are re-imported here rather than duplicated, so the
 benchmark and the production pipeline measure/run the exact same code (see
 that module's docstring for the composition and hang-safety rationale).
+
+ORACLE-ONLY MODULE (Milestone A step 11, flagged for follow-up): this
+module still imports `rna_draw._vienna_layout` unconditionally at module
+level, and its `"puzzler"`/`"turtle"` entries construct the vendored
+`ViennaPuzzlerEngine`/`ViennaTurtleEngine` -- so importing this module
+(not just calling into it) requires `-DRNA_DRAW_BUILD_ORACLE=ON`. It is a
+dev/benchmarking tool, not shipped runtime, and every current caller
+already imports it lazily behind an oracle-availability guard
+(`hard_gate.py`'s `--engine` dispatch, `tests/test_postpass.py`'s
+`pytest.importorskip("rna_draw._vienna_layout")`), so this is not
+load-bearing for the default build -- left as-is rather than reworked in
+this pass.
 """
 
 from __future__ import annotations

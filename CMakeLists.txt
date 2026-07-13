@@ -10,16 +10,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 
-# Milestone A (cpp-layout-core): build the vendored C as a differential
-# parity ORACLE for the owned `rna_layout` native port (`include/rna_layout`,
-# `src/layout_core/`), on top of it staying the shipped production engine.
-# ON by default during the port (the parity tests need it); Milestone A's
-# final "retire" step flips this default off once the native engine takes
-# over production and the vendored code becomes opt-in only -- see
-# `.claude/plans/current-plan.md`, step 11.
+# Milestone A (cpp-layout-core) step 11 -- RETIRED from the default build:
+# the vendored ViennaRNA C (`_vienna_layout` + its parity-instrumentation
+# TU) now builds ONLY when this option is explicitly turned ON. The owned
+# `rna_layout` native port (`include/rna_layout`, `src/layout_core/`) is
+# the shipped production engine (`rna_draw.layout.production`); the
+# default/shipped build needs no ViennaRNA header or runtime dependency at
+# all. Turn this ON for parity/regression testing against the vendored
+# oracle (`tests/test_native_parity.py`, `tests/test_vienna_binding.py`) --
+# see `.claude/plans/current-plan.md`, step 11.
 option(RNA_DRAW_BUILD_ORACLE
-  "Compile the vendored-C parity-oracle instrumentation (vendor_instrument.c) \
-alongside _vienna_layout, for differential testing against _layout_core." ON)
+  "Compile the vendored-C parity oracle (_vienna_layout + vendor_instrument.c) \
+for differential testing against _layout_core. OFF by default -- the shipped \
+build does not need ViennaRNA." OFF)
 
 # FP REPRODUCIBILITY (cpp-reviewer refinement #1): pin matched
 # floating-point flags across BOTH the native library/module and the
@@ -47,101 +50,113 @@ execute_process(
 )
 find_package(pybind11 CONFIG REQUIRED)
 
-# ViennaRNA HEADERS live in the active conda/micromamba environment --
-# confirmed present at $CONDA_PREFIX/include (see plan Step 0). Only the
-# headers are needed now: the layout core is vendored and compiled
-# standalone (see below), so libRNA.a is NO LONGER a link input and there is
-# no ViennaRNA runtime dependency.
-if(NOT DEFINED ENV{CONDA_PREFIX})
-  message(FATAL_ERROR "CONDA_PREFIX is not set -- run the build via 'micromamba run -n py3 ...'")
-endif()
-set(VIENNA_PREFIX "$ENV{CONDA_PREFIX}")
+enable_testing()
 
-# Vendored, STANDALONE copy of RNApuzzler/RNAturtle -- see
-# src/vienna_layout/vendor/README.md. These two translation units define
-# every layout entry point this extension calls
-# (vrna_plot_coords_puzzler[_pt], vrna_plot_options_puzzler[_free],
-# vrna_plot_coords_turtle[_pt]). They reference EXACTLY TWO ViennaRNA
-# library symbols -- vrna_alloc and vrna_ptable -- which are supplied by the
-# ~120 LOC compat shim vrna_compat.c (faithful copies of the upstream 2.7.0
-# sources; see that file's header). With the shim in the target, the whole
-# layout core links WITHOUT libRNA.a: rna_draw has no ViennaRNA runtime dep.
-set(VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vienna_layout/vendor")
-set(VENDOR_PUZZLER_DIR "${VENDOR_DIR}/RNApuzzler")
-set(VENDOR_PUZZLER_SOURCES
-  "${VENDOR_PUZZLER_DIR}/RNApuzzler.c"
-  "${VENDOR_PUZZLER_DIR}/RNAturtle.c"
-  "${VENDOR_DIR}/vrna_compat.c"
-)
-
-pybind11_add_module(_vienna_layout
-  src/vienna_layout/bindings.cpp
-  ${VENDOR_PUZZLER_SOURCES}
-)
-
-# RNA_DRAW_BUILD_ORACLE-only: the parity-instrumentation TU (see that
-# file's header for the macro-interposition mechanism it names). Never
-# edits vendored .inc logic; only compiled into this same module so
-# `_vienna_layout` can expose oracle-only dumps behind the option.
+# ---------------------------------------------------------------------------
+# _vienna_layout: the vendored ViennaRNA parity ORACLE. RNA_DRAW_BUILD_ORACLE
+# -only (Milestone A step 11) -- not part of the default/shipped build. Every
+# target, include path, and the CONDA_PREFIX/ViennaRNA-header requirement
+# below is scoped to this option so a default `cmake -B build` needs neither
+# ViennaRNA nor an active conda/micromamba environment.
+# ---------------------------------------------------------------------------
 if(RNA_DRAW_BUILD_ORACLE)
+  # ViennaRNA HEADERS live in the active conda/micromamba environment --
+  # confirmed present at $CONDA_PREFIX/include (see plan Step 0). Only the
+  # headers are needed: the layout core is vendored and compiled standalone
+  # (see below), so libRNA.a is NOT a link input and there is no ViennaRNA
+  # runtime dependency even for this oracle-only target.
+  if(NOT DEFINED ENV{CONDA_PREFIX})
+    message(FATAL_ERROR
+      "CONDA_PREFIX is not set -- RNA_DRAW_BUILD_ORACLE=ON needs ViennaRNA "
+      "headers; run the build via 'micromamba run -n py3 ...', or turn this "
+      "option OFF for the default (no-ViennaRNA) build.")
+  endif()
+  set(VIENNA_PREFIX "$ENV{CONDA_PREFIX}")
+
+  # Vendored, STANDALONE copy of RNApuzzler/RNAturtle -- see
+  # src/vienna_layout/vendor/README.md. These two translation units define
+  # every layout entry point this extension calls
+  # (vrna_plot_coords_puzzler[_pt], vrna_plot_options_puzzler[_free],
+  # vrna_plot_coords_turtle[_pt]). They reference EXACTLY TWO ViennaRNA
+  # library symbols -- vrna_alloc and vrna_ptable -- which are supplied by the
+  # ~120 LOC compat shim vrna_compat.c (faithful copies of the upstream 2.7.0
+  # sources; see that file's header). With the shim in the target, the whole
+  # layout core links WITHOUT libRNA.a: this oracle target has no ViennaRNA
+  # runtime dependency either, only a build-time header dependency.
+  set(VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vienna_layout/vendor")
+  set(VENDOR_PUZZLER_DIR "${VENDOR_DIR}/RNApuzzler")
+  set(VENDOR_PUZZLER_SOURCES
+    "${VENDOR_PUZZLER_DIR}/RNApuzzler.c"
+    "${VENDOR_PUZZLER_DIR}/RNAturtle.c"
+    "${VENDOR_DIR}/vrna_compat.c"
+  )
+
+  pybind11_add_module(_vienna_layout
+    src/vienna_layout/bindings.cpp
+    ${VENDOR_PUZZLER_SOURCES}
+  )
+
+  # The parity-instrumentation TU (see that file's header for the
+  # macro-interposition mechanism it names). Never edits vendored .inc
+  # logic; only compiled into this same module so `_vienna_layout` can
+  # expose oracle-only dumps.
   target_sources(_vienna_layout PRIVATE src/vienna_layout/vendor_instrument.c)
   target_compile_definitions(_vienna_layout PRIVATE RNA_DRAW_BUILD_ORACLE)
   set_source_files_properties(src/vienna_layout/vendor_instrument.c PROPERTIES
     LANGUAGE C
     COMPILE_OPTIONS "-w"
   )
+
+  target_include_directories(_vienna_layout PRIVATE
+    "${VIENNA_PREFIX}/include"
+    "${VIENNA_PREFIX}/include/ViennaRNA"
+    "${VENDOR_PUZZLER_DIR}"
+  )
+
+  # Vendored third-party C: relaxed warnings, and excluded from this
+  # project's clang-format/clang-tidy passes (see vendor/README.md) -- do
+  # not reformat it to this repo's C++ style.
+  set_source_files_properties(${VENDOR_PUZZLER_SOURCES} PROPERTIES
+    LANGUAGE C
+    COMPILE_OPTIONS "-w"
+  )
+
+  # The archive was built without LTO (see RNAlib2.pc: `-fno-lto -Wl,-fno-lto`);
+  # matching it avoids an LTO-mismatch link failure. `RNA_DRAW_FP_FLAGS`: see
+  # this file's top-of-file comment (FP reproducibility for the parity gates).
+  target_compile_options(_vienna_layout PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
+  target_link_options(_vienna_layout PRIVATE -fno-lto)
+
+  # No libRNA.a: the vendored layout core + vrna_compat.c are self-contained,
+  # needing only libc/libm/libstdc++.
+  target_link_libraries(_vienna_layout PRIVATE
+    stdc++
+    m
+  )
+
+  install(TARGETS _vienna_layout DESTINATION rna_draw)
+
+  # `ctest` smoke test (no Python/pybind11 in the loop): proves the vendored
+  # layout core + vrna_compat.c shim link and run STANDALONE, with libRNA.a
+  # UNLINKED. The full behavior contract (parity, malformed input, memory,
+  # ABI) lives in `tests/test_vienna_binding.py`.
+  add_executable(test_puzzler_smoke
+    src/vienna_layout/tests/test_puzzler_smoke.cpp
+    ${VENDOR_PUZZLER_SOURCES}
+  )
+  target_include_directories(test_puzzler_smoke PRIVATE
+    "${VIENNA_PREFIX}/include"
+    "${VIENNA_PREFIX}/include/ViennaRNA"
+    "${VENDOR_PUZZLER_DIR}"
+  )
+  target_compile_options(test_puzzler_smoke PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
+  target_link_options(test_puzzler_smoke PRIVATE -fno-lto)
+  target_link_libraries(test_puzzler_smoke PRIVATE
+    stdc++
+    m
+  )
+  add_test(NAME puzzler_smoke COMMAND test_puzzler_smoke)
 endif()
-
-target_include_directories(_vienna_layout PRIVATE
-  "${VIENNA_PREFIX}/include"
-  "${VIENNA_PREFIX}/include/ViennaRNA"
-  "${VENDOR_PUZZLER_DIR}"
-)
-
-# Vendored third-party C: relaxed warnings, and excluded from this
-# project's clang-format/clang-tidy passes (see vendor/README.md) -- do
-# not reformat it to this repo's C++ style.
-set_source_files_properties(${VENDOR_PUZZLER_SOURCES} PROPERTIES
-  LANGUAGE C
-  COMPILE_OPTIONS "-w"
-)
-
-# The archive was built without LTO (see RNAlib2.pc: `-fno-lto -Wl,-fno-lto`);
-# matching it avoids an LTO-mismatch link failure. `RNA_DRAW_FP_FLAGS`: see
-# this file's top-of-file comment (FP reproducibility for the parity gates).
-target_compile_options(_vienna_layout PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
-target_link_options(_vienna_layout PRIVATE -fno-lto)
-
-# No libRNA.a: the vendored layout core + vrna_compat.c are self-contained,
-# needing only libc/libm/libstdc++.
-target_link_libraries(_vienna_layout PRIVATE
-  stdc++
-  m
-)
-
-install(TARGETS _vienna_layout DESTINATION rna_draw)
-
-# `ctest` smoke test (no Python/pybind11 in the loop): proves the vendored
-# layout core + vrna_compat.c shim link and run STANDALONE, with libRNA.a
-# UNLINKED. The full behavior contract (parity, malformed input, memory,
-# ABI) lives in `tests/test_vienna_binding.py`.
-enable_testing()
-add_executable(test_puzzler_smoke
-  src/vienna_layout/tests/test_puzzler_smoke.cpp
-  ${VENDOR_PUZZLER_SOURCES}
-)
-target_include_directories(test_puzzler_smoke PRIVATE
-  "${VIENNA_PREFIX}/include"
-  "${VIENNA_PREFIX}/include/ViennaRNA"
-  "${VENDOR_PUZZLER_DIR}"
-)
-target_compile_options(test_puzzler_smoke PRIVATE -fno-lto ${RNA_DRAW_FP_FLAGS})
-target_link_options(test_puzzler_smoke PRIVATE -fno-lto)
-target_link_libraries(test_puzzler_smoke PRIVATE
-  stdc++
-  m
-)
-add_test(NAME puzzler_smoke COMMAND test_puzzler_smoke)
 
 # ---------------------------------------------------------------------------
 # rna_layout: the owned modern-C++ port (Milestone A, cpp-layout-core).
