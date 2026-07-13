@@ -32,6 +32,11 @@ _PALETTE_LABELS = {
     "o": "orange",
 }
 _RENDER_TYPES = ["none", "res_type", "paired"]
+# Overall render STYLE: display label -> stored `extra["view"]["render_style"]`
+# value. A plain string mapping so new styles are one line to add. Default is
+# "spheres" (the classic disk look).
+_RENDER_STYLES = {"Spheres": "spheres", "Letters": "letters"}
+_RENDER_STYLE_LABELS = {v: k for k, v in _RENDER_STYLES.items()}
 _DATA_PALETTES = ["viridis", "plasma", "inferno", "magma", "cividis", "coolwarm", "Reds"]
 _LINE_STYLES = ["solid", "dash", "dot"]
 
@@ -146,6 +151,12 @@ class StylePanel(QtWidgets.QWidget):
     def set_render_type(self, name: str) -> None:
         """Set the coloring scheme (none/res_type/paired) and restyle."""
         self._view()["render_type"] = name
+        self._sync_widgets()
+        self.visualChanged.emit()
+
+    def set_render_style(self, value: str) -> None:
+        """Set the overall render style ("spheres"/"letters") and restyle."""
+        self._view()["render_style"] = value
         self._sync_widgets()
         self.visualChanged.emit()
 
@@ -297,6 +308,17 @@ class StylePanel(QtWidgets.QWidget):
 
     def _build_nucleotides_group(self) -> None:
         f = self._group("Nucleotides", expanded=True)
+        # Overall render style ("Spheres" = classic disks; "Letters" = the
+        # RFview-style colored-letters mode). Extensible: add entries to
+        # `_RENDER_STYLES`. The show-spheres/show-letters toggles below apply
+        # WITHIN the Spheres style; Letters is its own self-contained mode.
+        self._render_style_cb = self._combo(list(_RENDER_STYLES.keys()))
+        self._render_style_cb.setToolTip(
+            "Spheres: classic disks. Letters: RFview-style colored letters with "
+            "typed base-pair symbols."
+        )
+        self._render_style_cb.currentTextChanged.connect(self._on_render_style)
+        f.addRow("Render style", self._render_style_cb)
         self._default_fill_btn = self._color_row(self._on_default_fill)
         f.addRow("Default fill", self._default_fill_btn)
         self._spheres_cb = QtWidgets.QCheckBox("Show spheres")
@@ -414,6 +436,9 @@ class StylePanel(QtWidgets.QWidget):
             self._routed_style_cb.setCurrentText(view["routed_style"])
             self._backbone_color_btn.set_color(view["backbone_color"])
             self._render_cb.setCurrentText(view["render_type"])
+            self._render_style_cb.setCurrentText(
+                _RENDER_STYLE_LABELS.get(view.get("render_style", "spheres"), "Spheres")
+            )
             # Percentage sliders (and their readouts) from the stored view band.
             for key, slider in self._pct_sliders.items():
                 pct = int(round(float(view.get(key, 100))))
@@ -467,6 +492,12 @@ class StylePanel(QtWidgets.QWidget):
         if self._loading:
             return
         self._view()["render_type"] = name
+        self.visualChanged.emit()
+
+    def _on_render_style(self, label: str) -> None:
+        if self._loading:
+            return
+        self._view()["render_style"] = _RENDER_STYLES.get(label, "spheres")
         self.visualChanged.emit()
 
     def _on_node_r(self, value: float) -> None:

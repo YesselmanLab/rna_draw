@@ -103,10 +103,9 @@ class RnaScene(QtWidgets.QGraphicsScene):
         # module constants so a scene dict without a `style` block (e.g. the
         # Jupyter payload) renders exactly as before.
         style = scene.get("style") or {}
-        backbone_pen = QtGui.QPen(
-            _color(style.get("backbone_color", ""), BACKBONE),
-            float(style.get("backbone_width", 2.0)),
-        )
+        backbone_col = _color(style.get("backbone_color", ""), BACKBONE)
+        backbone_w = float(style.get("backbone_width", 2.0))
+        backbone_pen = QtGui.QPen(backbone_col, backbone_w)
         pair_col = _color(style.get("pair_color", ""), PAIR)
         pair_w = float(style.get("pair_width", 1.6))
         crossing_col = _color(style.get("crossing_color", ""), CROSSING)
@@ -129,25 +128,33 @@ class RnaScene(QtWidgets.QGraphicsScene):
 
         pos = [QtCore.QPointF(float(n["x"]), -float(n["y"])) for n in nts]
         self._nt_positions = pos
+        # Overall render style ("spheres" = classic disks; "letters" = the
+        # RFview-style colored-letters mode). A plain string so more styles can
+        # be added later without touching the hit-test / interaction paths
+        # (which key off the cached nt CENTERS below, not the drawn items).
+        render_style = str(style.get("render_style", "spheres"))
 
-        # Backbone path (consecutive nts).
-        if len(pos) >= 2:
-            path = QtGui.QPainterPath(pos[0])
-            for p in pos[1:]:
-                path.lineTo(p)
-            bb = self.addPath(path, backbone_pen)
-            bb.setZValue(-10)
+        # Backbone + base pairs for the SPHERES style (the letters style draws
+        # its own gapped backbone + typed pair symbols in `_build_letters`).
+        if render_style != "letters":
+            # Backbone path (consecutive nts).
+            if len(pos) >= 2:
+                path = QtGui.QPainterPath(pos[0])
+                for p in pos[1:]:
+                    path.lineTo(p)
+                bb = self.addPath(path, backbone_pen)
+                bb.setZValue(-10)
 
-        # Base pairs.
-        for pair in scene.get("pairs", []):
-            i, j = pair["i"], pair["j"]
-            if i >= len(pos) or j >= len(pos):
-                continue
-            crossing = pair.get("kind") == "crossing"
-            col = crossing_col if crossing else pair_col
-            wid = crossing_w if crossing else pair_w
-            line = self.addLine(QtCore.QLineF(pos[i], pos[j]), QtGui.QPen(col, wid))
-            line.setZValue(-5)
+            # Base pairs.
+            for pair in scene.get("pairs", []):
+                i, j = pair["i"], pair["j"]
+                if i >= len(pos) or j >= len(pos):
+                    continue
+                crossing = pair.get("kind") == "crossing"
+                col = crossing_col if crossing else pair_col
+                wid = crossing_w if crossing else pair_w
+                line = self.addLine(QtCore.QLineF(pos[i], pos[j]), QtGui.QPen(col, wid))
+                line.setZValue(-5)
 
         # Routed PK-A polylines.
         for routed in scene.get("routed_lines", []):
@@ -182,43 +189,63 @@ class RnaScene(QtWidgets.QGraphicsScene):
                 halo.setZValue(-2)
                 self.addItem(halo)
 
-        # Nucleotide disks + letters. The DRAWN disk radius is the layout radius
-        # scaled by the live sphere display scale; when "Show spheres" is off the
-        # disk items are skipped entirely (letters, numbers, backbone and pairs
-        # still render). Click-select keys off cached nt centers, not disk items,
-        # so interaction is unaffected by the drawn size or visibility.
-        draw_r = r * sphere_scale
-        for n in nts:
-            idx = n["id"]
-            center = pos[idx]
-            selected = idx in selected_set
-            if show_spheres:
-                if idx in overlaps:
-                    fill = OVERLAP_RED
-                elif selected:
-                    fill = SELECT_TEAL
-                else:
-                    fill = QtGui.QColor(n.get("fill", default_fill))
-                item = QtWidgets.QGraphicsEllipseItem(
-                    center.x() - draw_r, center.y() - draw_r, 2 * draw_r, 2 * draw_r
-                )
-                edge = SELECT_TEAL if selected else edge_col
-                item.setPen(QtGui.QPen(edge, 2.0 if selected else edge_w))
-                item.setBrush(QtGui.QBrush(fill))
-                item.setData(_NT_INDEX_KEY, idx)
-                item.setZValue(0)
-                self.addItem(item)
-            label = n.get("label", "")
-            if label and show_letters:
-                text = QtWidgets.QGraphicsSimpleTextItem(str(label))
-                text.setBrush(QtGui.QBrush(label_col))
-                font = text.font()
-                font.setPointSizeF(max(4.0, r * 0.9 * letter_scale))
-                text.setFont(font)
-                br = text.boundingRect()
-                text.setPos(center.x() - br.width() / 2, center.y() - br.height() / 2)
-                text.setZValue(1)
-                self.addItem(text)
+        if render_style == "letters":
+            # RFview-style: colored letters, a gapped backbone, and typed pair
+            # symbols. No disks. Draws its own backbone + pairs (skipped above).
+            self._build_letters(
+                nts,
+                pos,
+                scene,
+                selected_set,
+                overlaps,
+                default_fill,
+                letter_scale,
+                backbone_col,
+                backbone_w,
+                pair_col,
+                pair_w,
+                crossing_col,
+                crossing_w,
+            )
+        else:
+            # Nucleotide disks + letters. The DRAWN disk radius is the layout
+            # radius scaled by the live sphere display scale; when "Show spheres"
+            # is off the disk items are skipped entirely (letters, numbers,
+            # backbone and pairs still render). Click-select keys off cached nt
+            # centers, not disk items, so interaction is unaffected by the drawn
+            # size or visibility.
+            draw_r = r * sphere_scale
+            for n in nts:
+                idx = n["id"]
+                center = pos[idx]
+                selected = idx in selected_set
+                if show_spheres:
+                    if idx in overlaps:
+                        fill = OVERLAP_RED
+                    elif selected:
+                        fill = SELECT_TEAL
+                    else:
+                        fill = QtGui.QColor(n.get("fill", default_fill))
+                    item = QtWidgets.QGraphicsEllipseItem(
+                        center.x() - draw_r, center.y() - draw_r, 2 * draw_r, 2 * draw_r
+                    )
+                    edge = SELECT_TEAL if selected else edge_col
+                    item.setPen(QtGui.QPen(edge, 2.0 if selected else edge_w))
+                    item.setBrush(QtGui.QBrush(fill))
+                    item.setData(_NT_INDEX_KEY, idx)
+                    item.setZValue(0)
+                    self.addItem(item)
+                label = n.get("label", "")
+                if label and show_letters:
+                    text = QtWidgets.QGraphicsSimpleTextItem(str(label))
+                    text.setBrush(QtGui.QBrush(label_col))
+                    font = text.font()
+                    font.setPointSizeF(max(4.0, r * 0.9 * letter_scale))
+                    text.setFont(font)
+                    br = text.boundingRect()
+                    text.setPos(center.x() - br.width() / 2, center.y() - br.height() / 2)
+                    text.setZValue(1)
+                    self.addItem(text)
 
         # Residue-position numbers (VARNA-style). Optional and non-interactive:
         # small text just outside the disks; they carry no nt index so the
@@ -235,6 +262,180 @@ class RnaScene(QtWidgets.QGraphicsScene):
             ntext.setPos(nx - nbr.width() / 2, ny - nbr.height() / 2)
             ntext.setZValue(2)
             self.addItem(ntext)
+
+    # -- "Letters" render style (RFview-like) -------------------------------
+
+    def _build_letters(
+        self,
+        nts: list[dict],
+        pos: list[QtCore.QPointF],
+        scene: dict,
+        selected_set: set[int],
+        overlaps: set[int],
+        default_fill: str,
+        letter_scale: float,
+        backbone_col: QtGui.QColor,
+        backbone_w: float,
+        pair_col: QtGui.QColor,
+        pair_w: float,
+        crossing_col: QtGui.QColor,
+        crossing_w: float,
+    ) -> None:
+        """Render the scene as RFview-style COLORED LETTERS (no disks).
+
+        Each nucleotide is its letter, colored by its resolved ``fill`` (or teal
+        when selected / red when overlapping so selection + overlap feedback
+        works without disks); a blank-sequence position becomes a small dot. The
+        backbone is a thin line drawn only BETWEEN the letters (shortened at both
+        ends so it stops clear of each glyph), and each base pair is a TYPE
+        symbol keyed off its ``bond`` (=, -, wobble, LW placeholder). Letters sit
+        on top (zvalue 1); backbone/pairs are drawn below.
+        """
+        r = self._node_r
+        # 1) Letters first so each glyph's radius can be measured for the gaps.
+        #    `glyph_r[i]` is a half-extent of nt i's drawn glyph (or dot).
+        glyph_r = [r * 0.5] * len(pos)
+        font_pt = max(4.0, r * 0.95 * letter_scale)
+        for n in nts:
+            idx = n["id"]
+            center = pos[idx]
+            if idx in overlaps:
+                col = OVERLAP_RED
+            elif idx in selected_set:
+                col = SELECT_TEAL
+            else:
+                col = QtGui.QColor(n.get("fill", default_fill))
+            label = n.get("label", "")
+            if label and str(label).strip():
+                text = QtWidgets.QGraphicsSimpleTextItem(str(label))
+                text.setBrush(QtGui.QBrush(col))
+                font = text.font()
+                font.setPointSizeF(font_pt)
+                font.setBold(True)
+                text.setFont(font)
+                br = text.boundingRect()
+                text.setPos(center.x() - br.width() / 2, center.y() - br.height() / 2)
+                text.setZValue(1)
+                self.addItem(text)
+                glyph_r[idx] = 0.5 * math.hypot(br.width(), br.height())
+            else:
+                # No letter (blank sequence): a small dot marks the position.
+                dot_r = r * 0.28
+                dot = QtWidgets.QGraphicsEllipseItem(
+                    center.x() - dot_r, center.y() - dot_r, 2 * dot_r, 2 * dot_r
+                )
+                dot.setBrush(QtGui.QBrush(col))
+                dot.setPen(QtGui.QPen(QtCore.Qt.PenStyle.NoPen))
+                dot.setZValue(1)
+                self.addItem(dot)
+                glyph_r[idx] = dot_r * 1.4
+
+        # Extra breathing room so a connector never touches the glyph box.
+        margin = max(1.5, r * 0.28)
+
+        # 2) Gapped backbone: a thin line between CONSECUTIVE letters, stopping
+        #    short of each glyph at both ends ("line only between letters").
+        bb_pen = QtGui.QPen(backbone_col, backbone_w)
+        for a in range(len(pos) - 1):
+            self._gapped_line(
+                pos[a], pos[a + 1], glyph_r[a] + margin, glyph_r[a + 1] + margin,
+                bb_pen, -10.0,
+            )
+
+        # 3) Typed pair symbols between paired letters.
+        for pair in scene.get("pairs", []):
+            i, j = pair["i"], pair["j"]
+            if i >= len(pos) or j >= len(pos):
+                continue
+            crossing = pair.get("kind") == "crossing"
+            col = crossing_col if crossing else pair_col
+            wid = crossing_w if crossing else pair_w
+            self._pair_symbol(
+                pos[i], pos[j], glyph_r[i] + margin, glyph_r[j] + margin,
+                pair.get("bond", "other"), col, wid,
+            )
+
+    def _gapped_line(
+        self,
+        p_a: QtCore.QPointF,
+        p_b: QtCore.QPointF,
+        gap_a: float,
+        gap_b: float,
+        pen: QtGui.QPen,
+        z: float,
+    ) -> tuple[QtCore.QPointF, QtCore.QPointF] | None:
+        """Draw a line from ``p_a`` to ``p_b`` shortened by a gap at each end.
+
+        Returns the shortened endpoints, or ``None`` when the endpoints are too
+        close for anything to remain after the gaps (nothing drawn).
+        """
+        dx, dy = p_b.x() - p_a.x(), p_b.y() - p_a.y()
+        length = math.hypot(dx, dy)
+        if length <= gap_a + gap_b:
+            return None
+        ux, uy = dx / length, dy / length
+        s = QtCore.QPointF(p_a.x() + ux * gap_a, p_a.y() + uy * gap_a)
+        e = QtCore.QPointF(p_b.x() - ux * gap_b, p_b.y() - uy * gap_b)
+        line = self.addLine(QtCore.QLineF(s, e), pen)
+        line.setZValue(z)
+        return s, e
+
+    def _pair_symbol(
+        self,
+        p_i: QtCore.QPointF,
+        p_j: QtCore.QPointF,
+        gap_i: float,
+        gap_j: float,
+        bond: str,
+        col: QtGui.QColor,
+        wid: float,
+    ) -> None:
+        """Draw the pair rung as a TYPE symbol keyed off ``bond``.
+
+        ``gc`` -> a double line (``=``, two parallel offset lines); ``au`` -> a
+        single line (``-``); ``gu`` -> a single line + an OPEN circle at the
+        midpoint (wobble); anything else -> a single line + a filled circle
+        marker (a Leontis-Westhof cis-WC-style placeholder). The rung is
+        shortened at both ends so it stops clear of the letters. A small helper
+        so more bond styles are trivial to add. Drawn below the letters (z=-5).
+        """
+        dx, dy = p_j.x() - p_i.x(), p_j.y() - p_i.y()
+        length = math.hypot(dx, dy)
+        if length <= gap_i + gap_j:
+            return
+        ux, uy = dx / length, dy / length
+        s = QtCore.QPointF(p_i.x() + ux * gap_i, p_i.y() + uy * gap_i)
+        e = QtCore.QPointF(p_j.x() - ux * gap_j, p_j.y() - uy * gap_j)
+        px, py = -uy, ux  # unit perpendicular to the rung
+        r = self._node_r
+        pen = QtGui.QPen(col, wid)
+        z = -5.0
+        if bond == "gc":
+            # Double line: two short parallel lines offset perpendicular.
+            off = max(1.2, r * 0.16)
+            for sgn in (-1.0, 1.0):
+                ox, oy = px * off * sgn, py * off * sgn
+                line = self.addLine(
+                    QtCore.QLineF(s.x() + ox, s.y() + oy, e.x() + ox, e.y() + oy), pen
+                )
+                line.setZValue(z)
+            return
+        # Single line for au / gu / other.
+        line = self.addLine(QtCore.QLineF(s, e), pen)
+        line.setZValue(z)
+        if bond in ("gu", "other"):
+            mx, my = (s.x() + e.x()) / 2.0, (s.y() + e.y()) / 2.0
+            cr = max(1.6, r * 0.22)
+            circ = QtWidgets.QGraphicsEllipseItem(mx - cr, my - cr, 2 * cr, 2 * cr)
+            circ.setPen(pen)
+            # gu wobble = open circle; other (LW placeholder) = filled marker.
+            circ.setBrush(
+                QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush)
+                if bond == "gu"
+                else QtGui.QBrush(QtGui.QColor(col))
+            )
+            circ.setZValue(z + 0.5)
+            self.addItem(circ)
 
 
 class RnaGraphicsView(QtWidgets.QGraphicsView):

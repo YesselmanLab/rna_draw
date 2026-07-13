@@ -105,6 +105,11 @@ DEFAULT_VIEW = {
     "letter_color": "#101418",
     "routed_style": "dash",  # solid | dash | dot
     "render_type": "none",  # none | res_type | paired
+    # Overall render STYLE (extensible string): "spheres" = the classic
+    # disk/backbone/pair look; "letters" = the RFview-style colored-letters mode
+    # (letters, gapped backbone, typed pair symbols). Display-only; add more
+    # style strings here as they are implemented.
+    "render_style": "spheres",  # spheres | letters
     "data_palette": "viridis",  # SHAPE/data colormap name (persisted; see report)
     # Percentage size sliders (100% = base default). Display-only, no relayout.
     "sphere_pct": 100,  # drawn disk radius as % of layout node_r
@@ -126,6 +131,29 @@ def _load_overlap_note(report, dirty) -> str:
         parts.append(f"{len(dirty)} routed line(s) crossing the layout")
     detail = "; ".join(parts) if parts else "overlaps"
     return f"loaded layout is NOT clean ({detail}) -- shown flagged, not silently clean"
+
+
+def _bond_type(a: str, b: str) -> str:
+    """Classify a base pair by its two bases into a drawn ``bond`` type.
+
+    Normalizes ``T -> U`` and uppercases; returns one of ``"gc"`` ({G,C}),
+    ``"au"`` ({A,U}), ``"gu"`` ({G,U}), or ``"other"`` (any non-canonical
+    combination, or a blank/unknown base at either position). Purely a
+    display classification -- it drives which pair SYMBOL the letters render
+    style draws (=, -, wobble, LW placeholder); it never affects geometry.
+    """
+    a = (a or "").upper().replace("T", "U").strip()
+    b = (b or "").upper().replace("T", "U").strip()
+    if a not in ("A", "C", "G", "U") or b not in ("A", "C", "G", "U"):
+        return "other"
+    pair = {a, b}
+    if pair == {"G", "C"}:
+        return "gc"
+    if pair == {"A", "U"}:
+        return "au"
+    if pair == {"G", "U"}:
+        return "gu"
+    return "other"
 
 
 def _resolve_rgb(value, palette: dict) -> list[float]:
@@ -191,6 +219,9 @@ def view_style(preset: StylePreset) -> dict:
         "routed_color": _resolve_color(cc.get("pk_line", "r"), palette),
         "routed_width": _BASE_ROUTED_WIDTH * _pct("routed_pct"),
         "routed_style": view["routed_style"],
+        # Overall render style ("spheres" | "letters"); a plain string so more
+        # styles can be added without touching the value model.
+        "render_style": view.get("render_style", "spheres"),
     }
 
 
@@ -1242,6 +1273,19 @@ class EditorModel:
             pivot=self._pivot,
         )
         data = scene.to_dict()
+        # Tag each drawn base pair with a `bond` type from the SEQUENCE bases at
+        # (i, j): gc / au / gu / other. Crossing (PK) pairs keep kind="crossing"
+        # but also carry a bond. Display-only -- consumed by the letters render
+        # style to pick a pair symbol (=, -, wobble, LW placeholder).
+        seq = self._seq
+        for pair in data["pairs"]:
+            i, j = pair["i"], pair["j"]
+            if seq is not None:
+                a = seq[i] if i < len(seq) else ""
+                b = seq[j] if j < len(seq) else ""
+                pair["bond"] = _bond_type(a, b)
+            else:
+                pair["bond"] = "other"
         # Per-nt color overrides win over the scheme/style fill (HIGHEST
         # precedence), layered on top of the colorer output in `build_scene`.
         if self._color_overrides:
