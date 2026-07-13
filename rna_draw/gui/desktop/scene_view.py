@@ -154,8 +154,29 @@ class RnaScene(QtWidgets.QGraphicsScene):
             ritem = self.addPath(rpath, QtGui.QPen(routed_col, routed_w, routed_style))
             ritem.setZValue(-4)
 
-        # Nucleotide disks.
+        # Persistent highlight halos: a larger, semi-transparent disk behind
+        # each highlighted nucleotide (zvalue BELOW the opaque disks) so the
+        # region visibly "glows" as a ring around the letters without hiding
+        # them. Non-interactive (carries no nt index).
         r = self._node_r
+        halo_r = r * 1.9
+        for hl in scene.get("highlights", []):
+            col = _color(hl.get("color", "#ffff00"), QtGui.QColor("#ffff00"))
+            col.setAlpha(90)
+            brush = QtGui.QBrush(col)
+            for idx in hl.get("indices", []):
+                if idx >= len(pos):
+                    continue
+                c = pos[idx]
+                halo = QtWidgets.QGraphicsEllipseItem(
+                    c.x() - halo_r, c.y() - halo_r, 2 * halo_r, 2 * halo_r
+                )
+                halo.setBrush(brush)
+                halo.setPen(QtGui.QPen(QtCore.Qt.PenStyle.NoPen))
+                halo.setZValue(-2)
+                self.addItem(halo)
+
+        # Nucleotide disks.
         for n in nts:
             idx = n["id"]
             center = pos[idx]
@@ -227,6 +248,12 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         self._drag_residue: int | None = None
         self._panning = False
         self._pan_start = QtCore.QPoint()
+        # Box / marquee selection (Select mode, drag on empty space): a live
+        # rubber-band rectangle in VIEWPORT coords, its origin, and whether the
+        # drag adds to (Shift) rather than replaces the current selection.
+        self._band: QtWidgets.QRubberBand | None = None
+        self._band_origin = QtCore.QPoint()
+        self._band_additive = False
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -374,6 +401,31 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             (sel.indices[0], sel.indices[-1]) if sel.indices else None
         )
 
+    def _finish_box(self, scene_rect: QtCore.QRectF, additive: bool = False) -> None:
+        """Select every nucleotide whose center lies inside ``scene_rect``.
+
+        The rubber-band tool's commit step, factored out so it can be driven
+        directly (a real mouse drag cannot run headlessly). Hit-tests the
+        cached nt centers against the SCENE-space rectangle and sets the
+        model's selection to that index set (adding to the current selection
+        when ``additive``). Highlight-only: no rotate handle is armed.
+
+        Args:
+            scene_rect: The selection rectangle in scene coordinates.
+            additive: When True, union with the current selection.
+        """
+        if self._model is None:
+            return
+        positions = self._scene.nt_positions()
+        hit = {i for i, p in enumerate(positions) if scene_rect.contains(p)}
+        if additive:
+            hit |= set(self._model.sel_indices)
+        self._clear_handle()
+        self._drag_residue = None
+        self._model.select_indices(hit)
+        self._rebuild()
+        self.selectionChanged.emit((min(hit), max(hit)) if hit else None)
+
     # -- mouse interaction --------------------------------------------------
 
     def mousePressEvent(self, event) -> None:
@@ -402,7 +454,19 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
                 self._select_at(idx)
                 event.accept()
                 return
-            # 3) empty space -> deselect
+            # 3) empty space: Select mode -> start a box/marquee; else deselect
+            if self._options.mode == "select":
+                self._band_origin = event.position().toPoint()
+                self._band_additive = bool(
+                    event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                )
+                self._band = QtWidgets.QRubberBand(
+                    QtWidgets.QRubberBand.Shape.Rectangle, self.viewport()
+                )
+                self._band.setGeometry(QtCore.QRect(self._band_origin, QtCore.QSize()))
+                self._band.show()
+                event.accept()
+                return
             self._model.deselect()
             self._clear_handle()
             self._drag_residue = None
@@ -420,6 +484,11 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             vbar = self.verticalScrollBar()
             hbar.setValue(hbar.value() - delta.x())
             vbar.setValue(vbar.value() - delta.y())
+            event.accept()
+            return
+        if self._band is not None and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            rect = QtCore.QRect(self._band_origin, event.position().toPoint()).normalized()
+            self._band.setGeometry(rect)
             event.accept()
             return
         if (
@@ -454,6 +523,16 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         if self._panning:
             self._panning = False
             self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+            event.accept()
+            return
+        if self._band is not None:
+            rect = self._band.geometry()
+            self._band.hide()
+            self._band = None
+            top_left = self.mapToScene(rect.topLeft())
+            bottom_right = self.mapToScene(rect.bottomRight())
+            scene_rect = QtCore.QRectF(top_left, bottom_right).normalized()
+            self._finish_box(scene_rect, self._band_additive)
             event.accept()
             return
         if self._rotating:

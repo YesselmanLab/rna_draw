@@ -10,14 +10,19 @@ The persistent hint keeps the core interaction discoverable at all times.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from rna_draw.document import Document
 from rna_draw.gui.model import DEMO_SEQ, DEMO_SS, EditorModel
+from rna_draw.io_formats import OPEN_FILTER, parse_structure_file
 
 from .collapsible import CollapsibleSection
 from .options_panel import OptionsPanel
 from .scene_view import RnaGraphicsView
-from .style_panel import StylePanel
+from .style_panel import ColorButton, StylePanel
 
 HINT = "Click a helix, then drag its orange handle to rotate it about its junction."
 
@@ -39,6 +44,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Residue-numbering state, re-applied to every freshly laid-out model.
         self._show_numbers = True
         self._number_interval = 10
+        # Path of the currently open `.rnadoc.json` (Save target); None until a
+        # document is opened or saved-as.
+        self._current_path: str | None = None
+        # In-memory version-history snapshots (each a full `Document`), also
+        # persisted into a saved file's `extra["versions"]`.
+        self._versions: list[Document] = []
 
         self._view = RnaGraphicsView()
         self.setCentralWidget(self._view)
@@ -46,6 +57,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._view.overlapChanged.connect(self._on_overlap)
 
         self._build_toolbar()
+        self._build_file_menu()
         self._build_left_panel()
         self._build_mode_toolbar()
         self._build_statusbar()
@@ -64,9 +76,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addToolBar(bar)
 
         open_act = QtGui.QAction("Open", self)
-        open_act.setToolTip("Open a text file whose first line is a dot-bracket structure")
+        open_act.setToolTip(
+            "Open a .rnadoc.json document or an RNA structure file "
+            "(.dbn, .dot, .ct, .bpseq, .fasta, .txt)"
+        )
         open_act.triggered.connect(self._open_file)
         bar.addAction(open_act)
+
+        save_act = QtGui.QAction("Save", self)
+        save_act.setToolTip("Save the current drawing as a .rnadoc.json document")
+        save_act.triggered.connect(self._save_document)
+        bar.addAction(save_act)
 
         fit_act = QtGui.QAction("Fit", self)
         fit_act.setToolTip("Fit the whole structure in view")
@@ -80,6 +100,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self._toggle_panel_act.setChecked(True)
         self._toggle_panel_act.toggled.connect(self._toggle_panel_dock)
         bar.addAction(self._toggle_panel_act)
+
+    def _build_file_menu(self) -> None:
+        """The File menu: Open / Save / Save As over the `.rnadoc` document layer."""
+        menu = self.menuBar().addMenu("&File")
+
+        open_act = QtGui.QAction("&Open...", self)
+        open_act.setShortcut(QtGui.QKeySequence.StandardKey.Open)
+        open_act.triggered.connect(self._open_file)
+        menu.addAction(open_act)
+
+        menu.addSeparator()
+
+        save_act = QtGui.QAction("&Save", self)
+        save_act.setShortcut(QtGui.QKeySequence.StandardKey.Save)
+        save_act.triggered.connect(self._save_document)
+        menu.addAction(save_act)
+
+        save_as_act = QtGui.QAction("Save &As...", self)
+        save_as_act.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
+        save_as_act.triggered.connect(self._save_document_as)
+        menu.addAction(save_as_act)
 
     def _build_mode_toolbar(self) -> None:
         """The interaction-mode bar (Move / Select / Edit) + granularity combo.
@@ -145,6 +186,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Build the single LEFT dock: StylePanel with injected top/bottom sections."""
         self._panel = StylePanel()
         self._build_structure_section()  # -> top of the panel
+        self._build_selection_styling_section()  # -> bottom of the panel
+        self._build_versions_section()  # -> bottom of the panel
         self._build_editing_section()  # -> bottom of the panel
 
         self._dock = QtWidgets.QDockWidget("Controls", self)
@@ -235,6 +278,143 @@ class MainWindow(QtWidgets.QMainWindow):
         section.set_content_layout(col)
         self._panel.add_section_bottom(section)
 
+    def _build_selection_styling_section(self) -> None:
+        """Per-region styling: recolor the selection or add a highlight halo.
+
+        Enabled only when a selection exists (any granularity). "Color
+        selection" applies a per-nt color override (wins over the scheme);
+        "Highlight selection" adds a persistent translucent halo. Both are
+        purely visual -- no geometry moves, so the never-silent contract is
+        untouched. Wired live: apply -> model update -> canvas rebuild.
+        """
+        section = CollapsibleSection("Selection styling", expanded=False)
+        col = QtWidgets.QVBoxLayout()
+        col.setContentsMargins(6, 4, 6, 8)
+        col.setSpacing(6)
+
+        self._sel_readout = QtWidgets.QLabel("No selection")
+        self._sel_readout.setStyleSheet("color:#7a828d; font-style:italic;")
+        col.addWidget(self._sel_readout)
+
+        # Recolor row: swatch + apply button.
+        color_row = QtWidgets.QWidget()
+        color_lay = QtWidgets.QHBoxLayout(color_row)
+        color_lay.setContentsMargins(0, 0, 0, 0)
+        color_lay.setSpacing(6)
+        self._sel_color_btn = ColorButton("#e5484d")
+        self._sel_color_btn.setToolTip("Color to paint the selected nucleotides")
+        color_apply = QtWidgets.QPushButton("Color selection")
+        color_apply.setToolTip("Recolor the selected nucleotides (overrides the scheme)")
+        color_apply.clicked.connect(self._on_color_selection)
+        color_lay.addWidget(self._sel_color_btn)
+        color_lay.addWidget(color_apply, 1)
+        col.addWidget(color_row)
+
+        # Highlight row: swatch + apply button.
+        hl_row = QtWidgets.QWidget()
+        hl_lay = QtWidgets.QHBoxLayout(hl_row)
+        hl_lay.setContentsMargins(0, 0, 0, 0)
+        hl_lay.setSpacing(6)
+        self._sel_highlight_btn = ColorButton("#ffd300")
+        self._sel_highlight_btn.setToolTip("Halo color for the highlighted region")
+        hl_apply = QtWidgets.QPushButton("Highlight selection")
+        hl_apply.setToolTip("Add a persistent translucent halo over the selected region")
+        hl_apply.clicked.connect(self._on_highlight_selection)
+        hl_lay.addWidget(self._sel_highlight_btn)
+        hl_lay.addWidget(hl_apply, 1)
+        col.addWidget(hl_row)
+
+        # Clear buttons.
+        clear_row = QtWidgets.QWidget()
+        clear_lay = QtWidgets.QHBoxLayout(clear_row)
+        clear_lay.setContentsMargins(0, 0, 0, 0)
+        clear_lay.setSpacing(6)
+        clear_color = QtWidgets.QPushButton("Clear color")
+        clear_color.setToolTip("Revert the selected nucleotides to the scheme color")
+        clear_color.clicked.connect(self._on_clear_color)
+        clear_hl = QtWidgets.QPushButton("Clear highlights")
+        clear_hl.setToolTip("Remove every highlight halo")
+        clear_hl.clicked.connect(self._on_clear_highlights)
+        clear_lay.addWidget(clear_color)
+        clear_lay.addWidget(clear_hl)
+        col.addWidget(clear_row)
+
+        # Widgets that only make sense with a live selection.
+        self._sel_apply_widgets = [color_apply, hl_apply, clear_color]
+
+        section.set_content_layout(col)
+        self._panel.add_section_bottom(section)
+        self._update_selection_styling()
+
+    def _update_selection_styling(self) -> None:
+        """Refresh the Selection-styling readout + enablement from the model."""
+        has_sel = bool(self._model is not None and self._model.sel_indices)
+        for w in getattr(self, "_sel_apply_widgets", []):
+            w.setEnabled(has_sel)
+        if has_sel:
+            n = len(self._model.sel_indices)
+            kind = self._model.sel_kind or "selection"
+            self._sel_readout.setText(f"{n} nt selected ({kind})")
+        else:
+            self._sel_readout.setText("No selection")
+
+    def _on_color_selection(self) -> None:
+        """Apply a per-nt color override to the current selection (visual)."""
+        if self._model is None:
+            return
+        self._model.apply_color_to_selection(self._sel_color_btn.color())
+        self._view.restyle()
+
+    def _on_highlight_selection(self) -> None:
+        """Add a persistent highlight halo over the current selection (visual)."""
+        if self._model is None:
+            return
+        self._model.highlight_selection(self._sel_highlight_btn.color())
+        self._view.restyle()
+
+    def _on_clear_color(self) -> None:
+        """Drop color overrides on the current selection (revert to scheme)."""
+        if self._model is None:
+            return
+        self._model.clear_color_on_selection()
+        self._view.restyle()
+
+    def _on_clear_highlights(self) -> None:
+        """Remove every highlight halo (visual)."""
+        if self._model is None:
+            return
+        self._model.clear_highlights()
+        self._view.restyle()
+
+    def _build_versions_section(self) -> None:
+        """The 'Versions' section: snapshot the current state + restore snapshots.
+
+        Each snapshot is a full `Document` (coords + style), held in memory and
+        round-tripped into a saved file's `extra["versions"]`. Restoring one
+        re-runs the never-silent gate (via `EditorModel.from_document`).
+        """
+        section = CollapsibleSection("Versions", expanded=False)
+        col = QtWidgets.QVBoxLayout()
+        col.setContentsMargins(6, 4, 6, 8)
+        col.setSpacing(6)
+
+        snap_btn = QtWidgets.QPushButton("Snapshot current")
+        snap_btn.setToolTip("Capture the current drawing as a version you can jump back to")
+        snap_btn.clicked.connect(self._take_snapshot)
+        col.addWidget(snap_btn)
+
+        self._versions_list = QtWidgets.QListWidget()
+        self._versions_list.setToolTip("Double-click a version to restore it")
+        self._versions_list.itemDoubleClicked.connect(self._restore_version_item)
+        col.addWidget(self._versions_list)
+
+        restore_btn = QtWidgets.QPushButton("Restore selected")
+        restore_btn.clicked.connect(self._restore_selected_version)
+        col.addWidget(restore_btn)
+
+        section.set_content_layout(col)
+        self._panel.add_section_bottom(section)
+
     def _toggle_panel_dock(self, on: bool) -> None:
         self._dock.setVisible(on)
 
@@ -297,27 +477,127 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(note, 6000)
 
     def _open_file(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open dot-bracket structure", "", "Text files (*.txt *.dat *.ss);;All files (*)"
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open", "", OPEN_FILTER)
+        if not path:
+            return
+        if path.endswith(".rnadoc.json") or path.endswith(".rnadoc"):
+            self._open_document(path)
+            return
+        try:
+            ss, seq, _name = parse_structure_file(path)
+        except (OSError, ValueError) as exc:
+            self._overlap_label.setText(f"Could not read structure: {exc}")
+            return
+        self.load_ss(ss, seq)
+
+    # -- documents (.rnadoc.json) -------------------------------------------
+
+    def _open_document(self, path: str) -> None:
+        """Load a `.rnadoc.json`, restore its layout+style+version history."""
+        try:
+            doc = Document.load(path)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            self._overlap_label.setText(f"Could not load document: {exc}")
+            return
+        self._load_document(doc)
+        self._current_path = path
+        self._restore_versions_from_doc(doc)
+
+    def _load_document(self, doc: Document) -> None:
+        """Adopt `doc` into a fresh model + view (never-silent gate re-run).
+
+        The model's `from_document` re-validates the stored coordinates live;
+        an overlapping layout is surfaced flagged (status message) rather than
+        drawn silently clean.
+        """
+        try:
+            model = EditorModel.from_document(doc)
+        except Exception as exc:  # keep the app alive on a malformed document
+            self._overlap_label.setText(f"Could not restore document: {exc}")
+            return
+        model.set_numbering(self._show_numbers, self._number_interval)
+        self._model = model
+        self._ss_edit.setText(model._ss or "")
+        self._seq_edit.setText(model._seq or "")
+        self._view.set_model(model)
+        # Adopt the document's style into the panel (so the controls reflect it
+        # and stay bound to the same preset the model draws with).
+        self._panel.load_preset(model.preset)
+        self._engine_label.setText(
+            f"{len(model.scene()['nucleotides'])} nt  |  engine: {model.engine_name}"
+        )
+        self._on_overlap(model.flagged, len(model.scene()["overlaps"]))
+        if model.load_note:
+            self.statusBar().showMessage(model.load_note, 8000)
+
+    def _save_document(self) -> None:
+        """Save to the current path, or prompt for one on first save."""
+        if self._current_path:
+            self._write_document(self._current_path)
+        else:
+            self._save_document_as()
+
+    def _save_document_as(self) -> None:
+        """Prompt for a path and save the drawing (+ version history) there."""
+        if self._model is None:
+            return
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save RNA document", "drawing.rnadoc.json", "RNA documents (*.rnadoc.json)"
         )
         if not path:
             return
+        if not (path.endswith(".rnadoc.json") or path.endswith(".rnadoc")):
+            path += ".rnadoc.json"
+        self._current_path = path
+        self._write_document(path)
+
+    def _write_document(self, path: str) -> None:
+        """Serialize the live model (+ snapshot history) to `path`."""
+        if self._model is None:
+            return
+        doc = self._model.to_document()
+        doc.extra["versions"] = [snap.to_dict() for snap in self._versions]
         try:
-            with open(path, encoding="utf-8") as fh:
-                lines = [ln.strip() for ln in fh if ln.strip()]
+            doc.save(path)
         except OSError as exc:
-            self._overlap_label.setText(f"Could not read file: {exc}")
+            self._overlap_label.setText(f"Could not save: {exc}")
             return
-        if not lines:
-            self._overlap_label.setText("File contained no structure line")
+        self.statusBar().showMessage(f"Saved {path}", 4000)
+
+    # -- version history ----------------------------------------------------
+
+    def _take_snapshot(self, _checked: bool = False, name: str | None = None) -> None:
+        """Capture the current editor state as a named version snapshot."""
+        if self._model is None:
             return
-        ss = next((ln for ln in lines if set(ln) <= set("().[]{}<>")), lines[0])
-        seq = None
-        if len(lines) >= 2 and len(lines[0]) == len(lines[1]):
-            # convention: seq on the first line, structure on the second
-            if set(lines[1]) <= set("().[]{}<>"):
-                seq, ss = lines[0], lines[1]
-        self.load_ss(ss, seq)
+        if not name:
+            name = f"v{len(self._versions) + 1} - {datetime.now():%H:%M:%S}"
+        self._versions.append(self._model.to_document(name=name))
+        self._versions_list.addItem(name)
+
+    def _restore_version_item(self, item: QtWidgets.QListWidgetItem) -> None:
+        self._restore_version(self._versions_list.row(item))
+
+    def _restore_selected_version(self) -> None:
+        self._restore_version(self._versions_list.currentRow())
+
+    def _restore_version(self, row: int) -> None:
+        """Load the snapshot at `row` back into the model (never-silent gate)."""
+        if 0 <= row < len(self._versions):
+            self._load_document(self._versions[row])
+
+    def _restore_versions_from_doc(self, doc: Document) -> None:
+        """Rebuild the snapshot list from a loaded file's `extra["versions"]`."""
+        self._versions = []
+        self._versions_list.clear()
+        for entry in doc.extra.get("versions", []):
+            try:
+                snap = Document.from_dict(entry)
+            except (KeyError, TypeError, ValueError):
+                continue
+            name = snap.extra.get("name") or f"v{len(self._versions) + 1}"
+            self._versions.append(snap)
+            self._versions_list.addItem(str(name))
 
     # -- style editor -------------------------------------------------------
 
@@ -342,6 +622,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # -- signals ------------------------------------------------------------
 
     def _on_selection(self, selection) -> None:
+        self._update_selection_styling()
         if selection is None:
             self._overlap_label.setText("No helix selected")
         else:

@@ -22,8 +22,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from rna_draw.document import Document
+from rna_draw.document_render import SourceInputs, document_from_layout, resolve_preset
 from rna_draw.gui.hinge import redistribute_loop
-from rna_draw.layout.base import params_at_node_r
+from rna_draw.layout import LayoutResult
+from rna_draw.layout.base import empty_report, params_at_node_r
 from rna_draw.layout.pipeline import layout_guaranteed, resolve_engine
 from rna_draw.layout.postpass import (
     rotate_range,
@@ -37,6 +40,7 @@ from rna_draw.parameters import RenderType
 from rna_draw.render_rna import get_pairmap_from_secstruct
 from rna_draw.scene import _rgb_to_hex, build_scene
 from rna_draw.style import StylePreset, default_preset
+from rna_draw.validate import never_silent_gate
 
 # The target render radius; the pipeline scales down from here when gating.
 _TARGET_NODE_R = 10.0
@@ -95,6 +99,17 @@ DEFAULT_VIEW = {
     "render_type": "none",  # none | res_type | paired
     "data_palette": "viridis",  # SHAPE/data colormap name (persisted; see report)
 }
+
+
+def _load_overlap_note(report, dirty) -> str:
+    """Human-readable never-silent note for an overlapping loaded layout."""
+    parts = []
+    if not report.passed:
+        parts.append(f"{report.num_overlaps} disk/backbone/pair overlap(s)")
+    if dirty:
+        parts.append(f"{len(dirty)} routed line(s) crossing the layout")
+    detail = "; ".join(parts) if parts else "overlaps"
+    return f"loaded layout is NOT clean ({detail}) -- shown flagged, not silently clean"
 
 
 def _resolve_rgb(value, palette: dict) -> list[float]:
@@ -234,11 +249,21 @@ class EditorModel:
         # Cached checker verdict for the current geometry.
         self._flagged: bool = False
         self._overlaps: list[int] = []
+        # Human-readable note from the last `from_document`/`_adopt_document`
+        # load whose stored coords failed the live never-silent gate (empty
+        # when the load was clean); a view surfaces it non-blockingly.
+        self._load_note: str = ""
         # Residue-numbering (VARNA-style "10, 20, 30 ..." labels). Off by
         # default; the desktop toggle turns it on. Purely visual -- the
         # numbers are derived from geometry in `scene()`, never stored.
         self._show_numbers: bool = False
         self._number_interval: int = 10
+        # Per-region VISUAL styling (no geometry, no overlap risk): explicit
+        # per-nucleotide color overrides (highest fill precedence, layered on
+        # top of the colorer output) and persistent highlight halos. Both
+        # round-trip through the Document's `extra` band.
+        self._color_overrides: dict[int, str] = {}
+        self._highlights: list[dict] = []
 
     # -- construction -------------------------------------------------------
 
@@ -291,6 +316,138 @@ class EditorModel:
         model._overlaps = model._overlap_indices() if model._flagged else []
         return model
 
+    # -- document (de)serialization -----------------------------------------
+
+    def to_document(self, name: str | None = None) -> Document:
+        """Capture the CURRENT editor state as a `Document`.
+
+        The derived layout band is built from the model's LIVE, possibly
+        hand-edited coordinates (`_x`/`_y`, engine space, UNSHIFTED) -- NOT by
+        re-running layout -- so an arranged drawing is persisted exactly as the
+        user left it. The source band records the structure the layout was
+        built from (`_ss`/`_seq`) plus the live style preset (inlined, so it
+        round-trips without a registry lookup). The advisory checker verdict is
+        an honest snapshot of the current flag; the live never-silent gate is
+        re-run on load, so it is never trusted as authoritative.
+
+        Args:
+            name: Optional label stored in ``Document.extra["name"]`` (used by
+                the editor's version-history list); ``None`` omits it.
+
+        Returns:
+            A `Document` whose `derived.layout` mirrors the live coordinates.
+        """
+        n = len(self._x)
+        ss = self._ss if self._ss is not None else "." * n
+        seq = self._seq if self._seq is not None else ""
+        view = {**DEFAULT_VIEW, **self._preset.extra.get("view", {})}
+        source = SourceInputs(
+            ss=ss,
+            seq=seq,
+            render_type=view.get("render_type", "none"),
+            style_preset=self._preset.to_dict(),
+            engine="auto",
+        )
+        report = (
+            check_overlaps(self._x, self._y, self._pair_map, self._scaled_params())
+            if n >= 2
+            else empty_report()
+        )
+        result = LayoutResult(
+            x=list(self._x),
+            y=list(self._y),
+            engine_name=self._engine_name,
+            report=report,
+            flagged=self._flagged,
+            node_r=self._node_r,
+            pair_map=list(self._pair_map),
+            crossing_pairs=list(self._crossing_pairs),
+            crossing_lines=list(self._crossing_lines),
+        )
+        doc = document_from_layout(source, result)
+        if name is not None:
+            doc.extra["name"] = name
+        # Persist per-region visual styling in the Document's extra band so
+        # save/load + version snapshots keep recolored regions and highlights.
+        if self._color_overrides:
+            doc.extra["color_overrides"] = {
+                str(k): v for k, v in sorted(self._color_overrides.items())
+            }
+        if self._highlights:
+            doc.extra["highlights"] = [
+                {"indices": list(h["indices"]), "color": h["color"]} for h in self._highlights
+            ]
+        return doc
+
+    @classmethod
+    def from_document(cls, doc: Document) -> "EditorModel":
+        """Build a model from a `Document`, re-running the never-silent gate.
+
+        The stored coordinates/style are adopted verbatim, but the live
+        `validate.never_silent_gate` ALWAYS re-validates them (the file's
+        advisory checker block is not trusted): a clean layout is drawn as-is;
+        an overlapping stored layout is adopted flagged (its `load_note` set),
+        never presented as silently clean.
+
+        Args:
+            doc: The document to restore.
+
+        Returns:
+            A ready-to-edit `EditorModel`.
+        """
+        model = cls()
+        model._adopt_document(doc)
+        return model
+
+    def _adopt_document(self, doc: Document) -> str:
+        """Restore `doc`'s coords/seq/style into this model (never-silent).
+
+        Returns the load note (empty when the stored layout is clean).
+        """
+        structure = doc.source.structure
+        self._preset = resolve_preset(doc.source.style_preset)
+        self._ss = structure.ss or None
+        self._seq = structure.seq or None
+        self._clear_selection()
+        self._restore_region_styling(doc)
+        layout = doc.derived.layout
+        if layout is None:
+            # Source-only document: no stored coords, lay out fresh (gated by
+            # the guaranteed pipeline exactly as `from_ss` does).
+            fresh = EditorModel.from_ss(structure.ss, seq=self._seq)
+            self._x, self._y = fresh._x, fresh._y
+            self._node_r = fresh._node_r
+            self._pair_map = fresh._pair_map
+            self._crossing_pairs = fresh._crossing_pairs
+            self._crossing_lines = fresh._crossing_lines
+            self._tree = fresh._tree
+            self._engine_name = fresh._engine_name
+            self._flagged = fresh._flagged
+            self._overlaps = list(fresh._overlaps)
+            self._recompute_colors()
+            self._load_note = ""
+            return ""
+
+        xs = [float(px) for px, _ in layout.coords]
+        ys = [float(py) for _, py in layout.coords]
+        self._x, self._y = xs, ys
+        self._node_r = float(layout.node_r)
+        self._pair_map = [int(v) for v in layout.pair_map]
+        self._crossing_pairs = list(layout.crossing_pairs)
+        self._crossing_lines = list(layout.crossing_lines)
+        self._engine_name = layout.engine_name
+        self._tree = build_structure_tree(self._pair_map)
+        self._recompute_colors()
+        # NEVER-SILENT: re-validate the stored coords live at the model's own
+        # gate radius; the file's advisory `checker` block is ignored.
+        clean, report, dirty = never_silent_gate(
+            xs, ys, self._pair_map, self._crossing_lines, self._node_r, _TARGET_NODE_R
+        )
+        self._flagged = not clean
+        self._overlaps = self._overlap_indices() if not clean else []
+        self._load_note = "" if clean else _load_overlap_note(report, dirty)
+        return self._load_note
+
     # -- read-only accessors ------------------------------------------------
 
     @property
@@ -302,6 +459,11 @@ class EditorModel:
     def flagged(self) -> bool:
         """Whether the current committed geometry has overlaps."""
         return self._flagged
+
+    @property
+    def load_note(self) -> str:
+        """Never-silent note from the last document load (``""`` if clean)."""
+        return self._load_note
 
     @property
     def selection(self) -> tuple[int, int] | None:
@@ -396,6 +558,29 @@ class EditorModel:
             return self._select_motif(index)
         return self._select_helix(index)
 
+    def select_indices(self, indices) -> Selection:
+        """Select an arbitrary SET of nucleotide indices (box/marquee select).
+
+        The generic set selection used by the view's rubber-band tool: the
+        given indices become the highlighted set (kind ``"range"``), replacing
+        any prior selection. Out-of-range indices are dropped. No pivot/handle
+        is armed (a range is highlight-only, like a motif); the scene tints the
+        set teal via the ``selected`` list. This is the clean selected-set API
+        a per-region styling pass consumes (see `sel_indices`/`sel_kind`).
+
+        Args:
+            indices: Any iterable of nucleotide indices.
+
+        Returns:
+            A `Selection` of kind ``"range"`` over the valid indices.
+        """
+        n = len(self._pair_map)
+        valid = {int(i) for i in indices if 0 <= int(i) < n}
+        self._clear_selection()
+        self._sel_indices = valid
+        self._sel_kind = "range"
+        return Selection("range", sorted(valid))
+
     def _select_helix(self, index: int) -> Selection | None:
         """Select the innermost enclosing helix slice and arm its rotation clamp."""
         stack = self._tree.enclosing_pairs.get(index, [])
@@ -427,17 +612,43 @@ class EditorModel:
         self._sel_kind = "residue"
         return Selection("residue", [index])
 
+    def _helix_indices(self, index: int) -> set[int]:
+        """Every index of the WHOLE physical helix that ``index`` pairs into.
+
+        Walks outward from ``index``'s base pair while consecutive pairs stack
+        (``pair_map[a-1] == b+1``) to the helix's outermost rung, then inward
+        counting the stacked run -- so the result is BOTH strands of the entire
+        contiguous stacked-pair helix (not just the one base pair, and not the
+        branch-with-enclosed-loops the rotatable helix slice covers).
+        """
+        partner = self._pair_map[index]
+        a, b = (index, partner) if index < partner else (partner, index)
+        # Climb to the outermost stacked rung.
+        while a - 1 >= 0 and b + 1 < len(self._pair_map) and self._pair_map[a - 1] == b + 1:
+            a, b = a - 1, b + 1
+        # Descend the stacked run, collecting both strands.
+        indices: set[int] = set()
+        while a < b and self._pair_map[a] == b:
+            indices.add(a)
+            indices.add(b)
+            a, b = a + 1, b - 1
+        return indices
+
     def _select_motif(self, index: int) -> Selection:
         """Select the structural element under the click.
 
-        On a stem (paired nucleotide) this is the enclosing helix; on a loop
-        (unpaired nucleotide) it is the enclosing loop's members plus the base
-        pairs of any child stems, so the whole junction ring highlights.
+        On a stem (paired nucleotide) this is the WHOLE HELIX -- both strands
+        of the maximal contiguous stacked-pair run through ``index`` (see
+        `_helix_indices`), highlighted but NOT rotatable. On a loop (unpaired
+        nucleotide) it is the enclosing loop's members plus the base pairs of
+        any child stems, so the whole junction ring highlights.
         """
         if self._pair_map[index] != -1:
-            helix = self._select_helix(index)
-            if helix is not None:
-                return helix
+            helix = self._helix_indices(index)
+            self._clear_selection()
+            self._sel_indices = set(helix)
+            self._sel_kind = "motif"
+            return Selection("motif", sorted(helix))
         stack = self._tree.enclosing_pairs.get(index, [])
         closing = stack[-1] if stack else None
         loop = self._tree.loop_by_closing_pair.get(closing) or self._tree.exterior
@@ -775,6 +986,83 @@ class EditorModel:
             )
         return out
 
+    # -- per-region styling (visual overrides + highlights) -----------------
+
+    def apply_color_to_selection(self, hex_color: str) -> None:
+        """Recolor every currently-selected nucleotide with ``hex_color``.
+
+        Sets a per-nt color OVERRIDE for each index in `sel_indices`. The
+        override wins over the scheme/style fill in `scene()` (highest
+        precedence); it is layered on top of the colorer output, never forking
+        the coloring logic. Purely visual -- no coordinate is touched, so there
+        is nothing to re-check (the never-silent contract is unaffected).
+        """
+        for i in self._sel_indices:
+            self._color_overrides[int(i)] = hex_color
+
+    def clear_color_on_selection(self) -> None:
+        """Drop any color override on the currently-selected nucleotides.
+
+        Those nts revert to their scheme/style fill (the colorer output).
+        """
+        for i in self._sel_indices:
+            self._color_overrides.pop(int(i), None)
+
+    def clear_all_overrides(self) -> None:
+        """Remove every per-nt color override (whole structure)."""
+        self._color_overrides = {}
+
+    def highlight_selection(self, hex_color: str) -> None:
+        """Add a persistent highlight halo over the currently-selected region.
+
+        Appends a ``{indices, color}`` highlight for `sel_indices`; the scene
+        emits it in a ``highlights`` list and the view draws a translucent halo
+        behind those disks. Distinct from a color override (emphasis, not a
+        repaint) and from the transient teal selection tint. No-op when nothing
+        is selected.
+        """
+        if self._sel_indices:
+            self._highlights.append(
+                {"indices": sorted(self._sel_indices), "color": hex_color}
+            )
+
+    def clear_highlights(self) -> None:
+        """Remove every persistent highlight."""
+        self._highlights = []
+
+    def remove_highlight(self, index: int) -> None:
+        """Remove the highlight at ``index`` in insertion order (no-op if out of range)."""
+        if 0 <= index < len(self._highlights):
+            del self._highlights[index]
+
+    @property
+    def color_overrides(self) -> dict[int, str]:
+        """A copy of the per-nt color overrides (index -> ``#rrggbb``)."""
+        return dict(self._color_overrides)
+
+    @property
+    def highlights(self) -> list[dict]:
+        """A copy of the persistent highlights (``{indices, color}``)."""
+        return [{"indices": list(h["indices"]), "color": h["color"]} for h in self._highlights]
+
+    def _restore_region_styling(self, doc: Document) -> None:
+        """Restore color overrides + highlights from a Document's `extra` band."""
+        self._color_overrides = {}
+        for key, value in (doc.extra.get("color_overrides") or {}).items():
+            try:
+                self._color_overrides[int(key)] = str(value)
+            except (TypeError, ValueError):
+                continue
+        self._highlights = []
+        for h in doc.extra.get("highlights") or []:
+            try:
+                indices = [int(i) for i in h.get("indices", [])]
+            except (TypeError, ValueError, AttributeError):
+                continue
+            self._highlights.append(
+                {"indices": indices, "color": str(h.get("color", "#ffff00"))}
+            )
+
     # -- scene --------------------------------------------------------------
 
     def scene(self) -> dict:
@@ -793,6 +1081,13 @@ class EditorModel:
             pivot=self._pivot,
         )
         data = scene.to_dict()
+        # Per-nt color overrides win over the scheme/style fill (HIGHEST
+        # precedence), layered on top of the colorer output in `build_scene`.
+        if self._color_overrides:
+            for nt in data["nucleotides"]:
+                override = self._color_overrides.get(nt["id"])
+                if override is not None:
+                    nt["fill"] = override
         # Carry resolved visual styling so the view restyles without re-layout.
         data["style"] = view_style(self._preset)
         # The highlighted nucleotide set (any granularity) + its kind, so the
@@ -802,6 +1097,12 @@ class EditorModel:
         # Residue-position numbers (optional; absent for the Jupyter payload).
         if self._show_numbers:
             data["numbers"] = self._numbers()
+        # Persistent highlight halos (optional; absent when none defined so the
+        # Jupyter payload and unstyled scenes are unchanged).
+        if self._highlights:
+            data["highlights"] = [
+                {"indices": list(h["indices"]), "color": h["color"]} for h in self._highlights
+            ]
         return data
 
 

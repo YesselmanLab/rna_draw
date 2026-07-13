@@ -126,11 +126,13 @@ def test_select_at_motif_is_enclosing_loop_members():
     assert sel.indices != list(range(sel.indices[0], sel.indices[-1] + 1))
 
 
-def test_select_at_motif_on_stem_falls_back_to_helix():
+def test_select_at_motif_on_stem_is_whole_helix():
     model = EditorModel.from_ss(_SS)
     sel = model.select_at(8, "motif")  # nt 8 is paired (a stem)
-    assert sel.kind == "helix"
-    assert (sel.start, sel.end) == (8, 17)
+    assert sel.kind == "motif"
+    # the WHOLE helix: both strands of the 4-rung stacked run (7,18)..(10,15),
+    # NOT the (8,17) branch slice and NOT just the base pair.
+    assert set(sel.indices) == {7, 8, 9, 10, 15, 16, 17, 18}
 
 
 def test_scene_carries_selected_set():
