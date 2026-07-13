@@ -50,3 +50,73 @@ QStatusBar {
 QStatusBar QLabel {
     padding: 2px 8px;
 }
+
+/* ---- Style editor dock ---- */
+
+QDockWidget {
+    titlebar-close-icon: none;
+    font-weight: 600;
+}
+
+QDockWidget::title {
+    background: #ffffff;
+    padding: 6px 10px;
+    border-bottom: 1px solid #d7dae0;
+}
+
+QDockWidget QScrollArea {
+    background: #f4f5f7;
+    border: none;
+}
+
+QGroupBox {
+    background: #ffffff;
+    border: 1px solid #d7dae0;
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 8px 8px 6px 8px;
+    font-weight: 600;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 4px;
+    color: #4a515b;
+}
+
+QGroupBox QLabel {
+    font-weight: 400;
+    color: #3a4048;
+}
+
+QDoubleSpinBox, QSpinBox, QComboBox {
+    background: #ffffff;
+    border: 1px solid #c8ccd3;
+    border-radius: 6px;
+    padding: 3px 6px;
+    min-height: 18px;
+}
+
+QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {
+    border: 1px solid #1fb6a6;
+}
+
+QCheckBox {
+    spacing: 6px;
+}
+
+QPushButton {
+    padding: 5px 12px;
+    border-radius: 6px;
+    background: #eef0f3;
+    color: #1a1d21;
+    border: 1px solid #d7dae0;
+}
+
+QPushButton:hover {
+    background: #1fb6a6;
+    color: #ffffff;
+    border: 1px solid #1fb6a6;
+}
