@@ -1078,10 +1078,12 @@ class EditorModel:
     def _numbers(self) -> list[dict]:
         """Position labels for residue 1, every Nth residue, and the last.
 
-        Placed just OUTSIDE each disk, offset radially away from the whole-
-        structure centroid so the number never sits on top of the drawing.
-        Indices are 0-based; the shown text is 1-based (VARNA convention).
-        Coordinates are ENGINE space (y-up); the view flips y for screen.
+        Placed OUTSIDE the drawing, in the direction of greatest clearance to
+        neighbouring disks so a number never sits on top of a sphere: each label
+        scans candidate directions and takes the one whose position is farthest
+        from any nearby disk centre, biased outward (away from the structure
+        centroid) to break ties. Indices are 0-based; the shown text is 1-based
+        (VARNA convention). Coordinates are ENGINE space (y-up); the view flips y.
         """
         n = len(self._x)
         if n == 0:
@@ -1089,19 +1091,34 @@ class EditorModel:
         cx, cy = self._centroid()
         step = max(1, self._number_interval)
         indices = sorted({0, n - 1} | {i for i in range(n) if (i + 1) % step == 0})
-        offset = self._node_r * 1.9
+        r = self._node_r
+        offset = r * 2.2  # push the label clear of its own + neighbouring disks
+        window = offset + r * 2.0  # only disks this close can collide with a label
         out: list[dict] = []
         for i in indices:
-            dx, dy = self._x[i] - cx, self._y[i] - cy
-            dist = math.hypot(dx, dy) or 1.0
-            out.append(
-                {
-                    "index": i,
-                    "x": self._x[i] + (dx / dist) * offset,
-                    "y": self._y[i] + (dy / dist) * offset,
-                    "text": str(i + 1),
-                }
-            )
+            xi, yi = self._x[i], self._y[i]
+            near = [
+                j
+                for j in range(n)
+                if j != i and abs(self._x[j] - xi) < window and abs(self._y[j] - yi) < window
+            ]
+            ox, oy = xi - cx, yi - cy
+            od = math.hypot(ox, oy) or 1.0
+            ox, oy = ox / od, oy / od  # preferred outward direction
+            best_pos, best_score = (xi + ox * offset, yi + oy * offset), -1.0
+            for k in range(16):
+                a = 2.0 * math.pi * k / 16.0
+                dx, dy = math.cos(a), math.sin(a)
+                px, py = xi + dx * offset, yi + dy * offset
+                clear = min(
+                    (math.hypot(px - self._x[j], py - self._y[j]) for j in near),
+                    default=window,
+                )
+                # clearance dominates; the small outward term only breaks ties.
+                score = clear + r * 0.5 * (dx * ox + dy * oy)
+                if score > best_score:
+                    best_score, best_pos = score, (px, py)
+            out.append({"index": i, "x": best_pos[0], "y": best_pos[1], "text": str(i + 1)})
         return out
 
     # -- per-region styling (visual overrides + highlights) -----------------

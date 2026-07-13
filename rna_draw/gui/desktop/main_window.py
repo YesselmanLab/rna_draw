@@ -189,10 +189,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._mode_group = QtGui.QActionGroup(self)
         self._mode_group.setExclusive(True)
 
-        self._move_act = QtGui.QAction("Move", self)
+        self._move_act = QtGui.QAction("Rotate", self)
         self._move_act.setCheckable(True)
         self._move_act.setChecked(True)
-        self._move_act.setToolTip("Arrange: click a helix, drag its handle to rotate it")
+        self._move_act.setToolTip("Rotate: click a helix, drag its handle to rotate it about its junction")
         self._move_act.triggered.connect(lambda: self._set_mode("move"))
 
         self._select_act = QtGui.QAction("Select", self)
