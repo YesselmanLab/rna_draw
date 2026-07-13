@@ -30,6 +30,12 @@ struct OptimizeSearchState {
   std::vector<double> spaces;
   std::vector<int> sorted;
   Config best_config;
+  /// SPEED lever A3 (`.claude/plans/current-plan-speed.md`): `apply_config`'s
+  /// caller-owned scratch buffer, reused across every `apply_config` call in
+  /// one `optimize_node` run instead of a fresh per-call allocation -- see
+  /// that function's doc comment (`resolve_internal.hpp`) for the exactness
+  /// argument.
+  std::vector<double> apply_config_scratch;
 };
 
 /// Sort `indices` (initialized `0..values_level1.size()-1`) so
@@ -89,7 +95,7 @@ void refresh_alphas_and_maybe_shrink(TreeNode& node, OptimizeSearchState& s,
     s.unpaired_angle = geom::distance_to_angle(cfg.radius, opts.unpaired);
     compute_alphas(s.alphas, cfg, opts.paired);
   } else {
-    apply_config(node, s.best_config, opts);
+    apply_config(node, s.best_config, opts, s.apply_config_scratch);
   }
 
   if (s.min_sorted_index == 0) {
@@ -178,7 +184,7 @@ double optimize_node(TreeNode& node, const std::vector<const TreeNode*>& subtree
     if (config_changed) {
       refresh_alphas_and_maybe_shrink(node, s, subtree, ancestor_list, opts);
     } else {
-      apply_config(node, s.best_config, opts);
+      apply_config(node, s.best_config, opts, s.apply_config_scratch);
     }
 
     const int decrease_index = find_decrease_index(s, kMinMultiple);
@@ -200,7 +206,7 @@ double optimize_node(TreeNode& node, const std::vector<const TreeNode*>& subtree
   }
 
   // Apply the best configuration found so far.
-  apply_config(node, s.best_config, opts);
+  apply_config(node, s.best_config, opts, s.apply_config_scratch);
 
   if (s.best_config.radius < initial_config.radius) {
     // Best radius smaller than the initial radius: log the change. (The
@@ -210,7 +216,7 @@ double optimize_node(TreeNode& node, const std::vector<const TreeNode*>& subtree
     ++state.changes_applied;
   } else {
     // Otherwise revert to the initial state.
-    apply_config(node, initial_config, opts);
+    apply_config(node, initial_config, opts, s.apply_config_scratch);
   }
 
   return cfg.radius / initial_radius;

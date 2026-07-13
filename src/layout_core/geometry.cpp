@@ -61,9 +61,9 @@ double angle_to_distance(double radius, double angle_rad) {
   return 2.0 * radius * std::sin(angle_rad / 2.0);
 }
 
-double epsilon_recognize(double clearance) { return 14.0 * clearance; }
-
-double epsilon_fix(double clearance) { return 19.0 * clearance; }
+// epsilon_recognize/epsilon_fix: `inline`-defined in `geometry.hpp` now (A2,
+// `.claude/plans/current-plan-speed.md`) -- see that declaration's doc
+// comment.
 
 Vec2 vector_from_to(Vec2 from, Vec2 to) { return Vec2{to.x - from.x, to.y - from.y}; }
 
@@ -155,8 +155,8 @@ Circle circumcircle(Vec2 p1, Vec2 p2, Vec2 p3) {
 
   Circle result;
   result.center = Vec2{b_coef / 2.0, c_coef / 2.0};
-  result.radius = std::sqrt(result.center.x * result.center.x +
-                            result.center.y * result.center.y - a_coef);
+  result.radius =
+      std::sqrt(result.center.x * result.center.x + result.center.y * result.center.y - a_coef);
   return result;
 }
 

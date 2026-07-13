@@ -54,8 +54,13 @@ void apply_deltas(TreeNode& node, std::vector<double>& deltas, double target_rad
 bool check_optimize_intersections(const std::vector<const TreeNode*>& subtree,
                                   const std::vector<const TreeNode*>& ancestor_list,
                                   const PuzzlerOptions& opts) {
-  return intersect_node_lists(subtree, subtree, opts.check_exterior, opts.clearance) ||
-         intersect_node_lists(subtree, ancestor_list, opts.check_exterior, opts.clearance);
+  // SPEED lever A1 (`.claude/plans/current-plan-speed.md`): `any_intersection`
+  // (`broad_phase.cpp`) is an EXACT-parity, faster replacement for the
+  // O(|subtree|^2) `intersect_node_lists(subtree, subtree, ...) ||
+  // intersect_node_lists(subtree, ancestor_list, ...)` this function used to
+  // compute directly -- see that function's doc comment for the
+  // conservative-superset correctness argument.
+  return any_intersection(subtree, ancestor_list, opts.check_exterior, opts.clearance);
 }
 
 double shrink_loop_radius(TreeNode& node, const std::vector<const TreeNode*>& subtree,
@@ -118,13 +123,15 @@ void get_spaces(const TreeNode& node, int config_size, double paired_angle, doub
   }
 }
 
-void apply_config(TreeNode& node, const Config& target_config, const PuzzlerOptions& opts) {
+void apply_config(TreeNode& node, const Config& target_config, const PuzzlerOptions& opts,
+                  std::vector<double>& scratch_deltas) {
   const Config& cfg = *node.cfg;  // NOLINT(bugprone-unchecked-optional-access)
-  std::vector<double> deltas(cfg.arcs.size());
+  scratch_deltas.resize(cfg.arcs.size());
   for (std::size_t current_arc = 0; current_arc < cfg.arcs.size(); ++current_arc) {
-    deltas[current_arc] = target_config.arcs[current_arc].angle - cfg.arcs[current_arc].angle;
+    scratch_deltas[current_arc] =
+        target_config.arcs[current_arc].angle - cfg.arcs[current_arc].angle;
   }
-  apply_deltas(node, deltas, target_config.radius, opts);
+  apply_deltas(node, scratch_deltas, target_config.radius, opts);
 }
 
 void compute_alphas(std::vector<double>& alphas, const Config& cfg, double paired_distance) {

@@ -29,9 +29,11 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "rna_layout/batch.hpp"
 #include "rna_layout/config_tree.hpp"
 #include "rna_layout/debug_dump.hpp"
 #include "rna_layout/intersect_tree.hpp"
@@ -259,6 +261,45 @@ CoordVectors plot_coords_puzzler_full(const std::string& structure, bool allow_f
   return {std::move(coords.x), std::move(coords.y)};
 }
 
+/// `(x, y, ok)` per `plot_coords_puzzler_batch` element: `ok = false` marks
+/// a per-element failure (mirrors `rna_layout::BatchResult`; the error
+/// message itself is not marshalled -- `NativePuzzlerEngine`'s Python-side
+/// `EngineError` contract only needs the pass/fail bit, not the C++
+/// exception text) -- SPEED lever B1 (`.claude/plans/current-plan-speed.md`).
+using BatchResultTuple = std::tuple<std::vector<double>, std::vector<double>, bool>;
+
+/// Parallel batch counterpart of `plot_coords_puzzler_full`: same three
+/// resolver levers (`allow_flipping`/`max_config_changes`/`clearance`),
+/// applied uniformly to every element of @p structures, fanned out over
+/// `num_threads` worker threads (`rna_layout::layout_puzzler_batch`,
+/// `batch.hpp`). Releases the GIL around the whole parallel region -- the
+/// C++ work is pure and thread-safe (see that file's header); only this
+/// function's own marshalling touches Python, before/after the release.
+/// PER-ELEMENT failure isolation: a malformed structure's exception is
+/// caught inside `layout_puzzler_batch` and reported as `ok = false` for
+/// that element only, never raised here.
+std::vector<BatchResultTuple> plot_coords_puzzler_batch(const std::vector<std::string>& structures,
+                                                        bool allow_flipping, int max_config_changes,
+                                                        double clearance, int num_threads) {
+  rna_layout::PuzzlerOptions opts;
+  opts.allow_flipping = allow_flipping;
+  opts.max_config_changes = max_config_changes;
+  opts.clearance = clearance;
+
+  std::vector<rna_layout::BatchResult> results;
+  {
+    py::gil_scoped_release release_gil;
+    results = rna_layout::layout_puzzler_batch(structures, opts, num_threads);
+  }
+
+  std::vector<BatchResultTuple> out;
+  out.reserve(results.size());
+  for (rna_layout::BatchResult& result : results) {
+    out.emplace_back(std::move(result.coords.x), std::move(result.coords.y), result.ok);
+  }
+  return out;
+}
+
 /// `rna_layout::ChangeTraceEntry` -> the same field-name `py::dict` shape
 /// the vendored oracle's `vendor_instrument.c` change-trace JSON dump uses
 /// (Milestone A step 7's change-trace parity gate), so
@@ -391,4 +432,15 @@ PYBIND11_MODULE(_layout_core, m) {
         "steps 7-8) for parity testing against the vendored oracle's "
         "dump_change_trace; list[dict] of (node_id, type, deltas, "
         "accepted).");
+
+  m.def("plot_coords_puzzler_batch", &plot_coords_puzzler_batch, py::arg("structures"),
+        py::arg("allow_flipping") = false, py::arg("max_config_changes") = 0,
+        py::arg("clearance") = 1.0, py::arg("num_threads") = 0,
+        "Parallel batch counterpart of plot_coords_puzzler_full (SPEED lever "
+        "B1): lays out every structure in `structures` with the same three "
+        "resolver levers, fanned out over a std::thread pool (num_threads "
+        "<= 0 uses hardware_concurrency()), GIL released around the whole "
+        "parallel region. Returns one (x, y, ok) tuple per input structure, "
+        "same order; ok=False marks a per-element failure (e.g. a malformed "
+        "structure) without aborting the rest of the batch.");
 }

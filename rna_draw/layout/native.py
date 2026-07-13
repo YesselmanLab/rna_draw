@@ -138,5 +138,51 @@ class NativePuzzlerEngine:
             raise EngineError(f"{self.name} failed on {secstruct!r}") from exc
         return rescale_coords(x, y, self._params.PRIMARY_SPACE)
 
+    def layout_batch(
+        self, secstructs: list[str], num_threads: int = 0
+    ) -> list[tuple[list[float], list[float]] | None]:
+        """Lay out many structures in parallel (SPEED lever B1, `.claude/plans/
+        current-plan-speed.md`): a GIL-released `std::thread` pool over
+        `_layout_core.plot_coords_puzzler_batch`, for QC-scale (~1M
+        structure) corpora where the per-call Python/pybind11 overhead of
+        looping `layout()` would itself dominate.
+
+        Mirrors `layout()`'s guards (empty/length-1/pseudoknot) per element,
+        but never raises for a single bad element -- each result is `None`
+        instead (pseudoknot, or the underlying C++ call failed), so one
+        malformed structure never aborts the whole batch. Order-preserving:
+        `results[i]` corresponds to `secstructs[i]`.
+
+        Args:
+            secstructs: Dot-bracket secondary structures, in any order.
+            num_threads: Worker thread count; `<= 0` uses
+                `std::thread::hardware_concurrency()`.
+
+        Returns:
+            One `(x, y)` per input (rescaled like `layout()`'s single-item
+            result), or `None` for a pseudoknot or an engine failure.
+        """
+        results: list[tuple[list[float], list[float]] | None] = [None] * len(secstructs)
+        batch_indices: list[int] = []
+        batch_structs: list[str] = []
+
+        for i, secstruct in enumerate(secstructs):
+            n = len(secstruct)
+            if n == 0:
+                results[i] = ([], [])
+            elif n < 2:
+                results[i] = ([0.0] * n, [0.0] * n)
+            elif is_pseudoknot_free(secstruct):
+                batch_indices.append(i)
+                batch_structs.append(secstruct)
+            # else: leave `None` -- mirrors `layout()`'s EngineUnavailableError.
+
+        if batch_structs:
+            raw = _layout_core.plot_coords_puzzler_batch(batch_structs, False, 0, 1.0, num_threads)
+            for idx, (x, y, ok) in zip(batch_indices, raw):
+                if ok:
+                    results[idx] = rescale_coords(x, y, self._params.PRIMARY_SPACE)
+        return results
+
 
 __all__ = ["NativePuzzlerEngine", "NativeTurtleEngine"]

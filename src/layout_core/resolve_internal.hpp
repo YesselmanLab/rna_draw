@@ -397,8 +397,19 @@ void get_spaces(const TreeNode& node, int config_size, double paired_angle, doub
  * as the new-radius sentinel), skipping the box rebuild entirely if nothing
  * would actually change. Ported from `applyConfig`/`applyDeltas`
  * (`optimize.inc:362,340`).
+ *
+ * @param scratch_deltas Caller-owned scratch buffer for the per-arc delta
+ *     computation -- resized to @p node's own `Config::arcs.size()` and
+ *     FULLY OVERWRITTEN before use every call (SPEED lever A3, `.claude/
+ *     plans/current-plan-speed.md`: `optimize_node`'s `run_nr_max = 100 *
+ *     config_size`-iteration loop calls this repeatedly; reusing one
+ *     `OptimizeSearchState`-owned buffer across those calls avoids a fresh
+ *     heap allocation every time -- EXACT, since every element is
+ *     unconditionally rewritten by this function's own loop below before
+ *     `apply_deltas` ever reads it).
  */
-void apply_config(TreeNode& node, const Config& target_config, const PuzzlerOptions& opts);
+void apply_config(TreeNode& node, const Config& target_config, const PuzzlerOptions& opts,
+                  std::vector<double>& scratch_deltas);
 
 /**
  * The current angle between two unpaired bases, per arc of @p cfg, at

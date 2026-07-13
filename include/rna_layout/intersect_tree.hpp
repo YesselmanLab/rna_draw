@@ -194,6 +194,39 @@ struct NodeIntersection {
                                         const std::vector<const TreeNode*>& list2,
                                         bool check_exterior_intersections, double clearance);
 
+/**
+ * `check_optimize_intersections`'s (`optimize.cpp:54`) EXACT-parity, faster
+ * replacement for `intersect_node_lists(subtree, subtree, ...) ||
+ * intersect_node_lists(subtree, ancestor_list, ...)` -- SPEED lever A1,
+ * `.claude/plans/current-plan-speed.md`. Implemented in `broad_phase.cpp`.
+ *
+ * MECHANISM: for `subtree.size() + ancestor_list.size()` above a small
+ * brute-force threshold, this builds a uniform-grid broad-phase index over
+ * every non-exterior node's `Aabb`, expanded by a per-call, per-node
+ * CONSERVATIVE upper bound on `intersect_nodes_bounding_boxes`'s
+ * (`intersect_tree.cpp:20`) `extra_distance` (`epsilon_recognize(clearance)
+ * + max_bulge_dist`, where `max_bulge_dist` is the largest `StemBox::
+ * bulge_dist` among every node this call considers). Only pairs whose
+ * expanded boxes overlap -- a PROVABLE SUPERSET of every pair
+ * `intersect_nodes_bounding_boxes` would itself accept -- are tested with
+ * the exact, unmodified `intersect_node_node`; ancestor-vs-ancestor pairs
+ * (never tested by the original two `intersect_node_lists` calls) are never
+ * generated. The candidate set differs from the brute-force O(m^2) scan,
+ * but the OR-over-candidate-pairs boolean it computes does not: every
+ * non-candidate pair is provably `none`, so the returned boolean -- and
+ * therefore every coordinate downstream of it -- is BIT-IDENTICAL. Below
+ * the threshold, this literally calls `intersect_node_lists` (the original,
+ * unmodified function), so the small-subtree case is trivially exact too.
+ *
+ * @param subtree `optimize_tree`'s collected subtree-node list.
+ * @param ancestor_list `optimize_tree`'s collected ancestor-chain list.
+ * @param check_exterior_intersections `PuzzlerOptions::check_exterior`.
+ * @param clearance `PuzzlerOptions::clearance`.
+ */
+[[nodiscard]] bool any_intersection(const std::vector<const TreeNode*>& subtree,
+                                    const std::vector<const TreeNode*>& ancestor_list,
+                                    bool check_exterior_intersections, double clearance);
+
 /*=============================================================================
  *  Detection set (parity-only; no vendored counterpart -- see file header)
  *============================================================================*/

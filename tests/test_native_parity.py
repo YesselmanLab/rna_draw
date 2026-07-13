@@ -1159,3 +1159,42 @@ class TestBroadSampleParity:
             f"\nbroad-sample turtle parity: n={len(structures)}, "
             f"max_diff={max(diffs):.3e}, mean_diff={sum(diffs) / len(diffs):.3e}"
         )
+
+
+class TestBatchDeterminism:
+    """SPEED lever B1 (`.claude/plans/current-plan-speed.md`): the parallel
+    `plot_coords_puzzler_batch` must be BIT-IDENTICAL to the serial
+    `plot_coords_puzzler_full` path, for every thread count -- `layout_puzzler`
+    is a pure function of its arguments (no shared mutable state; see
+    `batch.hpp`'s file header), so parallelism must never change a single
+    structure's own output. Does not need the vendored oracle (a native-vs-
+    native check), but lives here per the plan's designated home for this
+    case.
+    """
+
+    _THREAD_COUNTS = (1, 2, 4, 8)
+
+    def test_batch_matches_serial_over_hard_set_sample(self) -> None:
+        structures = _full_safe_hard_set_structures()[:60]
+        assert len(structures) > 0, "expected a non-empty hard-set sample"
+
+        serial = [native_layout.plot_coords_puzzler_full(s, False, 0, 1.0) for s in structures]
+        for num_threads in self._THREAD_COUNTS:
+            batch = native_layout.plot_coords_puzzler_batch(structures, False, 0, 1.0, num_threads)
+            assert len(batch) == len(structures)
+            for i, (x, y, ok) in enumerate(batch):
+                assert ok, f"threads={num_threads}, index={i}: unexpected batch failure"
+                assert (x, y) == serial[i], f"threads={num_threads}, index={i}: batch != serial"
+
+    def test_malformed_element_is_isolated_not_fatal(self) -> None:
+        structures = _full_safe_hard_set_structures()[:10]
+        malformed = "(()"  # unbalanced: layout_puzzler raises std::invalid_argument
+        mixed = [*structures[:3], malformed, *structures[3:]]
+
+        batch = native_layout.plot_coords_puzzler_batch(mixed, False, 0, 1.0, 4)
+        assert len(batch) == len(mixed)
+
+        ok_flags = [ok for _x, _y, ok in batch]
+        assert ok_flags == [True, True, True, False, *([True] * (len(structures) - 3))], (
+            "expected exactly the malformed element to fail, every other element to survive"
+        )

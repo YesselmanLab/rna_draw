@@ -30,3 +30,10 @@ def dump_change_trace(
     max_config_changes: int = 25000,
     check_ancestor: bool = False,
 ) -> list[dict[str, object]]: ...
+def plot_coords_puzzler_batch(
+    structures: list[str],
+    allow_flipping: bool = False,
+    max_config_changes: int = 0,
+    clearance: float = 1.0,
+    num_threads: int = 0,
+) -> list[tuple[list[float], list[float], bool]]: ...

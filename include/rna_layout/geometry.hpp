@@ -136,19 +136,30 @@ inline constexpr double kMinNegativeAngle = -0.0000000001;
  * `epsilonRecognize`, `definitions.inc:59`), as a pure function of
  * @p clearance rather than a process global.
  *
+ * SPEED (A2, `.claude/plans/current-plan-speed.md`): defined `inline` here
+ * (not in `geometry.cpp`) so every hot-path caller across TUs
+ * (`intersect_nodes_bounding_boxes`/`intersect_loop_loop`/`intersect_stem_loop`/
+ * etc., `intersect_boxes.cpp`/`intersect_tree.cpp`) can fold the trivial
+ * `14.0 * clearance` multiply in at the call site without relying on
+ * whole-program/LTO inlining -- profiling found this a real, measurable
+ * per-call cost (10.8% self-time) purely from the un-inlined cross-TU call,
+ * not the arithmetic itself. EXACT: identical expression, no reordering, no
+ * new rounding -- see that plan section.
+ *
  * @param clearance `PuzzlerOptions::clearance`; `1.0` reproduces the
  *     vendored stock constant (14.0).
  */
-[[nodiscard]] double epsilon_recognize(double clearance);
+[[nodiscard]] inline double epsilon_recognize(double clearance) { return 14.0 * clearance; }
 
 /**
  * The rna_draw-only intersection-resolution target gap (vendored
  * `epsilonFix`, `definitions.inc:60`), as a pure function of @p clearance.
+ * `inline` for the same reason as `epsilon_recognize` above.
  *
  * @param clearance `PuzzlerOptions::clearance`; `1.0` reproduces the
  *     vendored stock constant (19.0).
  */
-[[nodiscard]] double epsilon_fix(double clearance);
+[[nodiscard]] inline double epsilon_fix(double clearance) { return 19.0 * clearance; }
 
 /**
  * The vector from @p from to @p to. Mirrors `vector` (`vector_math.inc:753`);
