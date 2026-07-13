@@ -13,7 +13,7 @@ content. Callers put a layout of controls inside via `set_content_layout`
 
 from __future__ import annotations
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 
 class CollapsibleSection(QtWidgets.QWidget):
@@ -31,7 +31,9 @@ class CollapsibleSection(QtWidgets.QWidget):
         self._title = title
 
         self._button = QtWidgets.QToolButton()
-        self._button.setText(title)
+        self._button.setObjectName("sectionHeader")
+        # Escape '&' so it shows literally instead of underlining a mnemonic.
+        self._button.setText(title.replace("&", "&&"))
         self._button.setCheckable(True)
         self._button.setChecked(expanded)
         self._button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -41,9 +43,15 @@ class CollapsibleSection(QtWidgets.QWidget):
         self._button.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
         )
-        self._button.setStyleSheet(
-            "QToolButton { border: none; font-weight: 600; padding: 4px 2px; text-align: left; }"
-        )
+        # Uppercase, letter-spaced, semibold header font -- Qt QSS can't do
+        # text-transform/letter-spacing, so it's set on the font here; the
+        # muted color + flat look come from the themed `QToolButton#sectionHeader`.
+        font = QtGui.QFont(self._button.font())
+        font.setCapitalization(QtGui.QFont.Capitalization.AllUppercase)
+        font.setLetterSpacing(QtGui.QFont.SpacingType.PercentageSpacing, 108.0)
+        font.setPointSizeF(font.pointSizeF() * 0.86)
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        self._button.setFont(font)
         self._button.toggled.connect(self._on_toggled)
 
         self._content = QtWidgets.QWidget()

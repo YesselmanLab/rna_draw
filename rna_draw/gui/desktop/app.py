@@ -8,7 +8,6 @@ entry point that shows the window and runs the event loop.
 
 from __future__ import annotations
 
-import pathlib
 import sys
 
 from PySide6 import QtWidgets
@@ -16,16 +15,6 @@ from PySide6 import QtWidgets
 from rna_draw.gui.model import DEMO_SS
 
 from .main_window import MainWindow
-
-_THEME = pathlib.Path(__file__).parent / "theme.qss"
-
-
-def _apply_theme(app: QtWidgets.QApplication) -> None:
-    """Apply the bundled QSS theme, ignoring a missing/unreadable file."""
-    try:
-        app.setStyleSheet(_THEME.read_text(encoding="utf-8"))
-    except OSError:
-        pass
 
 
 def build_app(
@@ -46,8 +35,10 @@ def build_app(
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication(argv if argv is not None else sys.argv)
-    _apply_theme(app)
     window = MainWindow(ss=ss, seq=seq)
+    # Default to the polished DARK theme (the mockup's default); this also
+    # applies the QSS to the QApplication and pushes canvas colors to the view.
+    window.set_theme("dark")
     return app, window
 
 

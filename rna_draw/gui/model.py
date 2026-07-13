@@ -19,6 +19,7 @@ view flips y for screen.
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass
 
@@ -264,6 +265,123 @@ class EditorModel:
         # round-trip through the Document's `extra` band.
         self._color_overrides: dict[int, str] = {}
         self._highlights: list[dict] = []
+        # Undo/redo history: each entry is a full editable-state snapshot from
+        # `_capture_state`. `push_undo` is called by the frontend ONCE per user
+        # gesture (a whole drag = one entry). Bounded so a long session cannot
+        # grow the history without limit; the oldest entry is dropped past cap.
+        self._undo: list[dict] = []
+        self._redo: list[dict] = []
+        self._undo_cap: int = 100
+
+    # -- undo / redo (full-state snapshots) ---------------------------------
+
+    def _capture_state(self) -> dict:
+        """Snapshot the whole editable model state as an independent copy.
+
+        Deep/independent copies of every mutable field so a later edit cannot
+        corrupt a stored snapshot (selection is intentionally NOT captured --
+        selection changes are not undoable, only STATE changes are).
+        """
+        return {
+            "x": list(self._x),
+            "y": list(self._y),
+            "node_r": self._node_r,
+            "pair_map": list(self._pair_map),
+            "ss": self._ss,
+            "seq": self._seq,
+            "preset": copy.deepcopy(self._preset),
+            "color_overrides": dict(self._color_overrides),
+            "highlights": [
+                {"indices": list(h["indices"]), "color": h["color"]} for h in self._highlights
+            ],
+            "crossing_pairs": copy.deepcopy(self._crossing_pairs),
+            "crossing_lines": copy.deepcopy(self._crossing_lines),
+            "engine_name": self._engine_name,
+        }
+
+    def _restore_state(self, state: dict) -> None:
+        """Restore a `_capture_state` snapshot, rebuild derived data, re-check.
+
+        Rebuilds the structure tree (pair_map/seq may have changed), recomputes
+        the per-residue fills, clears the (non-undoable) selection, and RE-RUNS
+        the never-silent native checker so the restored layout's flagged /
+        overlap status is honest -- a restored pose is never silently clean.
+        """
+        self._x = list(state["x"])
+        self._y = list(state["y"])
+        self._node_r = float(state["node_r"])
+        self._pair_map = list(state["pair_map"])
+        self._ss = state["ss"]
+        self._seq = state["seq"]
+        self._preset = copy.deepcopy(state["preset"])
+        self._color_overrides = dict(state["color_overrides"])
+        self._highlights = [
+            {"indices": list(h["indices"]), "color": h["color"]} for h in state["highlights"]
+        ]
+        self._crossing_pairs = copy.deepcopy(state["crossing_pairs"])
+        self._crossing_lines = copy.deepcopy(state["crossing_lines"])
+        self._engine_name = state["engine_name"]
+        self._clear_selection()
+        self._tree = build_structure_tree(self._pair_map)
+        self._recompute_colors()
+        # NEVER-SILENT: re-validate the restored coords with the real native
+        # kernel at the layout's own gate radius; flag reflects reality.
+        if len(self._x) >= 2:
+            count = check_overlaps_native(
+                self._x, self._y, self._pair_map, self._scaled_params()
+            )
+        else:
+            count = 0
+        self._flagged = count > 0
+        self._overlaps = self._overlap_indices() if self._flagged else []
+
+    def push_undo(self) -> None:
+        """Record the current state as an undo point and clear the redo stack.
+
+        The frontend calls this ONCE at the start of each user gesture, BEFORE
+        the first mutation (a whole drag coalesces to a single entry because
+        the per-frame mutations do not push). Any new edit invalidates the redo
+        stack. History is capped; the oldest entry is dropped past the cap.
+        """
+        self._undo.append(self._capture_state())
+        if len(self._undo) > self._undo_cap:
+            self._undo.pop(0)
+        self._redo.clear()
+
+    def can_undo(self) -> bool:
+        """Whether there is at least one state to undo to."""
+        return bool(self._undo)
+
+    def can_redo(self) -> bool:
+        """Whether there is at least one undone state to redo to."""
+        return bool(self._redo)
+
+    def undo(self) -> bool:
+        """Restore the previous state; push the current state onto redo.
+
+        Safe no-op (returns False) when the undo stack is empty.
+        """
+        if not self._undo:
+            return False
+        self._redo.append(self._capture_state())
+        self._restore_state(self._undo.pop())
+        return True
+
+    def redo(self) -> bool:
+        """Re-apply the most recently undone state; push current onto undo.
+
+        Safe no-op (returns False) when the redo stack is empty.
+        """
+        if not self._redo:
+            return False
+        self._undo.append(self._capture_state())
+        self._restore_state(self._redo.pop())
+        return True
+
+    def reset_history(self) -> None:
+        """Discard all undo/redo history (e.g. when a new document is loaded)."""
+        self._undo.clear()
+        self._redo.clear()
 
     # -- construction -------------------------------------------------------
 

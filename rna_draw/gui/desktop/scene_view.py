@@ -24,6 +24,8 @@ from rna_draw.gui.model import EditorModel
 
 from .handles import RotateHandle
 from .options_panel import EditorOptions
+from .theme import SELECT_TEAL as SELECT_TEAL_HEX
+from .theme import canvas_colors
 
 # Palette (works acceptably on light or dark canvas).
 BACKBONE = QtGui.QColor("#8a8f98")
@@ -243,17 +245,31 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         self._pivot: tuple[float, float] | None = None  # engine-space selection pivot
         self._rotating = False
         self._last_angle = 0.0
+        # Undo coalescing: a whole rotate/residue drag must record exactly ONE
+        # undo entry. These flags mark whether `push_undo` has already fired for
+        # the in-progress gesture, so only the FIRST mutating move pushes (the
+        # snapshot is thus the pre-drag pose) and per-frame moves do not.
+        self._rotate_pushed = False
+        self._residue_pushed = False
         # Residue free-form drag (Select mode, residue granularity): the nt
         # being dragged, or None when no residue drag is in progress.
         self._drag_residue: int | None = None
         self._panning = False
         self._pan_start = QtCore.QPoint()
-        # Box / marquee selection (Select mode, drag on empty space): a live
-        # rubber-band rectangle in VIEWPORT coords, its origin, and whether the
-        # drag adds to (Shift) rather than replaces the current selection.
-        self._band: QtWidgets.QRubberBand | None = None
-        self._band_origin = QtCore.QPoint()
-        self._band_additive = False
+        # Box / marquee selection (Select mode, drag on empty space): a live,
+        # clearly-visible teal rectangle drawn straight into the scene (a
+        # QGraphicsRectItem styles reliably across platforms where a
+        # QRubberBand does not), its scene-space origin, and whether the drag
+        # adds to (Shift) rather than replaces the current selection.
+        self._sel_rect: QtWidgets.QGraphicsRectItem | None = None
+        self._box_origin_scene = QtCore.QPointF()
+        self._box_additive = False
+        # Themed canvas base + dot-grid colors (pushed in by `set_theme`).
+        self._canvas_color = QtGui.QColor(canvas_colors("dark")[0])
+        self._grid_color = QtGui.QColor(canvas_colors("dark")[1])
+        # A user-picked canvas background (from the style panel) overrides the
+        # theme canvas color; None means "use the theme".
+        self._user_bg: QtGui.QColor | None = None
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         self.setDragMode(QtWidgets.QGraphicsView.DragMode.NoDrag)
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -305,10 +321,48 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
         self._apply_background(self._model.scene().get("style", {}))
         self._rebuild()
 
+    def set_theme(self, name: str) -> None:
+        """Adopt the active theme's canvas base + dot-grid colors and repaint."""
+        canvas, grid = canvas_colors(name)
+        self._canvas_color = QtGui.QColor(canvas)
+        self._grid_color = QtGui.QColor(grid)
+        if self.viewport() is not None:
+            self.viewport().update()
+
     def _apply_background(self, style: dict) -> None:
+        """Record any explicit user canvas color; the theme paints the default.
+
+        A default white (`#ffffff`) background means "no override" -- the
+        canvas then follows the active theme (near-black in dark). Anything
+        else is a deliberate user choice and is honored as the canvas base.
+        """
         bg = QtGui.QColor(style.get("background", "#ffffff"))
-        if bg.isValid():
-            self.setBackgroundBrush(QtGui.QBrush(bg))
+        self._user_bg = bg if (bg.isValid() and bg.name().lower() != "#ffffff") else None
+        if self.viewport() is not None:
+            self.viewport().update()
+
+    def drawBackground(self, painter: QtGui.QPainter, rect: QtCore.QRectF) -> None:
+        """Paint the themed canvas + a subtle dot-grid behind the scene.
+
+        Base fill is the user's canvas color if set, else the theme canvas
+        color; small dots on an ~18-unit lattice give the mockup's texture.
+        Purely decorative -- nucleotide/pair items are drawn on top unchanged.
+        """
+        base = self._user_bg or self._canvas_color
+        painter.fillRect(rect, base)
+        spacing = 18.0
+        r = 0.9
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(QtGui.QBrush(self._grid_color))
+        left = spacing * math.floor(rect.left() / spacing)
+        top = spacing * math.floor(rect.top() / spacing)
+        y = top
+        while y <= rect.bottom():
+            x = left
+            while x <= rect.right():
+                painter.drawEllipse(QtCore.QPointF(x, y), r, r)
+                x += spacing
+            y += spacing
 
     def _rebuild(self) -> None:
         if self._model is None:
@@ -396,10 +450,52 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             self._clear_handle()
             if sel.kind == "residue" and sel.indices:
                 self._drag_residue = sel.indices[0]
+                self._residue_pushed = False
             self._rebuild()
         self.selectionChanged.emit(
             (sel.indices[0], sel.indices[-1]) if sel.indices else None
         )
+
+    def _box_begin(self, view_pt: QtCore.QPoint, additive: bool = False) -> None:
+        """Start a visible marquee at `view_pt` (viewport coords).
+
+        Draws a teal-tinted, teal-bordered `QGraphicsRectItem` into the scene
+        so the selection box is clearly visible while dragging (the user asked
+        to "visually see the selection box"). Factored out so a headless test
+        can drive begin/update/finish without a real mouse.
+        """
+        self._box_origin_scene = self.mapToScene(view_pt)
+        self._box_additive = bool(additive)
+        teal = QtGui.QColor(SELECT_TEAL_HEX)
+        pen = QtGui.QPen(teal, 1.5, QtCore.Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)  # constant 1.5px border at any zoom
+        fill = QtGui.QColor(teal)
+        fill.setAlpha(48)  # translucent teal wash
+        rect_item = QtWidgets.QGraphicsRectItem(
+            QtCore.QRectF(self._box_origin_scene, self._box_origin_scene)
+        )
+        rect_item.setPen(pen)
+        rect_item.setBrush(QtGui.QBrush(fill))
+        rect_item.setZValue(900)  # above nts, below the rotate handle (1000)
+        self._scene.addItem(rect_item)
+        self._sel_rect = rect_item
+
+    def _box_update(self, view_pt: QtCore.QPoint) -> None:
+        """Grow the marquee to the current pointer position (viewport coords)."""
+        if self._sel_rect is None:
+            return
+        cur = self.mapToScene(view_pt)
+        self._sel_rect.setRect(QtCore.QRectF(self._box_origin_scene, cur).normalized())
+
+    def _box_finish(self) -> None:
+        """Commit the marquee: select enclosed nts, then remove the box item."""
+        if self._sel_rect is None:
+            return
+        scene_rect = self._sel_rect.rect().normalized()
+        additive = self._box_additive
+        self._scene.removeItem(self._sel_rect)
+        self._sel_rect = None
+        self._finish_box(scene_rect, additive)
 
     def _finish_box(self, scene_rect: QtCore.QRectF, additive: bool = False) -> None:
         """Select every nucleotide whose center lies inside ``scene_rect``.
@@ -444,6 +540,7 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
                 grab = self._handle.knob_radius() * 1.8
                 if math.hypot(spos.x() - knob.x(), spos.y() - knob.y()) <= grab:
                     self._rotating = True
+                    self._rotate_pushed = False
                     self._last_angle = self._angle_from_pivot(spos)
                     self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
                     event.accept()
@@ -456,15 +553,10 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
                 return
             # 3) empty space: Select mode -> start a box/marquee; else deselect
             if self._options.mode == "select":
-                self._band_origin = event.position().toPoint()
-                self._band_additive = bool(
+                additive = bool(
                     event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
                 )
-                self._band = QtWidgets.QRubberBand(
-                    QtWidgets.QRubberBand.Shape.Rectangle, self.viewport()
-                )
-                self._band.setGeometry(QtCore.QRect(self._band_origin, QtCore.QSize()))
-                self._band.show()
+                self._box_begin(event.position().toPoint(), additive)
                 event.accept()
                 return
             self._model.deselect()
@@ -486,9 +578,8 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             vbar.setValue(vbar.value() - delta.y())
             event.accept()
             return
-        if self._band is not None and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
-            rect = QtCore.QRect(self._band_origin, event.position().toPoint()).normalized()
-            self._band.setGeometry(rect)
+        if self._sel_rect is not None and event.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            self._box_update(event.position().toPoint())
             event.accept()
             return
         if (
@@ -497,6 +588,11 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             and event.buttons() & QtCore.Qt.MouseButton.LeftButton
         ):
             spos = self.mapToScene(event.position().toPoint())
+            # Coalesce the whole residue drag into ONE undo entry: push the
+            # pre-drag pose on the first mutating move only.
+            if not self._residue_pushed:
+                self._model.push_undo()
+                self._residue_pushed = True
             # scene -> engine: engine y is up, scene y is down.
             result = self._model.move_residue(self._drag_residue, spos.x(), -spos.y())
             self._rebuild()
@@ -505,6 +601,11 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             return
         if self._rotating and self._model is not None and self._handle is not None:
             spos = self.mapToScene(event.position().toPoint())
+            # Coalesce the whole rotate drag into ONE undo entry: push the
+            # pre-rotate pose on the first mutating move only.
+            if not self._rotate_pushed:
+                self._model.push_undo()
+                self._rotate_pushed = True
             cur = self._angle_from_pivot(spos)
             # scene y is flipped vs engine y, so an engine-CCW rotation is a
             # scene-CW one: negate the scene-space delta to keep the visual
@@ -525,14 +626,8 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
             event.accept()
             return
-        if self._band is not None:
-            rect = self._band.geometry()
-            self._band.hide()
-            self._band = None
-            top_left = self.mapToScene(rect.topLeft())
-            bottom_right = self.mapToScene(rect.bottomRight())
-            scene_rect = QtCore.QRectF(top_left, bottom_right).normalized()
-            self._finish_box(scene_rect, self._band_additive)
+        if self._sel_rect is not None:
+            self._box_finish()
             event.accept()
             return
         if self._rotating:
@@ -544,7 +639,9 @@ class RnaGraphicsView(QtWidgets.QGraphicsView):
             event.accept()
             return
         if self._drag_residue is not None and event.button() == QtCore.Qt.MouseButton.LeftButton:
-            # Residue drag settled; keep it selected for a subsequent drag.
+            # Residue drag settled; keep it selected for a subsequent drag, but
+            # arm a fresh undo entry for that next drag.
+            self._residue_pushed = False
             self._rebuild()
             event.accept()
             return

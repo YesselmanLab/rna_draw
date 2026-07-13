@@ -23,6 +23,7 @@ from .collapsible import CollapsibleSection
 from .options_panel import OptionsPanel
 from .scene_view import RnaGraphicsView
 from .style_panel import ColorButton, StylePanel
+from .theme import qss_for
 
 HINT = "Click a helix, then drag its orange handle to rotate it about its junction."
 
@@ -50,6 +51,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # In-memory version-history snapshots (each a full `Document`), also
         # persisted into a saved file's `extra["versions"]`.
         self._versions: list[Document] = []
+        # Reentrancy guard: while the window is syncing panels to a restored
+        # model (undo/redo, document load), `load_preset` re-emits
+        # `visualChanged` -- this suppresses the style-undo push so a refresh
+        # never mangles the undo history.
+        self._syncing = False
+        # Active chrome theme ("dark" default -- the mockup's default). Applied
+        # via `set_theme`, which also pushes canvas/grid colors to the view.
+        self._theme_name = "dark"
 
         self._view = RnaGraphicsView()
         self.setCentralWidget(self._view)
@@ -58,6 +67,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._build_toolbar()
         self._build_file_menu()
+        self._build_edit_menu()
         self._build_left_panel()
         self._build_mode_toolbar()
         self._build_statusbar()
@@ -74,6 +84,7 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.setMovable(False)
         bar.setIconSize(QtCore.QSize(16, 16))
         self.addToolBar(bar)
+        self._toolbar = bar
 
         open_act = QtGui.QAction("Open", self)
         open_act.setToolTip(
@@ -101,6 +112,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._toggle_panel_act.toggled.connect(self._toggle_panel_dock)
         bar.addAction(self._toggle_panel_act)
 
+        # Live dark/light theme toggle (checked == light). Default is dark.
+        self._theme_act = QtGui.QAction("Light mode", self)
+        self._theme_act.setToolTip("Switch between the dark and light theme")
+        self._theme_act.setCheckable(True)
+        self._theme_act.setChecked(False)
+        self._theme_act.toggled.connect(self._toggle_theme)
+        bar.addAction(self._theme_act)
+
     def _build_file_menu(self) -> None:
         """The File menu: Open / Save / Save As over the `.rnadoc` document layer."""
         menu = self.menuBar().addMenu("&File")
@@ -121,6 +140,35 @@ class MainWindow(QtWidgets.QMainWindow):
         save_as_act.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
         save_as_act.triggered.connect(self._save_document_as)
         menu.addAction(save_as_act)
+
+    def _build_edit_menu(self) -> None:
+        """The Edit menu: Undo / Redo over the model's full-state history.
+
+        Undo is Cmd+Z (Mac) / Ctrl+Z (Windows); Redo is Cmd+Shift+Z / Ctrl+Y,
+        both via the platform-standard key sequences. The actions are also put
+        on the main toolbar and are enabled/disabled from `can_undo`/`can_redo`
+        (refreshed after every edit and every undo/redo).
+        """
+        menu = self.menuBar().addMenu("&Edit")
+
+        self._undo_act = QtGui.QAction("&Undo", self)
+        self._undo_act.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
+        self._undo_act.setToolTip("Undo the last change")
+        self._undo_act.triggered.connect(self._on_undo)
+        self._undo_act.setEnabled(False)
+        menu.addAction(self._undo_act)
+
+        self._redo_act = QtGui.QAction("&Redo", self)
+        self._redo_act.setShortcut(QtGui.QKeySequence.StandardKey.Redo)
+        self._redo_act.setToolTip("Redo the last undone change")
+        self._redo_act.triggered.connect(self._on_redo)
+        self._redo_act.setEnabled(False)
+        menu.addAction(self._redo_act)
+
+        # Mirror onto the main toolbar (optional convenience).
+        self._toolbar.addSeparator()
+        self._toolbar.addAction(self._undo_act)
+        self._toolbar.addAction(self._redo_act)
 
     def _build_mode_toolbar(self) -> None:
         """The interaction-mode bar (Move / Select / Edit) + granularity combo.
@@ -210,6 +258,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._view_menu = self.menuBar().addMenu("&View")
         self._view_menu.addAction(self._dock.toggleViewAction())
+        self._view_menu.addSeparator()
+        self._view_menu.addAction(self._theme_act)
 
     def _build_structure_section(self) -> None:
         """VARNA-style Structure + Sequence on separate lines + a Draw button."""
@@ -362,29 +412,37 @@ class MainWindow(QtWidgets.QMainWindow):
         """Apply a per-nt color override to the current selection (visual)."""
         if self._model is None:
             return
+        self._model.push_undo()
         self._model.apply_color_to_selection(self._sel_color_btn.color())
         self._view.restyle()
+        self._sync_edit_actions()
 
     def _on_highlight_selection(self) -> None:
         """Add a persistent highlight halo over the current selection (visual)."""
         if self._model is None:
             return
+        self._model.push_undo()
         self._model.highlight_selection(self._sel_highlight_btn.color())
         self._view.restyle()
+        self._sync_edit_actions()
 
     def _on_clear_color(self) -> None:
         """Drop color overrides on the current selection (revert to scheme)."""
         if self._model is None:
             return
+        self._model.push_undo()
         self._model.clear_color_on_selection()
         self._view.restyle()
+        self._sync_edit_actions()
 
     def _on_clear_highlights(self) -> None:
         """Remove every highlight halo (visual)."""
         if self._model is None:
             return
+        self._model.push_undo()
         self._model.clear_highlights()
         self._view.restyle()
+        self._sync_edit_actions()
 
     def _build_versions_section(self) -> None:
         """The 'Versions' section: snapshot the current state + restore snapshots.
@@ -398,7 +456,8 @@ class MainWindow(QtWidgets.QMainWindow):
         col.setContentsMargins(6, 4, 6, 8)
         col.setSpacing(6)
 
-        snap_btn = QtWidgets.QPushButton("Snapshot current")
+        snap_btn = QtWidgets.QPushButton("＋ Snapshot current")
+        snap_btn.setObjectName("primaryButton")  # teal-filled primary action
         snap_btn.setToolTip("Capture the current drawing as a version you can jump back to")
         snap_btn.clicked.connect(self._take_snapshot)
         col.addWidget(snap_btn)
@@ -417,6 +476,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _toggle_panel_dock(self, on: bool) -> None:
         self._dock.setVisible(on)
+
+    # -- theming ------------------------------------------------------------
+
+    def set_theme(self, name: str) -> None:
+        """Apply the dark or light chrome theme live (default is dark).
+
+        Swaps the QApplication stylesheet, pushes the theme's canvas + dot-grid
+        colors into the view, and re-syncs the toggle action. Purely visual --
+        no editor behavior, geometry, or overlap logic is touched.
+        """
+        name = "light" if str(name).lower() == "light" else "dark"
+        self._theme_name = name
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(qss_for(name))
+        self._view.set_theme(name)
+        # Keep the toggle in sync without re-triggering `_toggle_theme`.
+        if hasattr(self, "_theme_act"):
+            self._theme_act.blockSignals(True)
+            self._theme_act.setChecked(name == "light")
+            self._theme_act.setText("Light mode" if name == "dark" else "Dark mode")
+            self._theme_act.blockSignals(False)
+
+    def current_theme(self) -> str:
+        """The active chrome theme name (``"dark"`` or ``"light"``)."""
+        return self._theme_name
+
+    def _toggle_theme(self, to_light: bool) -> None:
+        """Toolbar/menu toggle handler: checked == light theme."""
+        self.set_theme("light" if to_light else "dark")
 
     def _on_options_changed(self) -> None:
         """A behavior toggle flipped: re-read options + refresh (visual only)."""
@@ -471,8 +560,10 @@ class MainWindow(QtWidgets.QMainWindow):
         """Relabel the current drawing from the Sequence field (no re-layout, no move)."""
         if self._model is None:
             return
+        self._model.push_undo()
         note = self._model.set_sequence(self._seq_edit.text())
         self._view.restyle()
+        self._sync_edit_actions()
         if note:
             self.statusBar().showMessage(note, 6000)
 
@@ -503,26 +594,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_path = path
         self._restore_versions_from_doc(doc)
 
-    def _load_document(self, doc: Document) -> None:
-        """Adopt `doc` into a fresh model + view (never-silent gate re-run).
+    def _load_document(self, doc: Document, undoable: bool = False) -> None:
+        """Adopt `doc` into the model + view (never-silent gate re-run).
 
-        The model's `from_document` re-validates the stored coordinates live;
-        an overlapping layout is surfaced flagged (status message) rather than
-        drawn silently clean.
+        The stored coordinates are re-validated live; an overlapping layout is
+        surfaced flagged (status message) rather than drawn silently clean.
+
+        Args:
+            doc: The document to adopt.
+            undoable: When True and a model already exists, adopt IN PLACE after
+                recording an undo point, so a version restore / re-load can be
+                undone. When False (a brand-new document), build a fresh model
+                and reset the history (a new document starts a fresh timeline).
         """
         try:
-            model = EditorModel.from_document(doc)
+            if undoable and self._model is not None:
+                self._model.push_undo()
+                self._model._adopt_document(doc)
+                model = self._model
+            else:
+                model = EditorModel.from_document(doc)
+                model.reset_history()
         except Exception as exc:  # keep the app alive on a malformed document
             self._overlap_label.setText(f"Could not restore document: {exc}")
             return
         model.set_numbering(self._show_numbers, self._number_interval)
         self._model = model
-        self._ss_edit.setText(model._ss or "")
-        self._seq_edit.setText(model._seq or "")
-        self._view.set_model(model)
-        # Adopt the document's style into the panel (so the controls reflect it
-        # and stay bound to the same preset the model draws with).
-        self._panel.load_preset(model.preset)
+        self._syncing = True
+        try:
+            self._ss_edit.setText(model._ss or "")
+            self._seq_edit.setText(model._seq or "")
+            self._view.set_model(model)
+            # Adopt the document's style into the panel (so the controls reflect
+            # it and stay bound to the same preset the model draws with).
+            self._panel.load_preset(model.preset)
+        finally:
+            self._syncing = False
         self._engine_label.setText(
             f"{len(model.scene()['nucleotides'])} nt  |  engine: {model.engine_name}"
         )
@@ -582,9 +689,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._restore_version(self._versions_list.currentRow())
 
     def _restore_version(self, row: int) -> None:
-        """Load the snapshot at `row` back into the model (never-silent gate)."""
+        """Load the snapshot at `row` back into the model (never-silent gate).
+
+        Undoable: a version restore records an undo point so it can be reverted.
+        """
         if 0 <= row < len(self._versions):
-            self._load_document(self._versions[row])
+            self._load_document(self._versions[row], undoable=True)
 
     def _restore_versions_from_doc(self, doc: Document) -> None:
         """Rebuild the snapshot list from a loaded file's `extra["versions"]`."""
@@ -602,22 +712,79 @@ class MainWindow(QtWidgets.QMainWindow):
     # -- style editor -------------------------------------------------------
 
     def _on_style_visual(self) -> None:
-        """A live-visual style change: restyle the canvas without re-layout."""
+        """A live-visual style change: restyle the canvas without re-layout.
+
+        Undoable (global style change), UNLESS we are mid-sync restoring a
+        model -- `load_preset` re-emits `visualChanged` and that must not push
+        a fresh undo entry over the state we are restoring.
+        """
         if self._model is None:
             return
+        if not self._syncing:
+            self._model.push_undo()
         self._model.set_style(self._panel.preset())
         self._view.restyle()
+        if not self._syncing:
+            self._sync_edit_actions()
 
     def _on_style_relayout(self) -> None:
         """Apply staged geometry (node_r/spacing): re-run layout + re-check."""
         if self._model is None:
             return
+        self._model.push_undo()
         result = self._model.relayout(self._panel.preset())
         self._view.set_model(self._model)
         self._engine_label.setText(
             f"{len(self._model.scene()['nucleotides'])} nt  |  engine: {self._model.engine_name}"
         )
         self._on_overlap(result.flagged, len(result.overlaps))
+
+    # -- undo / redo --------------------------------------------------------
+
+    def _on_undo(self) -> None:
+        """Undo the last change and fully refresh the view + panels."""
+        if self._model is None or not self._model.undo():
+            return
+        self._refresh_after_history()
+
+    def _on_redo(self) -> None:
+        """Redo the last undone change and fully refresh the view + panels."""
+        if self._model is None or not self._model.redo():
+            return
+        self._refresh_after_history()
+
+    def _refresh_after_history(self) -> None:
+        """Rebuild the scene and sync every panel to the restored model state.
+
+        Style panel reflects the restored preset, the Structure/Sequence fields
+        and selection-styling readout re-sync, the engine/overlap status bar is
+        recomputed, and the Undo/Redo actions are re-enabled. The `_syncing`
+        guard stops `load_preset`'s `visualChanged` from pushing a spurious
+        undo entry.
+        """
+        model = self._model
+        if model is None:
+            return
+        self._syncing = True
+        try:
+            self._view.set_model(model)
+            self._panel.load_preset(model.preset)
+            self._ss_edit.setText(model._ss or "")
+            self._seq_edit.setText(model._seq or "")
+        finally:
+            self._syncing = False
+        self._update_selection_styling()
+        self._engine_label.setText(
+            f"{len(model.scene()['nucleotides'])} nt  |  engine: {model.engine_name}"
+        )
+        self._on_overlap(model.flagged, len(model.scene()["overlaps"]))
+
+    def _sync_edit_actions(self) -> None:
+        """Enable/disable Undo/Redo from the model's history depth."""
+        has_model = self._model is not None
+        if hasattr(self, "_undo_act"):
+            self._undo_act.setEnabled(has_model and self._model.can_undo())
+            self._redo_act.setEnabled(has_model and self._model.can_redo())
 
     # -- signals ------------------------------------------------------------
 
@@ -635,6 +802,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._overlap_label.setText("✓ clean")
             self._overlap_label.setStyleSheet("color: #2ea043; font-weight: 600;")
+        # Every committed edit (drag/relayout/move) funnels through here, so
+        # keep the Undo/Redo enablement current.
+        self._sync_edit_actions()
 
 
 __all__ = ["MainWindow"]
