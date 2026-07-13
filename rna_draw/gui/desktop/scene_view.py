@@ -122,6 +122,10 @@ class RnaScene(QtWidgets.QGraphicsScene):
         label_col = _color(style.get("letter_color", ""), LABEL)
         show_letters = bool(style.get("show_letters", True))
         letter_scale = float(style.get("letter_scale", 1.0))
+        # Live display scale on the drawn disk radius (NOT the layout node_r the
+        # hit-test / handle / halos key off) and whether to draw disks at all.
+        show_spheres = bool(style.get("show_spheres", True))
+        sphere_scale = float(style.get("sphere_scale", 1.0))
 
         pos = [QtCore.QPointF(float(n["x"]), -float(n["y"])) for n in nts]
         self._nt_positions = pos
@@ -178,24 +182,32 @@ class RnaScene(QtWidgets.QGraphicsScene):
                 halo.setZValue(-2)
                 self.addItem(halo)
 
-        # Nucleotide disks.
+        # Nucleotide disks + letters. The DRAWN disk radius is the layout radius
+        # scaled by the live sphere display scale; when "Show spheres" is off the
+        # disk items are skipped entirely (letters, numbers, backbone and pairs
+        # still render). Click-select keys off cached nt centers, not disk items,
+        # so interaction is unaffected by the drawn size or visibility.
+        draw_r = r * sphere_scale
         for n in nts:
             idx = n["id"]
             center = pos[idx]
             selected = idx in selected_set
-            if idx in overlaps:
-                fill = OVERLAP_RED
-            elif selected:
-                fill = SELECT_TEAL
-            else:
-                fill = QtGui.QColor(n.get("fill", default_fill))
-            item = QtWidgets.QGraphicsEllipseItem(center.x() - r, center.y() - r, 2 * r, 2 * r)
-            edge = SELECT_TEAL if selected else edge_col
-            item.setPen(QtGui.QPen(edge, 2.0 if selected else edge_w))
-            item.setBrush(QtGui.QBrush(fill))
-            item.setData(_NT_INDEX_KEY, idx)
-            item.setZValue(0)
-            self.addItem(item)
+            if show_spheres:
+                if idx in overlaps:
+                    fill = OVERLAP_RED
+                elif selected:
+                    fill = SELECT_TEAL
+                else:
+                    fill = QtGui.QColor(n.get("fill", default_fill))
+                item = QtWidgets.QGraphicsEllipseItem(
+                    center.x() - draw_r, center.y() - draw_r, 2 * draw_r, 2 * draw_r
+                )
+                edge = SELECT_TEAL if selected else edge_col
+                item.setPen(QtGui.QPen(edge, 2.0 if selected else edge_w))
+                item.setBrush(QtGui.QBrush(fill))
+                item.setData(_NT_INDEX_KEY, idx)
+                item.setZValue(0)
+                self.addItem(item)
             label = n.get("label", "")
             if label and show_letters:
                 text = QtWidgets.QGraphicsSimpleTextItem(str(label))

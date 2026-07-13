@@ -93,6 +93,10 @@ class StylePanel(QtWidgets.QWidget):
         self._loading = False
         self._swatches: dict[str, ColorButton] = {}
         self._sections: dict[str, CollapsibleSection] = {}
+        # Percentage sliders keyed by their `extra["view"]` key, plus their live
+        # "NN%" readout labels, so `_sync_widgets` can push stored percents back.
+        self._pct_sliders: dict[str, QtWidgets.QSlider] = {}
+        self._pct_readouts: dict[str, QtWidgets.QLabel] = {}
         self._build_ui()
         self._sync_widgets()
 
@@ -246,6 +250,41 @@ class StylePanel(QtWidgets.QWidget):
         sp.valueChanged.connect(on_change)
         return sp
 
+    def _pct_slider(self, key: str, lo: int, hi: int) -> QtWidgets.QWidget:
+        """A horizontal % slider bound to `extra["view"][key]` with a live readout.
+
+        Sizes are expressed as a PERCENT of a base default (100% = the default
+        look); the slider writes the integer percent into the view extras and
+        emits `visualChanged` live for a layout-free restyle. The slider + its
+        "NN%" label are registered so `_sync_widgets` can push the stored percent
+        back without re-emitting. Range ``[lo, hi]`` in percent.
+        """
+        row = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        readout = QtWidgets.QLabel("100%")
+        readout.setMinimumWidth(40)
+        readout.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
+
+        def _changed(value: int) -> None:
+            readout.setText(f"{int(value)}%")
+            self._set_view(key, int(value))
+
+        slider.valueChanged.connect(_changed)
+        h.addWidget(slider, 1)
+        h.addWidget(readout)
+        self._pct_sliders[key] = slider
+        self._pct_readouts[key] = readout
+        return row
+
     def _combo(self, items) -> QtWidgets.QComboBox:
         """A combobox that expands to fill its field so long item text never clips."""
         cb = QtWidgets.QComboBox()
@@ -260,15 +299,17 @@ class StylePanel(QtWidgets.QWidget):
         f = self._group("Nucleotides", expanded=True)
         self._default_fill_btn = self._color_row(self._on_default_fill)
         f.addRow("Default fill", self._default_fill_btn)
+        self._spheres_cb = QtWidgets.QCheckBox("Show spheres")
+        self._spheres_cb.toggled.connect(self._on_spheres)
+        f.addRow("", self._spheres_cb)
+        f.addRow("Sphere size", self._pct_slider("sphere_pct", 20, 250))
         self._edge_color_btn = self._color_row(lambda c: self._set_view("nt_edge_color", c))
         f.addRow("Outline color", self._edge_color_btn)
-        self._edge_width_sp = self._dspin(0.0, 8.0, 0.5, self._vset("nt_edge_width"))
-        f.addRow("Outline width", self._edge_width_sp)
+        f.addRow("Outline width", self._pct_slider("edge_pct", 0, 300))
         self._letters_cb = QtWidgets.QCheckBox("Show letters")
         self._letters_cb.toggled.connect(self._on_letters)
         f.addRow("", self._letters_cb)
-        self._text_size_sp = self._dspin(4.0, 150.0, 2.0, self._on_text_size)
-        f.addRow("Letter size", self._text_size_sp)
+        f.addRow("Letter size", self._pct_slider("letter_pct", 40, 200))
         self._letter_color_btn = self._color_row(lambda c: self._set_view("letter_color", c))
         f.addRow("Letter color", self._letter_color_btn)
 
@@ -276,21 +317,18 @@ class StylePanel(QtWidgets.QWidget):
         f = self._group("Connectors")
         self._pair_color_btn = self._color_row(lambda c: self._set_connector("nested_pair", c))
         f.addRow("Base-pair color", self._pair_color_btn)
-        self._pair_width_sp = self._dspin(0.2, 8.0, 0.2, self._vset("pair_width"))
-        f.addRow("Base-pair width", self._pair_width_sp)
+        f.addRow("Base-pair width", self._pct_slider("pair_pct", 0, 300))
         self._pk_conn_btn = self._color_row(lambda c: self._set_connector("pk_connector", c))
         f.addRow("PK connector color", self._pk_conn_btn)
         self._pk_line_btn = self._color_row(lambda c: self._set_connector("pk_line", c))
         f.addRow("PK routed color", self._pk_line_btn)
-        self._routed_width_sp = self._dspin(0.2, 8.0, 0.2, self._vset("routed_width"))
-        f.addRow("PK routed width", self._routed_width_sp)
+        f.addRow("PK routed width", self._pct_slider("routed_pct", 0, 300))
         self._routed_style_cb = self._combo(_LINE_STYLES)
         self._routed_style_cb.currentTextChanged.connect(self._vset("routed_style"))
         f.addRow("PK routed style", self._routed_style_cb)
         self._backbone_color_btn = self._color_row(lambda c: self._set_view("backbone_color", c))
         f.addRow("Backbone color", self._backbone_color_btn)
-        self._backbone_width_sp = self._dspin(0.2, 8.0, 0.2, self._vset("backbone_width"))
-        f.addRow("Backbone width", self._backbone_width_sp)
+        f.addRow("Backbone width", self._pct_slider("backbone_pct", 0, 300))
 
     def _build_scheme_group(self) -> None:
         f = self._group("Colors / scheme")
@@ -332,7 +370,7 @@ class StylePanel(QtWidgets.QWidget):
         note.setStyleSheet("color:#7a828d; font-style:italic;")
         f.addRow(note)
         self._node_r_sp = self._dspin(2.0, 40.0, 1.0, self._on_node_r)
-        f.addRow("Disk size (node_r)", self._node_r_sp)
+        f.addRow("Layout radius (node_r)", self._node_r_sp)
         self._primary_sp = self._dspin(4.0, 80.0, 1.0, self._on_primary_space)
         f.addRow("Primary space", self._primary_sp)
         self._pair_sp = self._dspin(4.0, 80.0, 1.0, self._on_pair_space)
@@ -366,20 +404,21 @@ class StylePanel(QtWidgets.QWidget):
             ld = self._preset.layout_defaults
             view = {**DEFAULT_VIEW, **self._preset.extra.get("view", {})}
             self._default_fill_btn.set_color(resolved["default_fill"])
+            self._spheres_cb.setChecked(bool(view.get("show_spheres", True)))
             self._edge_color_btn.set_color(view["nt_edge_color"])
-            self._edge_width_sp.setValue(float(view["nt_edge_width"]))
             self._letters_cb.setChecked(bool(ld.render_in_letters))
-            self._text_size_sp.setValue(float(ld.text_size))
             self._letter_color_btn.set_color(view["letter_color"])
             self._pair_color_btn.set_color(resolved["pair_color"])
-            self._pair_width_sp.setValue(float(view["pair_width"]))
             self._pk_conn_btn.set_color(resolved["crossing_color"])
             self._pk_line_btn.set_color(resolved["routed_color"])
-            self._routed_width_sp.setValue(float(view["routed_width"]))
             self._routed_style_cb.setCurrentText(view["routed_style"])
             self._backbone_color_btn.set_color(view["backbone_color"])
-            self._backbone_width_sp.setValue(float(view["backbone_width"]))
             self._render_cb.setCurrentText(view["render_type"])
+            # Percentage sliders (and their readouts) from the stored view band.
+            for key, slider in self._pct_sliders.items():
+                pct = int(round(float(view.get(key, 100))))
+                slider.setValue(pct)
+                self._pct_readouts[key].setText(f"{pct}%")
             self._data_pal_cb.setCurrentText(view["data_palette"])
             self._bg_btn.set_color(view["background"])
             self._node_r_sp.setValue(float(ld.node_r))
@@ -418,10 +457,10 @@ class StylePanel(QtWidgets.QWidget):
         self._preset.layout_defaults.render_in_letters = bool(on)
         self.visualChanged.emit()
 
-    def _on_text_size(self, value: float) -> None:
+    def _on_spheres(self, on: bool) -> None:
         if self._loading:
             return
-        self._preset.layout_defaults.text_size = float(value)
+        self._view()["show_spheres"] = bool(on)
         self.visualChanged.emit()
 
     def _on_render_type(self, name: str) -> None:

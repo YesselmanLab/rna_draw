@@ -145,7 +145,7 @@ def test_preset_save_load_round_trip(app_window, tmp_path):
     panel.set_default_fill("#0a0b0c")
     panel._set_connector("nested_pair", "#111213")
     panel._set_view("background", "#141516")
-    panel._set_view("pair_width", 3.5)
+    panel._set_view("pair_pct", 200)
     panel.set_show_letters(False)
     path = tmp_path / "custom.rnastyle.json"
     panel.save_preset_file(str(path))
@@ -155,7 +155,8 @@ def test_preset_save_load_round_trip(app_window, tmp_path):
     assert rstyle["default_fill"] == "#0a0b0c"
     assert rstyle["pair_color"] == "#111213"
     assert rstyle["background"] == "#141516"
-    assert rstyle["pair_width"] == 3.5
+    assert reloaded.extra["view"]["pair_pct"] == 200
+    assert rstyle["pair_width"] == pytest.approx(1.6 * 2.0)
     assert reloaded.layout_defaults.render_in_letters is False
 
     # round-trips back into a fresh panel too

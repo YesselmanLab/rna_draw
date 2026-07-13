@@ -81,24 +81,39 @@ DEMO_SEQ = "GGGGAAAGGGGAAAACCCCAAAGGGGAAAACCCCAAACCCC"
 # the colorer's `RenderType` enum. "none" means "no scheme -> default fill".
 RENDER_TYPES = {"none": None, "res_type": RenderType.RES_TYPE, "paired": RenderType.PAIRED}
 
+# Base (100%) reference values for the percentage sliders in the style panel.
+# 100% reproduces the historical default look; `view_style` multiplies each base
+# by its stored percent so the scene values below are byte-identical to before
+# when every slider sits at 100%.
+_BASE_EDGE_WIDTH = 1.0
+_BASE_PAIR_WIDTH = 1.6
+_BASE_CROSSING_WIDTH = 1.6
+_BASE_ROUTED_WIDTH = 1.6
+_BASE_BACKBONE_WIDTH = 2.0
+
 # Non-geometry visual knobs that have no home in the canonical `StylePreset`
 # fields. They are carried in `preset.extra["view"]` so they round-trip through
 # `.rnastyle.json` save/load (via the preset's `extra` merge) without inventing
-# a new file format. Defaults mirror the desktop `scene_view` module constants
-# so an unstyled scene renders byte-identically to before.
+# a new file format. Sizes are stored as PERCENTAGES of the base defaults above
+# (100% = the historical look); `view_style` converts them to concrete widths /
+# scales. `sphere_scale` is a LIVE DISPLAY scale on the drawn disk radius only --
+# it never touches the layout node_r the overlap checker gates on.
 DEFAULT_VIEW = {
     "background": "#ffffff",
     "backbone_color": "#8a8f98",
-    "backbone_width": 2.0,
     "nt_edge_color": "#2b2f36",
-    "nt_edge_width": 1.0,
     "letter_color": "#101418",
-    "pair_width": 1.6,
-    "crossing_width": 1.6,
-    "routed_width": 1.6,
     "routed_style": "dash",  # solid | dash | dot
     "render_type": "none",  # none | res_type | paired
     "data_palette": "viridis",  # SHAPE/data colormap name (persisted; see report)
+    # Percentage size sliders (100% = base default). Display-only, no relayout.
+    "sphere_pct": 100,  # drawn disk radius as % of layout node_r
+    "letter_pct": 100,  # letter font size as % (maps to letter_scale)
+    "edge_pct": 100,  # nucleotide outline width
+    "pair_pct": 100,  # base-pair line width
+    "backbone_pct": 100,  # backbone line width
+    "routed_pct": 100,  # PK routed line width
+    "show_spheres": True,  # draw the nucleotide disks at all
 }
 
 
@@ -148,22 +163,33 @@ def view_style(preset: StylePreset) -> dict:
     palette = preset.palette
     ld = preset.layout_defaults
     cc = preset.connector_colors
+
+    def _pct(key: str) -> float:
+        """Stored percentage for `key` as a 0..1+ multiplier (100 -> 1.0)."""
+        return float(view.get(key, 100)) / 100.0
+
     return {
         "background": view["background"],
         "backbone_color": view["backbone_color"],
-        "backbone_width": float(view["backbone_width"]),
+        "backbone_width": _BASE_BACKBONE_WIDTH * _pct("backbone_pct"),
         "default_fill": _resolve_color(preset.default_color, palette),
         "nt_edge_color": view["nt_edge_color"],
-        "nt_edge_width": float(view["nt_edge_width"]),
+        "nt_edge_width": _BASE_EDGE_WIDTH * _pct("edge_pct"),
         "show_letters": bool(ld.render_in_letters),
-        "letter_scale": float(ld.text_size) / 50.0,
+        "show_spheres": bool(view.get("show_spheres", True)),
+        # Live DISPLAY scale on the drawn disk radius only (not a relayout): the
+        # scene draws node_r * sphere_scale, decoupled from the layout node_r the
+        # overlap checker gates on. A big visual sphere may look overlapping while
+        # the layout is clean -- that is cosmetic and correct.
+        "sphere_scale": _pct("sphere_pct"),
+        "letter_scale": _pct("letter_pct"),
         "letter_color": view["letter_color"],
         "pair_color": _resolve_color(cc.get("nested_pair", "e"), palette),
-        "pair_width": float(view["pair_width"]),
+        "pair_width": _BASE_PAIR_WIDTH * _pct("pair_pct"),
         "crossing_color": _resolve_color(cc.get("pk_connector", "o"), palette),
-        "crossing_width": float(view["crossing_width"]),
+        "crossing_width": _BASE_CROSSING_WIDTH,
         "routed_color": _resolve_color(cc.get("pk_line", "r"), palette),
-        "routed_width": float(view["routed_width"]),
+        "routed_width": _BASE_ROUTED_WIDTH * _pct("routed_pct"),
         "routed_style": view["routed_style"],
     }
 
