@@ -53,17 +53,42 @@ from .validate import polyline_capsules, polyline_is_clean
 Point = tuple[float, float]
 Direction = str  # one of "up", "down", "left", "right"
 
+
+def _geometric_ladder(start: float, ratio: float, stop: float) -> tuple[float, ...]:
+    """A geometric sequence of factors from `start` up to (and including)
+    `stop`, growing by `ratio` per rung.
+
+    Used for `_OFFSET_FACTORS` (HUGGING fix, user-directed): a small
+    `ratio` keeps consecutive rungs close together, so (a) the first
+    checker-clean rung for an isolated pair sits as close as possible to
+    the true minimum reach needed (find_staple_route/find_offset_staple_route
+    already try SMALL rungs before LARGE ones and take the first clean
+    one -- a coarse, widely-spaced ladder just meant that "first clean"
+    rung routinely overshot the real local obstruction by up to 2x), and
+    (b) a multi-bp crossing stem's nested siblings, each escalating only
+    far enough to clear the previous sibling's already-committed rail
+    (`placement._route_stem`'s innermost-first order), step up by a small
+    increment each time -- tight concentric brackets hugging the
+    structure, not a tall ladder. MEASURED (pre-existing note, still
+    holds): a denser ladder does NOT change which pairs end up PLACED
+    (the bottleneck there is having only 4 candidate directions, not
+    ladder resolution) -- it only changes HOW FAR the placed ones reach,
+    which is the axis this ladder now tunes for.
+    """
+    factors = [start]
+    while factors[-1] < stop:
+        factors.append(min(factors[-1] * ratio, stop))
+    return tuple(factors)
+
+
 # Tier 1/2 offset ladder: how far the shared rail sits from the chord's own
 # span, as a fraction of the layout's bounding-box diagonal (`extent`).
-# Mirrors the pre-existing bow-magnitude ladder's range (0.05..12.8):
-# small steps cover the common short/local crossing cheaply, the large
-# steps are a near-guaranteed escape for a pair embedded deep inside a big
-# structure. MEASURED: a much denser ladder (15 steps up to 20.0) was
-# tried and made no difference on the real corpus -- the bottleneck for
-# the residual unplaced pairs is having only 4 candidate directions
-# (axis-aligned, vs. the old continuous bearing fan), not ladder
-# resolution, so the simpler 9-step ladder is kept.
-_OFFSET_FACTORS: tuple[float, ...] = (0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4, 12.8)
+# Same overall range as the original 9-step ladder (0.05..12.8 -- small
+# steps cover the common short/local crossing cheaply, the large steps are
+# a near-guaranteed escape for a pair embedded deep inside a big
+# structure) but far finer-grained (ratio 1.2 instead of 2.0 per rung) so
+# the first-clean-wins search hugs the structure -- see `_geometric_ladder`.
+_OFFSET_FACTORS: tuple[float, ...] = _geometric_ladder(0.05, 1.2, 12.8)
 
 # Tier 2 local-jog ladder (`find_offset_staple_route`): short, in units of
 # `extent`, tried both signs (`_JOG_SIGNS`) independently per endpoint.
